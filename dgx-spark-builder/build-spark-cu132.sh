@@ -63,6 +63,7 @@ if [[ -n "${ENV_FILE}" ]]; then
     if [[ "${val}" =~ ^\<[A-Za-z0-9_-]+\>$ ]]; then die "${ENV_FILE}:${lineno}: unresolved placeholder for ${key}"; fi
     if [[ -n "${!key+x}" ]]; then
       note "process env overrides ${ENV_FILE}: ${key}"
+      OVERRIDDEN_KEYS="${OVERRIDDEN_KEYS:-} ${key}"
     else
       printf -v "${key}" '%s' "${val}"
       export "${key}"
@@ -224,6 +225,9 @@ stale=( "${dockerfile}".pre-spark.* )
 shopt -u nullglob
 [[ ${#stale[@]} == 0 ]] || die "previous run left '${stale[0]}': the Dockerfile may still be patched. Restore it (git checkout -- ${dockerfile}) and delete the backup, then re-run."
 cp -a "${dockerfile}" "${backup}"
+PRISTINE_DOCKERFILE_SHA="$(sha256sum "${dockerfile}" | cut -d' ' -f1)"
+# Patch outcomes are appended here as they happen; the build log embeds it.
+PATCH_REPORT="$(mktemp)"
 # Backup may not exist if cleanup ever runs before `cp -a` (defensive: the
 # trap is installed after this section today, but this keeps restore safe if
 # that ordering ever changes). if-form: a missing backup must not turn into
@@ -263,17 +267,19 @@ cleanup() {
   [[ -n "${SAMPLER_PID}" ]] && kill "${SAMPLER_PID}" 2>/dev/null || true
   # Read the peak BEFORE removing the file: the FAILED report needs it.
   [[ -n "${BUILD_T0}" && "${rc}" != 0 ]] && report_telemetry "FAILED(rc=${rc})"
-  rm -f "${MEM_PEAK_FILE}"
+  rm -f "${MEM_PEAK_FILE}" "${PATCH_REPORT:-}"
   restore_dockerfile
 }
 trap cleanup EXIT
 
+plog() { printf '%s\n' "$*" >> "${PATCH_REPORT}"; }
+
 apply_sed_patch() {  # name toggle before_pattern min_expected sed-expr...
   local name="$1" toggle="$2" before="$3" min="$4"; shift 4
   local found; found="$(grep -cE "${before}" "${dockerfile}" || true)"
-  if [[ "${toggle}" == off ]]; then note "${name}=off: skipped"; return 0; fi
+  if [[ "${toggle}" == off ]]; then note "${name}=off: skipped"; plog "${name}=off: skipped"; return 0; fi
   if [[ "${found}" == 0 ]]; then
-    if [[ "${toggle}" == auto ]]; then note "${name}(auto): pattern absent; skipping (may be fixed upstream)"; return 0; fi
+    if [[ "${toggle}" == auto ]]; then note "${name}(auto): pattern absent; skipping (may be fixed upstream)"; plog "${name}(auto): pattern absent; skipped"; return 0; fi
     die "${name}=on but pattern not found in ${dockerfile}"
   fi
   local args=() e; for e in "$@"; do args+=(-e "${e}"); done
@@ -282,6 +288,7 @@ apply_sed_patch() {  # name toggle before_pattern min_expected sed-expr...
   [[ "${left}" == 0 ]] || die "${name}: ${left} occurrence(s) survived -- upstream changed shape: $(grep -nE "${before}" "${dockerfile}" | head -3)"
   [[ "${found}" -ge "${min}" ]] || die "${name}: expected >=${min} occurrences, found ${found} -- upstream changed shape"
   note "${name}: rewrote ${found} line-occurrence(s)"
+  plog "${name}: rewrote ${found} line-occurrence(s)"
 }
 
 # FROZEN-BEGIN -- cache-critical rewrite text: do not edit (see hash check)
@@ -300,7 +307,7 @@ apply_sed_patch PATCH_PCIE_ENV "${PATCH_PCIE_ENV}" \
   'VLLM_PCIE_ALLREDUCE_BACKEND=cpp' 1 \
   's/VLLM_PCIE_ALLREDUCE_BACKEND=cpp/VLLM_PCIE_ALLREDUCE_BACKEND=b12x/'
 
-python3 - "${dockerfile}" <<'PYEOF'
+python3 - "${dockerfile}" 2> >(tee -a "${PATCH_REPORT}" >&2) <<'PYEOF'
 import pathlib, re, sys
 import os
 
@@ -442,6 +449,10 @@ else:
     print("injected exllamav3 aarch64 source patch", file=sys.stderr)
 PYEOF
 
+# The exact Dockerfile the build consumed (all patches applied) -- the
+# build-log analog of a published integration-patch sha.
+PATCHED_DOCKERFILE_SHA="$(sha256sum "${dockerfile}" | cut -d' ' -f1)"
+
 if [[ "${DRY_RUN}" == 1 ]]; then
   echo
   note "DRY RUN complete: all rewrites validated against ${dockerfile}; no image built."
@@ -483,4 +494,103 @@ docker run --rm --entrypoint bash "${IMAGE}" -c '
 '
 printf '\nBuilt %s\n' "${IMAGE}"
 report_telemetry "OK+VERIFIED"
+
+# ---------------------------------------------------------------- build log
+# One self-contained record per completed build: everything the lab
+# publishing checklist asks for that exists at build time, with the fields
+# that only exist after a registry push marked UNKNOWN. Markdown so the
+# announcement sections lift straight out.
+log_stamp="$(date +%Y%m%d-%H%M%S)"
+build_log="${SCRIPT_DIR}/build-log-${PROFILE_NAME}-${log_stamp}.md"
+
+image_id="$(docker inspect --format '{{.Id}}' "${IMAGE}" 2>/dev/null || echo 'UNKNOWN — needs verification')"
+
+# Resolve the external base (nvidia/cuda tag) the pristine Dockerfile
+# declares, honoring any --build-arg override passed through EXTRA_ARGS,
+# then read its registry digest (present locally after the pull the build
+# just did).
+cuda_ver="$(sed -n 's/^ARG CUDA_VERSION=\(.*\)$/\1/p' "${dockerfile}" | head -1)"
+ubuntu_ver="$(sed -n 's/^ARG UBUNTU_VERSION=\(.*\)$/\1/p' "${dockerfile}" | head -1)"
+for ea in "${EXTRA_ARGS[@]:-}"; do
+  case "${ea}" in
+    CUDA_VERSION=*)   cuda_ver="${ea#CUDA_VERSION=}" ;;
+    UBUNTU_VERSION=*) ubuntu_ver="${ea#UBUNTU_VERSION=}" ;;
+  esac
+done
+base_tag="nvidia/cuda:${cuda_ver}-cudnn-devel-ubuntu${ubuntu_ver}"
+base_digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "${base_tag}" 2>/dev/null \
+  || echo 'UNKNOWN — needs verification')"
+
+upstream_head="$(git rev-parse HEAD 2>/dev/null || echo 'UNKNOWN — needs verification (not a git checkout)')"
+upstream_dirty="clean"
+[[ -z "$(git status --porcelain 2>/dev/null)" ]] || upstream_dirty="DIRTY (uncommitted changes present)"
+wrapper_sha="$(sha256sum "${SELF}" | cut -d' ' -f1)"
+profile_sha="none (in-script defaults only)"
+[[ -z "${ENV_FILE}" ]] || profile_sha="$(sha256sum "${ENV_FILE}" | cut -d' ' -f1)"
+
+pip_freeze="$(docker run --rm --entrypoint /opt/venv/bin/pip "${IMAGE}" freeze 2>/dev/null \
+  || echo 'UNKNOWN — needs verification (pip freeze failed)')"
+
+{
+  printf '# Build log — %s — %s\n\n' "${PROFILE_NAME}" "${log_stamp}"
+  printf '## Image\n\n'
+  printf -- '- Local tag: `%s`\n' "${IMAGE}"
+  printf -- '- Image ID (local config digest, survives `docker save`/`load`): `%s`\n' "${image_id}"
+  printf -- '- Registry digest (`image@sha256:` form): UNKNOWN — needs verification (exists only after a push; see commands at the end of this log)\n'
+  printf -- '- Base image: `%s` @ `%s`\n' "${base_tag}" "${base_digest}"
+  printf -- '- vLLM build version: `%s`\n\n' "${VLLM_BUILD_VERSION}"
+  printf '## Build system\n\n'
+  printf -- '- blackwell-llm-docker checkout: `%s` (%s)\n' "${upstream_head}" "${upstream_dirty}"
+  printf -- '- Wrapper: `build-spark-cu132.sh` sha256 `%s`\n' "${wrapper_sha}"
+  printf -- '- Profile: `%s` sha256 `%s`\n' "${ENV_FILE:-none}" "${profile_sha}"
+  printf -- '- Dockerfile sha256: pristine `%s`, as-built (post-patch) `%s`\n' \
+    "${PRISTINE_DOCKERFILE_SHA}" "${PATCHED_DOCKERFILE_SHA:-UNKNOWN — needs verification}"
+  printf -- '- Build host: %s, %s\n\n' "$(uname -m)" "$(uname -r)"
+  printf '## Effective configuration\n\n'
+  printf 'Precedence applied: process env > profile > script defaults. Keys the\n'
+  printf 'process environment overrode are marked; everything else came from the\n'
+  printf 'profile or the script fallback.\n\n```\n'
+  for key in ${ALLOWED_KEYS}; do
+    [[ -n "${!key:-}" ]] || continue
+    case "${key}" in FROZEN_ACK|ALLOW_FOREIGN_ARCH) continue ;; esac
+    mark=""
+    [[ " ${OVERRIDDEN_KEYS:-} " != *" ${key} "* ]] || mark="   # OVERRIDDEN by process env"
+    printf '%s=%s%s\n' "${key}" "${!key}" "${mark}"
+  done
+  printf '```\n\n'
+  printf '## Patches applied (differences from the upstream build system)\n\n```\n'
+  cat "${PATCH_REPORT}" 2>/dev/null || echo "UNKNOWN — needs verification"
+  printf '```\n\n'
+  printf '## Verification (commands executed by this wrapper, all passed)\n\n'
+  printf -- '- In-image python asserts: aarch64, torch 2.13.0+cu132, cuda 13.2, `b12x` and humming kernels importable\n'
+  printf -- '- Required launchers present: `%s`\n' "${VLLM_REQUIRED_LAUNCHERS:-none configured}"
+  printf -- '- Patched NCCL present: `/opt/libnccl-local-inference.so.2.30.4`\n'
+  printf -- '- CUDA compat shim present: `/usr/local/cuda/compat/libcuda.so.1`\n'
+  printf -- '- cuBLAS overlay symlink resolves into `/usr/lib/aarch64-linux-gnu/`\n'
+  printf -- '- Serving on hardware: Not tested (build-time verification only; record pair validation separately)\n\n'
+  printf '## Resolved floating specs\n\n'
+  printf -- '- `FASTSAFETENSORS_SPEC=%s` resolved to: `%s`\n\n' \
+    "${FASTSAFETENSORS_SPEC}" \
+    "$(printf '%s\n' "${pip_freeze}" | grep -i '^fastsafetensors==' || echo 'UNKNOWN — needs verification')"
+  printf '## Telemetry\n\n'
+  printf -- '- jobs=%s peak-memory=%s GiB wall-time=%ss\n\n' \
+    "${MAX_JOBS}" \
+    "$(awk -v k="$(cat "${MEM_PEAK_FILE}" 2>/dev/null || echo 0)" 'BEGIN{printf "%.1f", k/1048576}')" \
+    "$(( $(date +%s) - BUILD_T0 ))"
+  printf '## Full pip freeze (final image /opt/venv)\n\n```\n%s\n```\n\n' "${pip_freeze}"
+  printf '## Obtaining the registry digest (after push)\n\n```\n'
+  printf 'docker tag %s <registry>/<repo>:<tag>\n' "${IMAGE}"
+  printf 'docker push <registry>/<repo>:<tag>   # last line prints: digest: sha256:...\n'
+  printf "docker inspect --format '{{index .RepoDigests 0}}' <registry>/<repo>:<tag>\n"
+  printf '```\n'
+} > "${build_log}"
+note "build log written: ${build_log}"
+
 printf 'Ship it to the other node:\n  docker save %s | ssh <node2> docker load\n' "${IMAGE}"
+printf '\nPublishing needs an immutable image@sha256 reference. That digest is minted\n'
+printf 'by a registry push (a local image has only an image ID, and docker refuses\n'
+printf 'tagging by digest). When ready:\n'
+printf '  docker tag %s <registry>/<repo>:<tag>\n' "${IMAGE}"
+printf '  docker push <registry>/<repo>:<tag>\n'
+printf "  docker inspect --format '{{index .RepoDigests 0}}' <registry>/<repo>:<tag>\n"
+printf 'then fill the UNKNOWN digest field in %s\n' "${build_log}"

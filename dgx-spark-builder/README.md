@@ -159,6 +159,25 @@ absorbs the fix — the retirement path).
   overlay symlink resolving into the arm64 multiarch dir (its Dockerfile
   loop is `if [[ -d ]]`-guarded and would skip silently on a wrong path).
 
+## Build log (publishing provenance)
+
+Every completed build writes `build-log-<profile>-<timestamp>.md` next to
+this script: local image ID, the resolved `nvidia/cuda` base-image digest,
+the effective configuration (process-env overrides annotated), the upstream
+checkout commit and dirty state, pristine and as-built Dockerfile hashes,
+the per-patch application report, the wrapper's verification results,
+resolved versions of any floating pip specs, telemetry, and the final
+image's full `pip freeze`. This is the raw material for the lab publishing
+checklist — fields that only exist after a registry push (the immutable
+`image@sha256:` reference) are pre-filled as `UNKNOWN — needs verification`,
+and the wrapper's final output prints the push + `docker inspect
+--format '{{index .RepoDigests 0}}'` commands that mint and read the digest.
+A local image has only an image ID; the registry digest does not exist
+until a push, and Docker refuses tagging by digest — plan the publish
+around that. Build-time verification is not serving validation: the log
+records pair serving as `Not tested` until you validate the pin on
+hardware and say so explicitly.
+
 ## Profiles
 
 `build.env` in this directory is the qualified **GLM-5.3-Flash** manifest.
