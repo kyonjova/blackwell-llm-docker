@@ -26,10 +26,13 @@ cd blackwell-llm-docker/dgx-spark-builder
 ./build-spark-cu132.sh                      # build with ./build.env (hours first run)
 ./build-spark-cu132.sh other-model.env      # build a different profile
 ./build-spark-cu132.sh build.env -- --build-arg CUBLAS_CUDA13_VERSION=x
+./build-spark-cu132.sh --log build-jovian-judgment-0831.env   # keep a transcript
 ```
 
-The script auto-locates the repo root (its parent directory) and defaults to
-the `build.env` beside it, so no arguments are needed for the standard case.
+The script auto-locates the repo root (its parent directory). With exactly
+one `*.env` beside it, that file is the profile whatever it is named; with
+more than one it refuses rather than guess; with none it warns loudly that it
+is falling back to in-script pins.
 
 **Why build inside blackwell-llm-docker at all?** Because that repo *is* the
 build system: it owns the multi-stage Dockerfile, the docker build context
@@ -147,6 +150,13 @@ absorbs the fix — the retirement path).
   and the verify commit, because the build stages check out the ref before
   verifying: a branch name races against upstream pushes mid-build (fails
   ~40 minutes in); a sha cannot.
+- **Pin pre-flight** — before anything expensive, each pinned sha is checked
+  for reachability with one call to the GitHub commits API. A 404/422 kills
+  the run immediately; a 403 (anonymous rate limit), 5xx, or no network is
+  reported as *inconclusive* and never fails a build. This catches typos,
+  deleted qualification branches, and force-pushed fork heads in seconds
+  instead of ~40 minutes into the clone. `PIN_PREFLIGHT=0` disables it;
+  `GH_TOKEN` makes it reliable on a shared egress IP.
 - **Pristine restore** — the Dockerfile is backed up and restored on any
   exit, so the checkout never carries local modifications. A build killed
   with SIGKILL/OOM or a host crash skips the restore, so startup refuses
@@ -159,9 +169,9 @@ absorbs the fix — the retirement path).
   overlay symlink resolving into the arm64 multiarch dir (its Dockerfile
   loop is `if [[ -d ]]`-guarded and would skip silently on a wrong path).
 
-## Build log (publishing provenance)
+## Build manifest and transcript (publishing provenance)
 
-Every completed build writes `build-log-<profile>-<timestamp>.md` next to
+Every completed build writes `build_manifest-<profile>-<timestamp>.md` next to
 this script: local image ID, the resolved `nvidia/cuda` base-image digest,
 the effective configuration (process-env overrides annotated), the upstream
 checkout commit and dirty state, pristine and as-built Dockerfile hashes,
@@ -178,9 +188,122 @@ around that. Build-time verification is not serving validation: the log
 records pair serving as `Not tested` until you validate the pin on
 hardware and say so explicitly.
 
+With `LOGGING=1` — the `--log` flag, a profile key, or the process
+environment — the wrapper also keeps `build-log-<profile>-<timestamp>.txt`
+beside the manifest: the complete stdout+stderr transcript of the run,
+including the upstream driver's output. Capture starts before argument and
+env parsing, so a profile syntax error lands in it too, and it is written on
+failure as well — a build that dies four hours in leaves the transcript that
+explains why. It shares the manifest's timestamp, so the two files pair by
+name. Two consequences worth knowing: stdout becomes a pipe, so BuildKit
+emits plain non-TTY progress (better in a file, different on your terminal),
+and the transcript captures everything the driver prints, so skim one before
+attaching it to an announcement.
+
+Neither file belongs in the upstream checkout's history, and left untracked
+they make every later `git status` read dirty. Both are covered by
+`dgx-spark-builder/.gitignore`.
+
+## Docker storage: what fills up, and how to reclaim it
+
+Three separate stores, different reclaim commands, very different costs.
+Look before you cut:
+
+```
+docker system df                # Images / Containers / Volumes / Build Cache
+docker system df -v             # per-image and per-cache-record detail
+sudo du -sh /var/lib/docker/*   # what the daemon actually holds on disk
+```
+
+- **Build cache (BuildKit records)** — this is what the frozen-block hash
+  exists to protect. The system-base/build-base/base layers are *ancestors*
+  of the FlashInfer and vLLM compiles; discarding them is the multi-hour
+  rebuild.
+- **Tagged images** — the serving image plus `…-system-base-…` and
+  `…-build-base-…`. Profiles that leave the tags at their defaults append the
+  build date, so an unpinned profile accumulates a full set per build day;
+  that is usually the real disk consumer, and the fix is targeted `docker
+  rmi`, not pruning. (`build-jovian-judgment-0831.env` pins all three tags
+  precisely to stop this.)
+- **Dangling layers** — mostly irrelevant under BuildKit, since intermediate
+  stages live in the build cache rather than as untagged images.
+
+Surgical to nuclear:
+
+```
+# 1. See which dated tags piled up, oldest first.
+docker images 'local/vllm' \
+  --format '{{.CreatedAt}}\t{{.Size}}\t{{.Repository}}:{{.Tag}}' | sort
+
+# 2. Drop old intermediate TAGS only. This reclaims image storage without
+#    touching BuildKit cache records, so the next build still hits cache.
+#    build-base is the fat one (full CUDA devel toolchain).
+docker rmi local/vllm:cu132-sm121-build-base-20260830 \
+           local/vllm:cu132-sm121-system-base-20260830
+
+# 3. Age-filtered build cache prune; `until` is a duration, not a timestamp.
+docker builder prune --filter until=168h        # keep the last week
+
+# 4. Size-capped prune, keeping the most recently used records.
+docker builder prune --keep-storage 150GB       # engine builder
+docker buildx prune  --keep-storage 150GB       # if a buildx builder is used
+#    Flag names move between engine versions: check `--help` first.
+
+# 5. Nuclear. Know the bill before running either.
+docker builder prune -a     # ALL build cache -> next build recompiles
+                            # FlashInfer + vLLM from scratch (hours)
+docker system prune -a      # ALSO removes every image not used by a RUNNING
+                            # container: the serving image and both base tags
+```
+
+`docker system prune -a` is the one that hurts most: "unused" means "no
+running container", which between serving sessions describes the entire
+image set. Because node 2 gets its copy by `docker save | ssh node2 docker
+load`, running it there means re-shipping tens of GB over the wire, not just
+a rebuild.
+
+If a buildx *container* driver is in play the cache lives in that builder's
+own volume, and the commands above may target the wrong store:
+
+```
+docker buildx ls            # driver column: docker | docker-container
+docker buildx du            # per-builder cache usage
+docker buildx rm <name>     # destroys that builder's cache entirely
+```
+
+Two rules of thumb. **To force a clean rebuild, do not prune — use
+`--no-cache`:** pruning discards cache shared with every other profile, while
+`./build-spark-cu132.sh <profile> -- --no-cache` rebuilds this image and
+leaves the rest intact. And **cap the cache rather than doing this by hand**,
+in `/etc/docker/daemon.json`:
+
+```json
+{
+  "builder": {
+    "gc": {
+      "enabled": true,
+      "defaultKeepStorage": "150GB",
+      "policy": [
+        { "keepStorage": "50GB",  "filter": ["unused-for=168h"] },
+        { "keepStorage": "150GB", "all": true }
+      ]
+    }
+  }
+}
+```
+
+Then `sudo systemctl restart docker`. **Restarting the daemon kills running
+containers** — do it with both ranks down, never mid-serve. Size the cap so
+it comfortably holds one full build's ancestor layers, or the GC will evict
+exactly what the frozen-block guard is trying to preserve and you pay the
+compile cost anyway.
+
 ## Profiles
 
 `build.env` in this directory is the qualified **GLM-5.3-Flash** manifest.
+`build-jovian-judgment-0831.env` pins `dev/jovian-judgement` and `b12x`
+master HEAD from the canonical repositories, for one image serving both
+GLM-5.3-Flash and DeepSeek-V4-Flash.
 For another model on the same branch, copy it, change `PROFILE_NAME`,
 `VLLM_REQUIRED_LAUNCHERS`, and (if needed) the pins — nothing in the script
 itself is model-specific. Commit the profile next to the published image

@@ -2,3 +2,12 @@
 !.tmp-flashinfer-wheels/.gitkeep
 patches/generated/
 __pycache__/
+# Wrapper output. These live inside the blackwell-llm-docker checkout, so
+# untracked they would make every later `git status` read dirty -- including
+# the checkout-state field the build manifest records.
+build_manifest-*.md
+build-log-*.txt
+
+# Crash residue. A build killed with SIGKILL/OOM skips the EXIT trap and
+# leaves this behind; the wrapper refuses to start until it is dealt with.
+Dockerfile.vllm-b12x-cu132.pre-spark.*
