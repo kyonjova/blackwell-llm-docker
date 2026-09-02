@@ -5,6 +5,8 @@ local-inference-lab vLLM stack from source, by retargeting the upstream
 x86/sm_120 build system and patching the handful of things that break on
 arm64. Model choice is a *profile* (`build.env`), not a fork of the script.
 
+**Currently set to build: local-inference-lab/vllm Branch: dev/jovian-judgement**
+
 ## Layout and usage
 
 This directory lives inside a checkout of
@@ -26,7 +28,7 @@ cd blackwell-llm-docker/dgx-spark-builder
 ./build-spark-cu132.sh                      # build with ./build.env (hours first run)
 ./build-spark-cu132.sh other-model.env      # build a different profile
 ./build-spark-cu132.sh build.env -- --build-arg CUBLAS_CUDA13_VERSION=x
-./build-spark-cu132.sh --log build-jovian-judgment-0831.env   # keep a transcript
+./build-spark-cu132.sh --log build-<image-name>.env   # keep a transcript
 ```
 
 The script auto-locates the repo root (its parent directory). With exactly
@@ -58,6 +60,46 @@ Precedence: **process environment > `build.env` > in-script defaults.** The
 env file is **parsed, never sourced** — plain `KEY=VALUE`, no quotes, no
 shell syntax (sourcing strips quotes and executes content; we learned that
 the hard way).
+
+## Image naming
+
+A docker reference is `REPOSITORY:TAG` — in `local/vllm:glm53-nvfp4` the
+repository is `local/vllm` (an optional registry host, then namespace `local`,
+then name `vllm`; with no host it stays on this machine) and the tag is
+`glm53-nvfp4`. The profile owns both halves. **The wrapper contributes no
+decoration of its own** — no `-jj-b12x-cu132-sm121`, no automatic date.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `IMAGE_REPO` | `local/vllm` | the repository half |
+| `IMAGE_TAG` | `PROFILE_NAME`, verbatim | the tag half |
+| `PROFILE_NAME` | `IMAGE_TAG`, sanitized | names the manifest and transcript; optional when `IMAGE_TAG` is set |
+| `IMAGE` | `IMAGE_REPO:IMAGE_TAG` | the whole reference; setting it governs everything below |
+| `SYSTEM_BASE_IMAGE` | `<image>-system-base` | build-cache handle, not an artifact |
+| `BUILD_BASE_IMAGE_TAG` | `<image>-build-base` | build-cache handle, not an artifact |
+| `VLLM_BUILD_VERSION` | `0.26.1rc0+<tag>` | PEP 440 wheel version; non-alphanumeric runs collapse to dots |
+
+With no profile and no `IMAGE`, nothing has named the build, so the tag falls
+back to the date alone: `local/vllm:20260901`.
+
+**A date appears only where a value asks for it.** `<date>` expands to
+`YYYYmmdd` and `<datetime>` to `YYYYmmdd-HHMMSS`, wherever they occur in
+`PROFILE_NAME`, `IMAGE`, `IMAGE_REPO`, `IMAGE_TAG`, either base-stage tag, or
+`VLLM_BUILD_VERSION`. Both come from one timestamp taken at startup, so a
+build that crosses midnight cannot date its image one day and its manifest the
+next. Omit the token and there is no date: rebuilding a profile overwrites its
+own tag instead of leaving a full image set per build day on the node. Add it
+when you deliberately want side-by-side builds.
+
+Because the base-stage tags derive from the image, two profiles get two sets
+of base stages and can never silently overwrite each other's — which matters
+when their toolchain pins differ. Profiles that share a toolchain can share
+the layers, and the disk, by pinning both to one common pair of names.
+
+Resolved names are printed by `--dry-run` and recorded in the build manifest.
+An untagged `IMAGE` (which docker would silently resolve to `:latest`), an
+invalid tag, or an unexpanded `<token>` all fail at startup rather than after
+the build.
 
 ## Components and why each is here
 
@@ -219,12 +261,11 @@ sudo du -sh /var/lib/docker/*   # what the daemon actually holds on disk
   exists to protect. The system-base/build-base/base layers are *ancestors*
   of the FlashInfer and vLLM compiles; discarding them is the multi-hour
   rebuild.
-- **Tagged images** — the serving image plus `…-system-base-…` and
-  `…-build-base-…`. Profiles that leave the tags at their defaults append the
-  build date, so an unpinned profile accumulates a full set per build day;
-  that is usually the real disk consumer, and the fix is targeted `docker
-  rmi`, not pruning. (`build-jovian-judgment-0831.env` pins all three tags
-  precisely to stop this.)
+- **Tagged images** — the serving image plus its `-system-base` and
+  `-build-base` stages. A profile whose tag carries a `<date>` or `<datetime>`
+  token mints a new set every build, which is usually the real disk consumer;
+  the fix there is targeted `docker rmi`, not pruning. A profile with no date
+  token overwrites its own tags and never accumulates.
 - **Dangling layers** — mostly irrelevant under BuildKit, since intermediate
   stages live in the build cache rather than as untagged images.
 
@@ -238,8 +279,8 @@ docker images 'local/vllm' \
 # 2. Drop old intermediate TAGS only. This reclaims image storage without
 #    touching BuildKit cache records, so the next build still hits cache.
 #    build-base is the fat one (full CUDA devel toolchain).
-docker rmi local/vllm:cu132-sm121-build-base-20260830 \
-           local/vllm:cu132-sm121-system-base-20260830
+docker rmi local/vllm:glm53-nvfp4-20260830-build-base \
+           local/vllm:glm53-nvfp4-20260830-system-base
 
 # 3. Age-filtered build cache prune; `until` is a duration, not a timestamp.
 docker builder prune --filter until=168h        # keep the last week
@@ -300,10 +341,12 @@ compile cost anyway.
 
 ## Profiles
 
-`build.env` in this directory is the qualified **GLM-5.3-Flash** manifest.
-`build-jovian-judgment-0831.env` pins `dev/jovian-judgement` and `b12x`
-master HEAD from the canonical repositories, for one image serving both
-GLM-5.3-Flash and DeepSeek-V4-Flash.
+`build-example.env` is an annotated template: copy it, set the naming block
+and the two source pins, and delete the rest of the guidance.
+`build-glm53-r##.env` in this directory is the qualified **GLM-5.3-Flash** manifest.
+`build-glm53-r##.env` pins `dev/jovian-judgement` and `b12x`
+master HEAD from the canonical repositories.
+
 For another model on the same branch, copy it, change `PROFILE_NAME`,
 `VLLM_REQUIRED_LAUNCHERS`, and (if needed) the pins — nothing in the script
 itself is model-specific. Commit the profile next to the published image

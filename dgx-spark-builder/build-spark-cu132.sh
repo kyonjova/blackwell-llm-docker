@@ -29,6 +29,15 @@ note() { echo "build-spark-cu132: $*" >&2; }
 # now a pipe, so BuildKit emits plain non-TTY progress -- which is what you
 # want in a file.
 RUN_STAMP="$(date +%Y%m%d-%H%M%S)"
+stamp="${RUN_STAMP%%-*}"
+# The only date this script ever inserts, and only where a value asks for it by
+# name. No token in a value means no date in that value.
+expand_date() {
+  local v="$1"
+  v="${v//<datetime>/${RUN_STAMP}}"
+  v="${v//<date>/${stamp}}"
+  printf '%s' "${v}"
+}
 _RAW_LOG="$(mktemp)"
 exec {_TTY_OUT}>&1 {_TTY_ERR}>&2
 exec > >(tee -a "${_RAW_LOG}") 2>&1
@@ -85,7 +94,7 @@ fi
 [[ -n "${ENV_FILE}" ]] \
   || warn "no profile found beside this script: building from IN-SCRIPT FALLBACK PINS, which are not the source of truth and are probably stale"
 
-ALLOWED_KEYS=" ALLOW_FOREIGN_ARCH B12X_COMMIT B12X_PIN B12X_REF B12X_REPO BUILD_BASE_IMAGE_TAG CUTLASS_COMMIT CUTLASS_DSL_VERSION CUTLASS_REF DEEPGEMM_COMMIT DEEPGEMM_REF FASTSAFETENSORS_SPEC FLASHINFER_BUILD_CUBIN FLASHINFER_COMMIT FLASHINFER_REF FLASHINFER_REPO FROZEN_ACK HUMMING_KERNELS_SPEC IMAGE INSTANTTENSOR_COMMIT INSTANTTENSOR_REF INSTANTTENSOR_REPO LAUNCHER_COMMIT LAUNCHER_REF LAUNCHER_REPO LOGGING MAX_JOBS NCCL_COMMIT NCCL_REF NCCL_REPO NVCC_THREADS PATCH_EXLLAMAV3_AVX PATCH_GPU_ARCH PATCH_HOST_ARCH PATCH_PCIE_ENV PATCH_PIPCHECK_WHEELTAG PATCH_VLLM_REQ_MARKERS PIN_PREFLIGHT PIN_SOURCE_COMMITS PROFILE_NAME QUACK_KERNELS_SPEC SPARKINFER_COMMIT SPARKINFER_REF SPARKINFER_REPO SYSTEM_BASE_IMAGE TILELANG_VERSION TOKENSPEED_MLA_VERSION TORCHVISION_VERSION TORCH_BUNDLED_NCCL_VERSION TORCH_VERSION TVM_FFI_VERSION VLLM_BUILD_VERSION VLLM_COMMIT VLLM_MAX_JOBS VLLM_NVCC_THREADS VLLM_PIN VLLM_REF VLLM_REPO VLLM_REQUIRED_LAUNCHERS VLLM_RUNTIME_EXTRA_PACKAGES XGRAMMAR_COMMIT XGRAMMAR_REF XGRAMMAR_TRANSFORMERS5_COMPAT XGRAMMAR_VERSION "
+ALLOWED_KEYS=" ALLOW_FOREIGN_ARCH B12X_COMMIT B12X_PIN B12X_REF B12X_REPO BUILD_BASE_IMAGE_TAG CUTLASS_COMMIT CUTLASS_DSL_VERSION CUTLASS_REF DEEPGEMM_COMMIT DEEPGEMM_REF FASTSAFETENSORS_SPEC FLASHINFER_BUILD_CUBIN FLASHINFER_COMMIT FLASHINFER_REF FLASHINFER_REPO FROZEN_ACK HUMMING_KERNELS_SPEC IMAGE IMAGE_REPO IMAGE_TAG INSTANTTENSOR_COMMIT INSTANTTENSOR_REF INSTANTTENSOR_REPO LAUNCHER_COMMIT LAUNCHER_REF LAUNCHER_REPO LOGGING MAX_JOBS NCCL_COMMIT NCCL_REF NCCL_REPO NVCC_THREADS PATCH_EXLLAMAV3_AVX PATCH_GPU_ARCH PATCH_HOST_ARCH PATCH_PCIE_ENV PATCH_PIPCHECK_WHEELTAG PATCH_VLLM_REQ_MARKERS PIN_PREFLIGHT PIN_SOURCE_COMMITS PROFILE_NAME QUACK_KERNELS_SPEC SPARKINFER_COMMIT SPARKINFER_REF SPARKINFER_REPO SYSTEM_BASE_IMAGE TILELANG_VERSION TOKENSPEED_MLA_VERSION TORCHVISION_VERSION TORCH_BUNDLED_NCCL_VERSION TORCH_VERSION TVM_FFI_VERSION VLLM_BUILD_VERSION VLLM_COMMIT VLLM_MAX_JOBS VLLM_NVCC_THREADS VLLM_PIN VLLM_REF VLLM_REPO VLLM_REQUIRED_LAUNCHERS VLLM_RUNTIME_EXTRA_PACKAGES XGRAMMAR_COMMIT XGRAMMAR_REF XGRAMMAR_TRANSFORMERS5_COMPAT XGRAMMAR_VERSION "
 if [[ -n "${ENV_FILE}" ]]; then
   [[ -f "${ENV_FILE}" ]] || die "env file not found: ${ENV_FILE}"
   # Canonicalize now: the repo-root cd below would break a relative path for
@@ -105,7 +114,10 @@ if [[ -n "${ENV_FILE}" ]]; then
       *[\`\$\"\;\|\&]*|*"'"*|*\\*|*\(*|*\)*)
         die "${ENV_FILE}:${lineno}: value of ${key} contains shell metacharacters; this file is parsed, not sourced -- write values unquoted" ;;
     esac
-    if [[ "${val}" =~ ^\<[A-Za-z0-9_-]+\>$ ]]; then die "${ENV_FILE}:${lineno}: unresolved placeholder for ${key}"; fi
+    # <date>/<datetime> are substitution tokens, not unresolved placeholders.
+    case "${val}" in "<date>"|"<datetime>") ;; *)
+      if [[ "${val}" =~ ^\<[A-Za-z0-9_-]+\>$ ]]; then die "${ENV_FILE}:${lineno}: unresolved placeholder for ${key}"; fi ;;
+    esac
     if [[ -n "${!key+x}" ]]; then
       note "process env overrides ${ENV_FILE}: ${key}"
       OVERRIDDEN_KEYS="${OVERRIDDEN_KEYS:-} ${key}"
@@ -117,8 +129,29 @@ if [[ -n "${ENV_FILE}" ]]; then
   note "loaded profile: ${ENV_FILE}"
 fi
 
+# PROFILE_NAME names the manifest and the transcript, and supplies the default
+# image tag. If a profile gave only IMAGE_TAG, name the paperwork after that
+# rather than after nothing -- sanitized, since tags allow uppercase and
+# underscores and profile names do not.
+if [[ -n "${PROFILE_NAME+x}" ]]; then
+  _profile_named=1
+elif [[ -n "${IMAGE_TAG+x}" ]]; then
+  _profile_named=1
+  PROFILE_NAME="$(expand_date "${IMAGE_TAG}")"
+  PROFILE_NAME="${PROFILE_NAME,,}"
+  PROFILE_NAME="${PROFILE_NAME//[^a-z0-9.-]/-}"
+  while [[ -n "${PROFILE_NAME}" && "${PROFILE_NAME}" != [a-z0-9]* ]]; do
+    PROFILE_NAME="${PROFILE_NAME#?}"
+  done
+  [[ -n "${PROFILE_NAME}" ]] || PROFILE_NAME=custom
+else
+  _profile_named=0
+fi
 : "${PROFILE_NAME:=custom}"
-[[ "${PROFILE_NAME}" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || die "PROFILE_NAME must be lowercase [a-z0-9.-]: ${PROFILE_NAME}"
+PROFILE_NAME="$(expand_date "${PROFILE_NAME}")"
+[[ "${PROFILE_NAME}" =~ ^[a-z0-9][a-z0-9.-]*$ ]] \
+  || die "PROFILE_NAME must be lowercase [a-z0-9.-] after <date> expansion: ${PROFILE_NAME}"
+export PROFILE_NAME
 
 # --log wins over the profile; the profile wins over nothing. A separate flag
 # variable avoids the parser reporting a bogus "process env overrides" note
@@ -239,13 +272,68 @@ export NVCC_THREADS="${NVCC_THREADS:-1}"
 export VLLM_NVCC_THREADS="${VLLM_NVCC_THREADS:-1}"
 export PIN_SOURCE_COMMITS="${PIN_SOURCE_COMMITS:-1}"
 
-# Derived from RUN_STAMP, not a fresh date(1): a build started at 23:59 must
-# not tag its image with one day and name its manifest with the next.
-stamp="${RUN_STAMP%%-*}"
-export IMAGE="${IMAGE:-local/vllm:${PROFILE_NAME}-jj-b12x-cu132-sm121-${stamp}}"
-export SYSTEM_BASE_IMAGE="${SYSTEM_BASE_IMAGE:-local/vllm:cu132-sm121-system-base-${stamp}}"
-export BUILD_BASE_IMAGE_TAG="${BUILD_BASE_IMAGE_TAG:-local/vllm:cu132-sm121-build-base-${stamp}}"
-export VLLM_BUILD_VERSION="${VLLM_BUILD_VERSION:-0.26.1rc0+jj.${PROFILE_NAME//-/.}.sm121.cu132.${stamp}}"
+# ------------------------------------------------------------- image naming
+# A docker reference is REPOSITORY:TAG -- local/vllm:glm53-nvfp4. The wrapper
+# invents no decoration of its own: the repository defaults to local/vllm, the
+# tag defaults to PROFILE_NAME verbatim, and the profile owns both. Set IMAGE
+# to take over the whole reference, or IMAGE_REPO / IMAGE_TAG to change one
+# half of it.
+#
+# A date appears ONLY where a value asks for it: <date> expands to YYYYmmdd and
+# <datetime> to YYYYmmdd-HHMMSS, wherever they occur in PROFILE_NAME, IMAGE,
+# IMAGE_REPO, IMAGE_TAG, either base-stage tag, or VLLM_BUILD_VERSION. With no
+# token there is no date, so rebuilding a profile overwrites its own tag
+# instead of leaving one full image set per build day on a 4 TB node.
+: "${IMAGE_REPO:=local/vllm}"
+if [[ "${_profile_named}" == 1 ]]; then
+  : "${IMAGE_TAG:=${PROFILE_NAME}}"
+else
+  # Nothing named this build, so there is nothing to name the tag after.
+  : "${IMAGE_TAG:=<date>}"
+fi
+IMAGE_REPO="$(expand_date "${IMAGE_REPO}")"
+IMAGE_TAG="$(expand_date "${IMAGE_TAG}")"
+IMAGE="${IMAGE:-${IMAGE_REPO}:${IMAGE_TAG}}"
+IMAGE="$(expand_date "${IMAGE}")"
+
+# Shape checks, before anything derives from this. An untagged reference
+# silently becomes :latest and an unexpanded token would be baked into a
+# published tag; both are cheap here and expensive after an eight-hour build.
+case "${IMAGE}" in
+  *"<"*|*">"*) die "unexpanded token in IMAGE: ${IMAGE} (only <date> and <datetime> are substituted)" ;;
+esac
+_ref_last="${IMAGE##*/}"                       # drop registry host and namespace
+case "${_ref_last}" in
+  *:*) IMAGE_TAG="${_ref_last##*:}" ;;
+  *)   die "IMAGE has no tag: ${IMAGE} -- docker would resolve this to :latest" ;;
+esac
+[[ "${IMAGE_TAG}" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$ ]] \
+  || die "IMAGE tag is not a valid docker tag: ${IMAGE_TAG}"
+# Re-derived FROM the resolved reference (not the other way round), so that a
+# profile setting IMAGE alone governs every name below it and the manifest
+# reports the halves of the image that was actually built.
+IMAGE_REPO="${IMAGE%":${IMAGE_TAG}"}"
+export IMAGE_REPO IMAGE_TAG IMAGE
+
+# The base-stage tags are build-cache handles, not artifacts. Derived per
+# profile so two profiles with different toolchain pins can never silently
+# overwrite each other's bases; point several profiles at one pair of names to
+# share the layers (and the disk) when their toolchains match.
+SYSTEM_BASE_IMAGE="${SYSTEM_BASE_IMAGE:-${IMAGE_REPO}:${IMAGE_TAG}-system-base}"
+BUILD_BASE_IMAGE_TAG="${BUILD_BASE_IMAGE_TAG:-${IMAGE_REPO}:${IMAGE_TAG}-build-base}"
+SYSTEM_BASE_IMAGE="$(expand_date "${SYSTEM_BASE_IMAGE}")"
+BUILD_BASE_IMAGE_TAG="$(expand_date "${BUILD_BASE_IMAGE_TAG}")"
+export SYSTEM_BASE_IMAGE BUILD_BASE_IMAGE_TAG
+
+# PEP 440 wheel version. The local segment is the tag with every
+# non-alphanumeric run collapsed to a single dot, because a version is not
+# free-form: hyphens and doubled dots are rejected by packaging tools.
+_local_version="${IMAGE_TAG//[^A-Za-z0-9]/.}"
+while [[ "${_local_version}" == *..* ]]; do _local_version="${_local_version//../.}"; done
+_local_version="${_local_version#.}"; _local_version="${_local_version%.}"
+VLLM_BUILD_VERSION="${VLLM_BUILD_VERSION:-0.26.1rc0+${_local_version}}"
+VLLM_BUILD_VERSION="$(expand_date "${VLLM_BUILD_VERSION}")"
+export VLLM_BUILD_VERSION
 
 
 [[ -n "${VLLM_REQUIRED_LAUNCHERS}" ]] \
@@ -581,7 +669,11 @@ PATCHED_DOCKERFILE_SHA="$(sha256sum "${dockerfile}" | cut -d' ' -f1)"
 if [[ "${DRY_RUN}" == 1 ]]; then
   echo
   note "DRY RUN complete: all rewrites validated against ${dockerfile}; no image built."
-  note "profile=${PROFILE_NAME} image-would-be=${IMAGE} vllm=${VLLM_COMMIT:0:9} b12x=${B12X_COMMIT:0:9}"
+  note "profile=${PROFILE_NAME} vllm=${VLLM_COMMIT:0:9} b12x=${B12X_COMMIT:0:9}"
+  note "image:         ${IMAGE}"
+  note "system-base:   ${SYSTEM_BASE_IMAGE}"
+  note "build-base:    ${BUILD_BASE_IMAGE_TAG}"
+  note "wheel version: ${VLLM_BUILD_VERSION}"
   exit 0
 fi
 
