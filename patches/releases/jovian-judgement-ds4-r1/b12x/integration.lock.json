@@ -1,0 +1,49 @@
+{
+  "base": {
+    "commit": "aa90a277a61f9ded46c0f504e37a955b7706659b",
+    "ref": "refs/heads/master",
+    "repository": "https://github.com/local-inference-lab/b12x.git"
+  },
+  "composition": null,
+  "composition_strategy": "cherry_pick",
+  "manifest": {
+    "sha256": "3773cf4c6b53883319a841b559acda1e16f8ff4e14d0ad3239969aae4d69d489"
+  },
+  "name": "jovian-judgement-deepseek-v4-flash-b12x",
+  "pull_requests": [
+    {
+      "commits": [
+        "bc8bf029b1ef3363d220b14e037c218ec03e85d9",
+        "e6bf8496e0077b8da230f0bccbda7ce6ad8a9323",
+        "f9b039b94c72779ea4d3b62864a930c882611e9e",
+        "b184292a1e0f5c3516f5971730fddea2944112a8",
+        "37d800547ca4666556b58a6b162f5cfa37c1037e",
+        "37dc7f8036f602adc1edac47464876d2a9c61d71",
+        "2a2baaf3979c1f47f8fd139aab5c6eeea35003e4"
+      ],
+      "disposition": "cherry_picked",
+      "head": "2a2baaf3979c1f47f8fd139aab5c6eeea35003e4",
+      "number": 246,
+      "ref": "refs/pull/246/head",
+      "title": "Make TP2 graph peer-push generation-safe"
+    },
+    {
+      "commits": [
+        "8ee356972e09f9a896b3c8ff3df6440a9a458299",
+        "f8a7b9c4070754ed4399c71fc4306d8970711e1c"
+      ],
+      "disposition": "cherry_picked",
+      "head": "f8a7b9c4070754ed4399c71fc4306d8970711e1c",
+      "number": 302,
+      "ref": "refs/pull/302/head",
+      "title": "Use a valid W4A8 MoE profiling oracle"
+    }
+  ],
+  "result": {
+    "patch": "integration.patch",
+    "patch_sha256": "c4951596023dcb998767bc34a9bf9200fcf71b25e3524de2d46f7c4c8390e8d4",
+    "tree": "8a5b9bfbf59ad61d87efdc8017b91a269d5a319c"
+  },
+  "schema_version": 1,
+  "source_patches": []
+}

@@ -1,0 +1,43 @@
+{
+  "base": {
+    "commit": "c085b910ebd4a8c89c2c4085cbf17ccaf15a384c",
+    "ref": "refs/heads/dev/jovian-judgement",
+    "repository": "https://github.com/local-inference-lab/vllm.git"
+  },
+  "composition": null,
+  "composition_strategy": "cherry_pick",
+  "manifest": {
+    "sha256": "9f25f66cd6c7ee5581e59e9460bc5169987354410931e6ae5d1e4c618e23c7ce"
+  },
+  "name": "jovian-judgement-deepseek-v4-flash-vllm",
+  "pull_requests": [
+    {
+      "commits": [
+        "f3078d12515311f0824283510147749c832cccd0",
+        "cbb66bdff1763c174ebc794a7f968930e956580f"
+      ],
+      "disposition": "cherry_picked",
+      "head": "cbb66bdff1763c174ebc794a7f968930e956580f",
+      "number": 628,
+      "ref": "refs/pull/628/head",
+      "title": "Register speculative CUDA graph row counts during B12X warmup"
+    },
+    {
+      "commits": [
+        "5b6fb80f5c868b62da2c01c3f52861b34c84d8ac"
+      ],
+      "disposition": "cherry_picked",
+      "head": "5b6fb80f5c868b62da2c01c3f52861b34c84d8ac",
+      "number": 630,
+      "ref": "refs/pull/630/head",
+      "title": "Clear custom all-reduce selectors in NCCL mode"
+    }
+  ],
+  "result": {
+    "patch": "integration.patch",
+    "patch_sha256": "e6430fced08defa75c0a49956f4f97bc4e384e7e32ae800370a2f4957bb2f8b9",
+    "tree": "28bc825a1321bb480fc3294179fd34afeb468389"
+  },
+  "schema_version": 1,
+  "source_patches": []
+}

@@ -1,0 +1,150 @@
+diff --git a/serve-ds4-flash.sh b/serve-ds4-flash.sh
+index e0f0dd787d10ee38dd8f3e5cef9b4caaa2a05455..fdbe63f0d4ad2ccf0936ddb6bbae998d99433071 100755
+--- a/serve-ds4-flash.sh
++++ b/serve-ds4-flash.sh
+@@ -199,6 +199,11 @@ case "${allreduce_mode}" in
+     ;;
+   nccl)
+     export VLLM_ENABLE_PCIE_ALLREDUCE=0
++    # Base images may export a backend value for an earlier vLLM release.
++    # NCCL mode must not expose an inactive custom-backend selector because
++    # every registered vLLM environment variable is validated at worker init.
++    unset VLLM_PCIE_ALLREDUCE_BACKEND
++    unset VLLM_PCIE_ONESHOT_ALLREDUCE_MAX_SIZE
+     export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+     allreduce_args=(--disable-custom-all-reduce)
+     ;;
+diff --git a/tests/model_executor/test_b12x_warmup.py b/tests/model_executor/test_b12x_warmup.py
+index 1951372bbaf7dc8676e0b015c8350fdf82b9bfe2..d620f280d8af32a5fc03b1ca0d28aad091803f32 100644
+--- a/tests/model_executor/test_b12x_warmup.py
++++ b/tests/model_executor/test_b12x_warmup.py
+@@ -243,6 +243,11 @@ def test_b12x_warmup_deduplicates_registered_signatures(monkeypatch) -> None:
+ 
+     worker = SimpleNamespace(
+         get_model=lambda: SimpleNamespace(modules=modules),
++        model_runner=SimpleNamespace(
++            cudagraph_manager=SimpleNamespace(
++                planned_token_counts=lambda: [6, 12],
++            )
++        ),
+         scheduler_config=SimpleNamespace(
+             max_num_batched_tokens=8,
+             max_num_scheduled_tokens=32,
+@@ -268,8 +273,8 @@ def test_b12x_warmup_deduplicates_registered_signatures(monkeypatch) -> None:
+ 
+     assert scans == 1
+     assert calls == [
+-        ("first", (1, 2, 4, 8, 16, 32), torch.bfloat16),
+-        ("second", (1, 2, 4, 8, 16, 32), torch.bfloat16),
++        ("first", (1, 2, 4, 6, 8, 12, 16, 32), torch.bfloat16),
++        ("second", (1, 2, 4, 6, 8, 12, 16, 32), torch.bfloat16),
+     ]
+     assert synchronized == [True]
+ 
+diff --git a/tests/v1/cudagraph/test_cudagraph_manager.py b/tests/v1/cudagraph/test_cudagraph_manager.py
+index be2d20f7281a0aefbd4c3cd2470f34867c9dd906..84879e9f1d0a2c14e7e59deab937581d3eb33ded 100644
+--- a/tests/v1/cudagraph/test_cudagraph_manager.py
++++ b/tests/v1/cudagraph/test_cudagraph_manager.py
+@@ -170,20 +170,25 @@ def _create_decode_vllm_config(
+     vllm_config.scheduler_config = SchedulerConfig.default_factory(max_num_seqs=8)
+     vllm_config.parallel_config = ParallelConfig()
+     vllm_config.num_speculative_tokens = num_speculative_tokens
+-    if dynamic_spec_num_tokens is None:
++    if dynamic_spec_num_tokens is None and num_speculative_tokens == 0:
+         vllm_config.speculative_config = None
+     else:
+         speculative_config = MagicMock()
+-        speculative_config.uses_dynamic_speculative_decoding.return_value = True
++        speculative_config.uses_dynamic_speculative_decoding.return_value = (
++            dynamic_spec_num_tokens is not None
++        )
+         speculative_config.uses_batch_size_dynamic_speculative_decoding.return_value = (
+-            True
++            dynamic_spec_num_tokens is not None
+         )
+         speculative_config.uses_acceptance_length_adaptation.return_value = False
+-        # Each entry is (range_start, range_end, num_speculative_tokens); only
+-        # the third element is read by the manager.
+-        speculative_config.num_speculative_tokens_per_batch_size = [
+-            (0, 0, n) for n in dynamic_spec_num_tokens
+-        ]
++        if dynamic_spec_num_tokens is None:
++            speculative_config.num_speculative_tokens_per_batch_size = None
++        else:
++            # Each entry is (range_start, range_end, num_speculative_tokens);
++            # only the third element is read by the manager.
++            speculative_config.num_speculative_tokens_per_batch_size = [
++                (0, 0, n) for n in dynamic_spec_num_tokens
++            ]
+         vllm_config.speculative_config = speculative_config
+     return vllm_config
+ 
+@@ -256,6 +261,24 @@ def test_uniform_decode_exact_match_is_not_over_padded(monkeypatch):
+     assert desc.num_reqs == 3
+ 
+ 
++def test_planned_token_counts_include_speculative_decode_rows(monkeypatch):
++    capture_sizes = [1, 2, 4, 8, 16, 24]
++    manager = _make_spec_decode_manager(
++        monkeypatch,
++        decode_query_len=6,
++        capture_sizes=capture_sizes,
++        num_speculative_tokens=5,
++    )
++    target_only = _make_spec_decode_manager(
++        monkeypatch,
++        decode_query_len=1,
++        capture_sizes=capture_sizes,
++    )
++
++    assert manager.planned_token_counts() == [1, 2, 4, 6, 8, 12, 16, 18, 24]
++    assert 12 not in target_only.planned_token_counts()
++
++
+ def test_mixed_batch_never_selects_a_uniform_decode_graph(monkeypatch):
+     manager = _make_spec_decode_manager(monkeypatch)
+ 
+diff --git a/vllm/model_executor/warmup/b12x_warmup.py b/vllm/model_executor/warmup/b12x_warmup.py
+index ae645ea0a5c60aa75417945b5a9eaae6ad3f13e6..83a6c78818361e41d5b10be6e4728dc1de3c6dda 100644
+--- a/vllm/model_executor/warmup/b12x_warmup.py
++++ b/vllm/model_executor/warmup/b12x_warmup.py
+@@ -68,6 +68,14 @@ def b12x_warmup(worker: "Worker", cudagraph_capture_sizes: list[int]) -> None:
+         *cudagraph_capture_sizes,
+         *(size for size in compile_sizes if isinstance(size, int)),
+     ]
++    cudagraph_manager = getattr(
++        getattr(worker, "model_runner", None), "cudagraph_manager", None
++    )
++    planned_token_counts = getattr(cudagraph_manager, "planned_token_counts", None)
++    if callable(planned_token_counts):
++        # Speculative decode graphs round scheduler buckets to verifier-row
++        # multiples. Those model shapes must be planned before graph capture.
++        serving_sizes.extend(planned_token_counts())
+     max_tokens = max_num_batched_tokens
+     max_num_scheduled_tokens = worker.scheduler_config.max_num_scheduled_tokens
+     if max_num_scheduled_tokens is not None:
+diff --git a/vllm/v1/worker/gpu/cudagraph_utils.py b/vllm/v1/worker/gpu/cudagraph_utils.py
+index 97823766264cf5c0be1a01c7dd95c7d02d5c6c3c..b6fd64f7a92cd523f96f7ce23ac21de35c306a32 100644
+--- a/vllm/v1/worker/gpu/cudagraph_utils.py
++++ b/vllm/v1/worker/gpu/cudagraph_utils.py
+@@ -492,6 +492,20 @@ class CudaGraphManager:
+     def needs_capture(self) -> bool:
+         return len(self._capture_descs) > 0
+ 
++    def planned_token_counts(self) -> list[int]:
++        """Return model-row counts staged for decoder graph capture.
++
++        Returns:
++            Sorted, unique ``num_tokens`` values from the capture descriptors.
++        """
++        return sorted(
++            {
++                desc.num_tokens
++                for descs in self._capture_descs.values()
++                for desc in descs
++            }
++        )
++
+     def reset_graphs(self) -> None:
+         """Destroy FULL graph executables while retaining captured resources."""
+         for graph in self.graphs.values():

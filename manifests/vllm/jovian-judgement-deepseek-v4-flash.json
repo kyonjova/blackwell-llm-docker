@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "name": "jovian-judgement-deepseek-v4-flash-vllm",
+  "repository": "https://github.com/local-inference-lab/vllm.git",
+  "base_ref": "refs/heads/dev/jovian-judgement",
+  "composition_strategy": "cherry_pick",
+  "pull_requests": [
+    {
+      "number": 628,
+      "head": "cbb66bdff1763c174ebc794a7f968930e956580f",
+      "commits": [
+        "f3078d12515311f0824283510147749c832cccd0",
+        "cbb66bdff1763c174ebc794a7f968930e956580f"
+      ],
+      "title": "Register speculative CUDA graph row counts during B12X warmup"
+    },
+    {
+      "number": 630,
+      "head": "5b6fb80f5c868b62da2c01c3f52861b34c84d8ac",
+      "commits": [
+        "5b6fb80f5c868b62da2c01c3f52861b34c84d8ac"
+      ],
+      "title": "Clear custom all-reduce selectors in NCCL mode"
+    },
+    {
+      "number": 634,
+      "head": "20df5b260100579257532ff0aa9f30ec872e85e6",
+      "commits": [
+        "8d0ad7e7ef45f6745b4b51985a104f7ff7f5dee2",
+        "dc8e95286df1ba7c6049944113752a38850d221f",
+        "b4a12435021c58a689bc828e5076abc08f07bc78",
+        "20df5b260100579257532ff0aa9f30ec872e85e6"
+      ],
+      "title": "Add DeepSeek-V4-Flash-Vision-Exp support"
+    }
+  ],
+  "source_patches": []
+}

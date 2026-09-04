@@ -27,11 +27,21 @@ grep -Fq 'local-inference.exllamav3.commit="${EXLLAMAV3_COMMIT}"' "${dockerfile}
 grep -Fq 'FROM ${FLASHINFER_WHEEL_IMAGE} AS flashinfer-wheel-artifact' "${dockerfile}"
 grep -Fq 'COPY --from=flashinfer-wheel-artifact /opt/flashinfer-wheels' "${dockerfile}"
 grep -Fq 'local-inference.flashinfer.wheel-image-id="${FLASHINFER_WHEEL_IMAGE_ID}"' "${dockerfile}"
+grep -Fq 'python -m pip install --no-deps --force-reinstall' "${dockerfile}"
+if grep -Fq 'if [[ "${RUNTIME_FOUNDATION}" != 1 ]]; then' "${dockerfile}"; then
+  printf 'The runtime must install the pinned FlashInfer artifact even when a runtime foundation is used.\n' >&2
+  exit 1
+fi
 if grep -Fq 'git clone --filter=blob:none --no-checkout "${FLASHINFER_REPO}" /tmp/flashinfer-src' "${dockerfile}"; then
   printf 'The runtime Dockerfile must consume the FlashInfer wheel artifact instead of compiling FlashInfer.\n' >&2
   exit 1
 fi
 grep -Fq 'python -m pip wheel --no-build-isolation --no-deps' "${flashinfer_dockerfile}"
+grep -Fq 'print(m.version("flashinfer-python"))' "${flashinfer_dockerfile}"
+if grep -Fq 'm.version(\"flashinfer-python\")' "${flashinfer_dockerfile}"; then
+  printf 'The FlashInfer version assertion must not escape quotes inside a single-quoted Python command.\n' >&2
+  exit 1
+fi
 grep -Fq './flashinfer-jit-cache' "${flashinfer_dockerfile}"
 grep -Fq 'The FlashInfer artifact recipe must be committed before build.' "${flashinfer_builder}"
 grep -Fq 'compose_source lmcache /opt/infernal-invocation/lmcache' "${dockerfile}"
@@ -47,6 +57,10 @@ grep -Fq -- '--build-arg "INSTANTTENSOR_COMMIT=${instanttensor_commit}"' "${buil
 grep -Fq -- '--build-arg "INSTANTTENSOR_LIBAIO_TREE=${instanttensor_libaio_tree}"' "${builder}"
 grep -Fq -- '--build-arg "FLASHINFER_WHEEL_IMAGE=${flashinfer_wheel_image}"' "${builder}"
 grep -Fq -- '--build-arg "FLASHINFER_WHEEL_IMAGE_ID=${flashinfer_wheel_image_id}"' "${builder}"
+grep -Fq -- '--build-arg "FLASHINFER_REPO=${flashinfer_repo}"' "${builder}"
+grep -Fq -- '--build-arg "FLASHINFER_REF=${flashinfer_ref}"' "${builder}"
+grep -Fq -- '--build-arg "FLASHINFER_COMMIT=${flashinfer_commit}"' "${builder}"
+grep -Fq 'local-inference.flashinfer.commit" == $commit' "${builder}"
 grep -Fq 'instanttensor_libaio_repo=${INSTANTTENSOR_LIBAIO_REPO:-https://github.com/sailfishos-mirror/libaio.git}' "${builder}"
 grep -Fq 'DS4 launch: mode=dspark depth=fixed backend=b12x-a8' "${builder}"
 grep -Fq 'tp=2 dcp=1 max_seqs=16 graph=96' "${builder}"

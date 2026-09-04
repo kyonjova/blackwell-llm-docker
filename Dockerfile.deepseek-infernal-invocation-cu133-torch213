@@ -88,6 +88,7 @@ ENV VIRTUAL_ENV=/opt/venv \
     VLLM_DISABLED_KERNELS=MarlinFP8ScaledMMLinearKernel
 
 ENV VLLM_EXL3_EXT_PATH=/opt/exllamav3 \
+    PYTHON_BIN=/opt/venv/bin/python \
     VLLM_EXL3_ENCODER_SOURCE=/opt/exllamav3-python/exllamav3 \
     VLLM_EXL3_ENCODER_REVISION=${EXLLAMAV3_COMMIT} \
     VLLM_EXL3_ONLINE_CACHE_DIR=/cache/exl3-online \
@@ -235,13 +236,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # from vLLM, B12X, and LMCache source revisions.
 COPY --from=flashinfer-wheel-artifact /opt/flashinfer-wheels /tmp/flashinfer-wheels
 RUN set -eux; \
-    if [[ "${RUNTIME_FOUNDATION}" != 1 ]]; then \
-      python -m pip uninstall --yes \
-        flashinfer-python flashinfer-cubin flashinfer-jit-cache; \
-      python -m pip install --no-deps --force-reinstall \
-        /tmp/flashinfer-wheels/flashinfer_python-*.whl \
-        /tmp/flashinfer-wheels/flashinfer_jit_cache-*.whl; \
-    fi; \
+    python -m pip uninstall --yes \
+      flashinfer-python flashinfer-cubin flashinfer-jit-cache; \
+    python -m pip install --no-deps --force-reinstall \
+      /tmp/flashinfer-wheels/flashinfer_python-*.whl \
+      /tmp/flashinfer-wheels/flashinfer_jit_cache-*.whl; \
     test "$(python -c 'import importlib.metadata as m; print(m.version("flashinfer-python"))')" = \
       "${FLASHINFER_VERSION}"; \
     rm -rf /tmp/flashinfer-wheels
@@ -487,8 +486,8 @@ ARG RELEASE_NAME
 ARG RELEASE_DATE
 ARG DOCKER_COMMIT
 
-LABEL org.opencontainers.image.title="Infernal Invocation CUDA 13.3 PyTorch 2.13 runtime" \
-      org.opencontainers.image.description="Source-locked DeepSeek-V4-Flash and GLM-5.2 runtime with B12X, LMCache, InstantTensor, and NCCL 2.31.2" \
+LABEL org.opencontainers.image.title="Source-locked CUDA 13.3 PyTorch 2.13 inference runtime" \
+      org.opencontainers.image.description="Source-locked DeepSeek-V4-Flash text and vision runtime with B12X, LMCache, InstantTensor, and NCCL 2.31.2" \
       org.opencontainers.image.source="https://github.com/local-inference-lab/blackwell-llm-docker" \
       org.opencontainers.image.version="${RELEASE_DATE}" \
       org.opencontainers.image.revision="${DOCKER_COMMIT}" \
@@ -498,6 +497,7 @@ LABEL org.opencontainers.image.title="Infernal Invocation CUDA 13.3 PyTorch 2.13
       local-inference.runtime.base-id="${BASE_IMAGE_ID}" \
       local-inference.runtime.foundation.enabled="${RUNTIME_FOUNDATION}" \
       local-inference.runtime.foundation.image="${RUNTIME_FOUNDATION_IMAGE}" \
+      local-inference.runtime.host-kv-default="off" \
       local-inference.cache.fingerprint="${CACHE_FINGERPRINT}" \
       local-inference.vllm.repo="${VLLM_REPO}" \
       local-inference.vllm.branch="${VLLM_REF}" \

@@ -58,7 +58,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 RUN python -m pip install --no-deps --force-reinstall \
       /opt/flashinfer-wheels/flashinfer_python-*.whl \
       /opt/flashinfer-wheels/flashinfer_jit_cache-*.whl \
- && test "$(python -c 'import importlib.metadata as m; print(m.version(\"flashinfer-python\"))')" = \
+ && test "$(python -c 'import importlib.metadata as m; print(m.version("flashinfer-python"))')" = \
       "${FLASHINFER_VERSION}"
 
 # The published artifact contains only the pinned wheels. Consumers provide

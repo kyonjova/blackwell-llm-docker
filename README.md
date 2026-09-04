@@ -107,6 +107,12 @@ IMAGE=voipmonitor/vllm:vllm-b12x-cu132 ./build-vllm-b12x-cu132.sh
 # Invocation, B12X, and LMCache integration trees on CUDA 13.3/PyTorch 2.13.
 ./build-deepseek-infernal-invocation-cu133-torch213.sh
 
+# Build the DeepSeek-V4-Flash text and vision runtime from source-locked
+# Jovian Judgement, B12X, LMCache, and FlashInfer revisions on CUDA 13.3 and
+# PyTorch 2.13. The Vision Compose profile uses the checkpoint-supported K3
+# DSpark depth and keeps external host KV caching disabled by default.
+./build-deepseek-jovian-judgement-cu133-torch213.sh
+
 # Build the unified GLM-5.2 and DS4/DSpark v16 image from immutable vLLM,
 # B12X, FlashInfer, DeepGEMM, CUTLASS, InstantTensor, and NCCL commits.
 ./build-fathomless-firmament-v16-cu132.sh
