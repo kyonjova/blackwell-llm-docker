@@ -8,9 +8,9 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${repo_root}"
 
 release_name=${RELEASE_NAME:-jovian-judgement-deepseek-v4-flash-cu133-torch213}
-release_date=${RELEASE_DATE:-20260904}
-revision=${REVISION:-r2}
-composition_root=${COMPOSITION_ROOT:-patches/releases/jovian-judgement-ds4-r2}
+release_date=${RELEASE_DATE:-20260907}
+revision=${REVISION:-r9}
+composition_root=${COMPOSITION_ROOT:-patches/releases/jovian-judgement-ds4-r9}
 base_image=${BASE_IMAGE:-voipmonitor/vllm@sha256:03b67e53dda73c3fa317d4cb529ad38a220c51c7365ee8d54c16e5063fcc54e2}
 runtime_foundation=${RUNTIME_FOUNDATION:-1}
 runtime_foundation_image=${RUNTIME_FOUNDATION_IMAGE:-${base_image}}
@@ -65,7 +65,7 @@ test "${B12X_REF}" = master
 
 vllm_package_version=${VLLM_PACKAGE_VERSION:-0.26.1rc0+jovian.judgement.cu133.${revision}.vllm${VLLM_INTEGRATION_TREE:0:7}.b12x${B12X_INTEGRATION_TREE:0:7}}
 flashinfer_version=${FLASHINFER_VERSION:-0.6.18+cu133}
-lmcache_build_version=${LMCACHE_BUILD_VERSION:-0.5.2+glm52dcp.5}
+lmcache_build_version=${LMCACHE_BUILD_VERSION:-0.5.2+jj.ds4.r6}
 cache_fingerprint="cu133-torch213-vllm${VLLM_INTEGRATION_TREE:0:10}-b12x${B12X_INTEGRATION_TREE:0:10}-lmcache${LMCACHE_INTEGRATION_TREE:0:10}"
 image=${IMAGE:-voipmonitor/vllm:jovian-judgement-vllm${VLLM_INTEGRATION_TREE:0:7}-b12x${B12X_INTEGRATION_TREE:0:7}-fi${flashinfer_commit:0:7}-cu133-torch213-${release_date}-${revision}}
 
@@ -214,6 +214,8 @@ DOCKER_BUILDKIT=1 docker build \
   .
 
 labels="$(docker image inspect "${image}" --format '{{json .Config.Labels}}')"
+image_env="$(docker image inspect "${image}" --format '{{range .Config.Env}}{{println .}}{{end}}')"
+grep -Fxq 'LMCACHE_AUTO_TRANSFER_MODE=engine_driven' <<<"${image_env}"
 assert_label() {
   local key=$1 expected=$2
   jq -e --arg key "${key}" --arg expected "${expected}" \
@@ -249,11 +251,13 @@ docker run --rm --entrypoint /opt/venv/bin/python "${image}" \
 launcher_output="$(
   docker run --rm --entrypoint /usr/local/bin/serve-ds4-flash.sh \
     -e DRY_RUN=1 -e MODE=dspark -e DSPARK_TOKENS=5 -e MAX_NUM_SEQS=16 \
-    -e TP_SIZE=2 -e GRAPH=auto -e LOAD_FORMAT=instanttensor "${image}" 2>&1
+    -e TP_SIZE=2 -e GRAPH=auto "${image}" 2>&1
 )"
 grep -Fq 'DS4 launch: variant=text mode=dspark depth=fixed' <<<"${launcher_output}"
 grep -Fq 'backend=b12x-a8' <<<"${launcher_output}"
 grep -Fq 'tp=2 dcp=1 max_seqs=16 graph=96' <<<"${launcher_output}"
+grep -Fq 'load_format=instanttensor instanttensor_backend=BUFFERED' \
+  <<<"${launcher_output}"
 grep -Fq -- '--attention-backend B12X' <<<"${launcher_output}"
 printf '%s\n' "${launcher_output}"
 
@@ -262,24 +266,54 @@ vision_launcher_output="$(
     -e DRY_RUN=1 -e MODE=dspark -e DS4_MODEL_VARIANT=vision \
     -e MODEL=deepseek-ai/DeepSeek-V4-Flash-Vision-Exp \
     -e MAX_NUM_SEQS=4 -e MAX_NUM_BATCHED_TOKENS=4096 \
-    -e TP_SIZE=2 -e GRAPH=auto -e LOAD_FORMAT=instanttensor "${image}" 2>&1
+    -e TP_SIZE=2 -e GRAPH=auto "${image}" 2>&1
 )"
 grep -Fq 'DS4 launch: variant=vision mode=dspark depth=fixed' \
   <<<"${vision_launcher_output}"
 grep -Fq 'tp=2 dcp=1 max_seqs=4 graph=16' <<<"${vision_launcher_output}"
+grep -Fq 'load_format=instanttensor instanttensor_backend=BUFFERED' \
+  <<<"${vision_launcher_output}"
 grep -Fq 'num_speculative_tokens\":3' <<<"${vision_launcher_output}"
 grep -Fq -- '--revision 6821d6ad3681a4b137b066b76094fa82ebd0a380' \
   <<<"${vision_launcher_output}"
+grep -Fq -- '--max-model-len 1048576' <<<"${vision_launcher_output}"
 grep -Fq -- '--gpu-memory-utilization 0.975' <<<"${vision_launcher_output}"
 
 vision_lmcache_output="$(
   docker run --rm --entrypoint /usr/local/bin/serve-ds4-flash.sh \
     -e DRY_RUN=1 -e MODE=dspark -e DS4_MODEL_VARIANT=vision \
     -e MODEL=deepseek-ai/DeepSeek-V4-Flash-Vision-Exp \
-    -e LMCACHE_MODE=ram -e LMCACHE_TRANSFER_MODE=auto \
+    -e LMCACHE_MODE=ram -e LMCACHE_TRANSFER_MODE=engine_driven \
     -e MAX_NUM_SEQS=4 -e TP_SIZE=2 -e GRAPH=auto "${image}" 2>&1
 )"
-grep -Fq -- '--gpu-memory-utilization 0.96' <<<"${vision_lmcache_output}"
+grep -Fq -- '--max-model-len 1048576' <<<"${vision_lmcache_output}"
+grep -Fq -- '--gpu-memory-utilization 0.970' <<<"${vision_lmcache_output}"
+grep -Fq 'lmcache_transfer=engine_driven' <<<"${vision_lmcache_output}"
+
+text_lmcache_output="$(
+  docker run --rm --entrypoint /usr/local/bin/serve-ds4-flash.sh \
+    -e DRY_RUN=1 -e MODE=dspark -e DSPARK_TOKENS=5 \
+    -e LMCACHE_MODE=disk -e LMCACHE_TRANSFER_MODE=engine_driven \
+    -e MAX_MODEL_LEN=1048576 \
+    -e MAX_NUM_SEQS=8 -e TP_SIZE=2 -e GRAPH=auto "${image}" 2>&1
+)"
+grep -Fq -- '--gpu-memory-utilization 0.970' <<<"${text_lmcache_output}"
+grep -Fq 'lmcache_transfer=engine_driven direct_lmcache=0 lmcache_memory_profile=qualified' \
+  <<<"${text_lmcache_output}"
+
+if text_unsafe_output="$(
+  docker run --rm --entrypoint /usr/local/bin/serve-ds4-flash.sh \
+    -e DRY_RUN=1 -e MODE=dspark -e DSPARK_TOKENS=5 \
+    -e LMCACHE_MODE=disk -e MAX_MODEL_LEN=1048576 \
+    -e GPU_MEMORY_UTILIZATION=0.975 \
+    -e MAX_NUM_SEQS=8 -e TP_SIZE=2 -e GRAPH=auto "${image}" 2>&1
+)"; then
+  printf 'Text direct LMCache accepted an unqualified memory profile:\n%s\n' \
+    "${text_unsafe_output}" >&2
+  exit 1
+fi
+grep -Fq 'requires GPU_MEMORY_UTILIZATION at or below 0.965' \
+  <<<"${text_unsafe_output}"
 
 docker run --rm --entrypoint /opt/venv/bin/python "${image}" -c \
   'import importlib, os, pathlib, torch; ext = importlib.import_module("exllamav3_ext"); assert hasattr(ext, "exl3_gemm"); assert pathlib.Path(os.environ["VLLM_EXL3_ENCODER_SOURCE"], "modules/quant/exl3_lib/quantize.py").is_file()'

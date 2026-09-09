@@ -2,6 +2,29 @@
 
 Docker images for LLM inference on NVIDIA Blackwell GPUs (SM120).
 
+## DeepSeek V4 Serving
+
+The Jovian Judgement r9 serving profiles use TP2 on two 96 GiB SM120 GPUs,
+InstantTensor BUFFERED, fixed probabilistic DSpark K5 for the 0731 text
+checkpoint or K3 for Vision, and optional engine-driven LMCache.
+
+```bash
+docker compose -f examples/docker-compose-ds4-dspark-jovian-judgement-r9.yml pull
+docker compose -f examples/docker-compose-ds4-dspark-jovian-judgement-r9.yml up -d
+```
+
+Use `examples/docker-compose-ds4-vision-jovian-judgement-r9.yml` for the Vision
+checkpoint. These profiles download prebuilt images and do not build locally.
+GPU KV caching is enabled; `LMCACHE_MODE=ram LMCACHE_L1_GB=24` adds host-memory
+reuse. The standalone LMCache process does not create a CUDA context.
+
+See the [serving specification](https://github.com/local-inference-lab/rtx6kpro/blob/master/models/ds4-jovian-judgement-r9.md)
+for artifact identity, measured profiles, and qualification limits. The
+[source review checklist](https://github.com/local-inference-lab/rtx6kpro/issues/95)
+lists the PR dependencies. Delayed r8 production crashes remain unproven
+against a complete reproducer; operator-level corrections are not evidence
+that every reported crash is resolved.
+
 ## Images
 
 | Image | Dockerfile | Stack |
@@ -110,7 +133,10 @@ IMAGE=voipmonitor/vllm:vllm-b12x-cu132 ./build-vllm-b12x-cu132.sh
 # Build the DeepSeek-V4-Flash text and vision runtime from source-locked
 # Jovian Judgement, B12X, LMCache, and FlashInfer revisions on CUDA 13.3 and
 # PyTorch 2.13. The Vision Compose profile uses the checkpoint-supported K3
-# DSpark depth and keeps external host KV caching disabled by default.
+# DSpark depth. External host KV caching is disabled by default; enabling it
+# selects engine-driven shared-memory transfer unless explicitly overridden.
+# Automatic KV admission includes the maximum scheduler-reachable DeepSeek V4
+# attention prefill peak while multimodal encoder outputs remain resident.
 ./build-deepseek-jovian-judgement-cu133-torch213.sh
 
 # Build the unified GLM-5.2 and DS4/DSpark v16 image from immutable vLLM,

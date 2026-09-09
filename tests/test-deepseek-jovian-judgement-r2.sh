@@ -69,7 +69,12 @@ jq -e '
     "97ede799d6605ca1bd5285582df4e74a3d3c7b0d"
 ' "${composition_root}/lmcache/integration.lock.json" >/dev/null
 
-output="$(PRINT_RELEASE_CONFIG=1 "${builder}")"
+output="$(
+  REVISION=r2 \
+    COMPOSITION_ROOT=patches/releases/jovian-judgement-ds4-r2 \
+    PRINT_RELEASE_CONFIG=1 \
+    "${builder}"
+)"
 grep -Fxq 'release=jovian-judgement-deepseek-v4-flash-cu133-torch213' \
   <<<"${output}"
 grep -Fxq 'revision=r2' <<<"${output}"
