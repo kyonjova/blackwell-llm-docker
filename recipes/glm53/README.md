@@ -3,8 +3,8 @@
 Status: **implemented; release qualification is tracked separately**.
 
 The build installs complete committed vLLM, B12X and LMCache Git trees over an
-immutable CUDA 13.3/PyTorch 2.13 runtime. It compiles LMCache native extensions
-and installs a source-authenticated FlashKDA operator with packed recurrent
+immutable CUDA 13.3/PyTorch 2.13 runtime. It reuses source-compatible LMCache
+native extensions and installs a source-authenticated FlashKDA operator with packed recurrent
 checkpoint exports. The result has two filesystem layers; serving does not
 require source-code bind mounts.
 
@@ -33,9 +33,9 @@ These source refs are **implemented**, not by themselves release approval.
 
 | Checkout | Repository | Commit |
 |---|---|---|
-| `vllm-source` | [voipmonitor/vllm](https://github.com/voipmonitor/vllm/tree/integration/jovian-shared-serving-20260909-r29) | `45361846d60622cb5211b902bc893963e5a9eaa6` |
+| `vllm-source` | [voipmonitor/vllm](https://github.com/voipmonitor/vllm/tree/integration/jovian-warmup-buffer-reuse-20260909) | `5576927057cf71b6ec61d120932338b333efa089` |
 | `b12x-source` | [voipmonitor/b12x](https://github.com/voipmonitor/b12x/tree/release/jovian-judgement-20260909-r29) | `3edbcbce70f491741b82f5eab9c1b30b39447228` |
-| `lmcache-source` | [local-inference-lab/LMCache](https://github.com/local-inference-lab/LMCache/tree/release/jovian-judgement-20260909-r29) | `dcd6ec92b23c7da14a46e0b9bf23a078969ddd4d` |
+| `lmcache-source` | [local-inference-lab/LMCache](https://github.com/local-inference-lab/LMCache/tree/integration/jovian-concurrent-checkpoint-publication-20260909) | `35ad809fdddd430c3970777a2ff3d984bf8d1963` |
 
 Clone each linked branch into its checkout directory, then verify `git rev-parse HEAD`
 against the table. Complete checkouts are required; do not use shallow clones
@@ -125,9 +125,21 @@ Use this explicit setting for HTTP binding. The GLM wrappers do not interpret
 extra arguments as shell commands or permit them to override checkpoint
 transport, shared-memory ownership, or readiness addresses.
 
-### LMCache disk-to-RAM retention and server arguments
+### LMCache checkpoint publication, RAM retention and server arguments
 
 Status: **implemented**; GPU qualification must identify the tested image.
+
+Concurrent request-boundary generations may share immutable attention pages.
+If another producer is writing a shared page, checkpoint admission returns a
+metadata-only `busy` response. The worker-owned background transfer retries
+with bounded backoff, without blocking the model or the LMCache RPC handlers.
+A committed page needs no additional copy; an aborted owner's page can be
+reserved by the waiting producer. Capacity and cancellation failures remain
+safe misses, and publication still requires every rank's acknowledgement.
+This behavior is implemented by Derek Yates's
+[LMCache #65](https://github.com/local-inference-lab/LMCache/pull/65).
+Run workers and the sidecar from the same image so both understand the response.
+
 `LMCACHE_L2_PREFETCH_POLICY` accepts `retain` (default) or `default`.
 `retain` keeps objects loaded from the filesystem tier in the bounded L1 RAM
 pool after readers finish. They remain eligible for ordinary eviction.
