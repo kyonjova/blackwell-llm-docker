@@ -1,11 +1,13 @@
 # syntax=docker/dockerfile:1.7
 ARG BASE_IMAGE=voipmonitor/vllm@sha256:93ac5228f1cbde2182ca294d8b479259144742af2756a49ff207dd245429bf43
 ARG FLASHINFER_WHEELS_IMAGE=voipmonitor/vllm@sha256:79edbc91874d9468e3e6268e1584503e3dec55f2a4d3bdd70d5c43e9b41675c7
+ARG LMCACHE_NATIVE_IMAGE=localinferencelab/vllm@sha256:5f6fcbc681f20b7c052815ca17511d9fe789aea314a17723c202789dd7adc131
 FROM ${FLASHINFER_WHEELS_IMAGE} AS flashinfer-wheels
-FROM ${BASE_IMAGE} AS lmcache-build
+FROM ${LMCACHE_NATIVE_IMAGE} AS lmcache-build
 COPY --from=source_bundles /lmcache.bundle /source-bundles/lmcache.bundle
 COPY --from=source_bundles /uv /source-bundles/uv
 COPY install_source_bundle.sh /build-tools/install_source_bundle.sh
+COPY pack_lmcache_native_reuse.py /build-tools/pack_lmcache_native_reuse.py
 ARG LMCACHE_COMMIT
 ARG LMCACHE_TREE
 ARG LMCACHE_BUNDLE_SHA256
@@ -20,12 +22,14 @@ RUN test "$(sha256sum /source-bundles/lmcache.bundle | cut -d' ' -f1)" = "${LMCA
         'setuptools>=77.0.3,<81' setuptools_scm wheel packaging ninja \
     && cd /tmp/lmcache-source \
     && SETUPTOOLS_SCM_PRETEND_VERSION_FOR_LMCACHE="${LMCACHE_VERSION}" \
-        BUILD_WITH_CUDA=1 LMCACHE_CUDA_MAJOR=13 TORCH_CUDA_ARCH_LIST=12.0 \
-        ENABLE_CXX11_ABI=1 MAX_JOBS=2 NVCC_THREADS=auto \
+        NO_NATIVE_EXT=1 \
         /source-bundles/uv run --no-project --python /opt/venv/bin/python \
         /opt/venv/bin/python -m pip wheel --no-build-isolation --no-deps --wheel-dir /artifacts . \
-    && make -C csrc/cumem_ipc_interposer CUDA_HOME=/usr/local/cuda \
-    && install -Dm755 csrc/cumem_ipc_interposer/liblmcache_cumem_shareable.so /artifacts/liblmcache_cumem_shareable.so \
+    && /opt/venv/bin/python /build-tools/pack_lmcache_native_reuse.py \
+        --source /tmp/lmcache-source --reference-source /opt/lmcache/source \
+        --reference-package /opt/venv/lib/python3.12/site-packages/lmcache \
+        --wheel-dir /artifacts \
+    && install -Dm755 /opt/lmcache/lib/liblmcache_cumem_shareable.so /artifacts/liblmcache_cumem_shareable.so \
     && cd /artifacts && sha256sum *.whl *.so > SHA256SUMS
 
 FROM ${BASE_IMAGE}

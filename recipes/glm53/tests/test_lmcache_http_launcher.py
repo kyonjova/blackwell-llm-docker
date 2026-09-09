@@ -4,6 +4,7 @@ import os
 import json
 import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,9 @@ WRAPPERS = (
 
 def render(wrapper, host=None, dtype=None, settings=None, cwd=None):
     source = (RECIPE / wrapper).read_text()
+    # Use the test environment's interpreter for JSON validation; no LMCache
+    # or vLLM package is imported while rendering arguments.
+    source = source.replace("/opt/venv/bin/python", shlex.quote(sys.executable))
     # The configuration section validates settings and constructs argv. Stop
     # before child-process supervision; no sidecar or vLLM process is launched.
     configuration, separator, _ = source.partition("lmcache_pid=\n")
@@ -66,6 +70,23 @@ def test_prefetch_retention_defaults_to_reusable_ram(wrapper, policy):
 
 
 @pytest.mark.parametrize("wrapper", WRAPPERS)
+@pytest.mark.parametrize("policy", [None, "default", "retain"])
+@pytest.mark.parametrize("l2_enabled", ["0", "1"])
+def test_retained_filesystem_restore_can_reclaim_unowned_ram(
+    wrapper, policy, l2_enabled, tmp_path
+):
+    settings = {"LMCACHE_L2_ENABLED": l2_enabled, "LMCACHE_L2_PATH": str(tmp_path)}
+    if policy is not None:
+        settings["LMCACHE_L2_PREFETCH_POLICY"] = policy
+    result = render(wrapper, settings=settings)
+    assert result.returncode == 0, result.stderr
+    fields = result.stdout.rstrip("\0").split("\0")
+    expected = l2_enabled == "1" and policy != "default"
+    assert fields.count("--emergency-evict-for-prefetch") == int(expected)
+    assert "--write-back-on-evict" not in fields
+
+
+@pytest.mark.parametrize("wrapper", WRAPPERS)
 @pytest.mark.parametrize("policy", ["all", "Retain", "retain default"])
 def test_invalid_retention_policy_fails_before_server_start(wrapper, policy):
     result = render(wrapper, settings={"LMCACHE_L2_PREFETCH_POLICY": policy})
@@ -106,6 +127,7 @@ def test_server_arguments_preserve_literal_wildcards_without_execution(
         "--no-separate-object-groups",
         "--http-port 9999",
         "--l2-prefetch-policy=default",
+        "--no-emergency-evict-for-prefetch",
     ],
 )
 def test_extra_arguments_cannot_override_transfer_or_readiness_contract(

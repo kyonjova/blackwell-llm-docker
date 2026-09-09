@@ -131,6 +131,10 @@ Status: **implemented**; GPU qualification must identify the tested image.
 `LMCACHE_L2_PREFETCH_POLICY` accepts `retain` (default) or `default`.
 `retain` keeps objects loaded from the filesystem tier in the bounded L1 RAM
 pool after readers finish. They remain eligible for ordinary eviction.
+When filesystem storage is enabled, retained restores can synchronously evict
+unlocked LRU objects to obtain staging space. This remains write-through:
+restores do not switch the cache into synchronous writeback. Active read/write
+owners remain protected, and insufficient reclaimable capacity remains a safe miss.
 `default` releases temporary loaded objects when their final reader finishes.
 This setting does not control the GPU hardware L2 prefetcher.
 
@@ -146,6 +150,12 @@ The interface derives from Tim Rice's
 [launcher proposal](https://github.com/local-inference-lab/rtx6kpro/pull/100),
 with literal argument handling and explicit protection for launcher-owned
 configuration.
+
+LMCache Python packaging reuses compiled extensions from the immutable artifact
+image recorded as `lmcache.native.artifact.image` in the source lock. Native
+sources, Rust sources, build policy and requirements must match before reuse;
+the platform wheel's tags and RECORD are regenerated. This build-stage input
+does not add its filesystem layers to the serving image, which retains two layers.
 
 Persistent LMCache namespaces resolve the effective positional or `MODEL`
 checkpoint and its immutable model/draft identity in both request-boundary and

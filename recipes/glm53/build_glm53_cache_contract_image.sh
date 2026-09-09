@@ -21,6 +21,7 @@ mapfile -d '' -t source_labels < <(
 for label in "${source_labels[@]}"; do labels+=(--label "$label"); done
 docker buildx build --load --progress plain --tag "$tag" \
     --build-arg "SOURCE_LOCK_SHA256=$lock_sha" \
+    --build-arg "LMCACHE_NATIVE_IMAGE=$(value lmcache.native.artifact.image)" \
     --build-arg "LMCACHE_COMMIT=$(value lmcache.commit)" \
     --build-arg "LMCACHE_TREE=$(value lmcache.tree)" \
     --build-arg "LMCACHE_BUNDLE_SHA256=$(value lmcache.bundle.sha256)" \

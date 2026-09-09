@@ -168,6 +168,9 @@ if [[ ${server_extra_args} == *$'\n'* || ${server_extra_args} == *$'\r'* ]]; the
   printf 'LMCACHE_SERVER_EXTRA_ARGS must be one whitespace-separated line\n' >&2
   exit 2
 fi
+if [[ ${prefetch_policy} == retain && ${LMCACHE_L2_ENABLED:-1} == 1 ]]; then
+  lmcache_server+=(--emergency-evict-for-prefetch)
+fi
 server_extra_argv=()
 read -r -a server_extra_argv <<< "${server_extra_args}"
 for argument in "${server_extra_argv[@]}"; do
@@ -175,7 +178,8 @@ for argument in "${server_extra_argv[@]}"; do
     --instance-id | --host | --port | --http-host | --http-port | --prometheus-port | \
       --supported-transfer-mode | --chunk-size | --hash-algorithm | \
       --separate-object-groups | --no-separate-object-groups | --shm-name | \
-      --l1-use-lazy | --no-l1-use-lazy | --checkpoint-index-path | --l2-prefetch-policy)
+      --l1-use-lazy | --no-l1-use-lazy | --checkpoint-index-path | --l2-prefetch-policy | \
+      --emergency-evict-for-prefetch | --no-emergency-evict-for-prefetch)
       printf 'LMCACHE_SERVER_EXTRA_ARGS cannot override launcher-managed option %s; use its dedicated setting\n' \
         "${argument%%=*}" >&2
       exit 2
