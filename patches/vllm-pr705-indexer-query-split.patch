@@ -1,0 +1,558 @@
+diff --git a/tests/models/test_glm5next_pooled_indexer.py b/tests/models/test_glm5next_pooled_indexer.py
+index ec701f53a..9d55cfe09 100644
+--- a/tests/models/test_glm5next_pooled_indexer.py
++++ b/tests/models/test_glm5next_pooled_indexer.py
+@@ -38,6 +38,192 @@ def _require_glm_gpu() -> torch.device:
+     return device
+ 
+ 
++@pytest.fixture(scope="module")
++def owner_merge_group():
++    """Use one GPU per process for the opt-in distributed merge comparison."""
++    if os.environ.get("GLM53_OWNER_MERGE_DISTRIBUTED_TEST") != "1":
++        pytest.skip("set GLM53_OWNER_MERGE_DISTRIBUTED_TEST=1 under torchrun")
++    from vllm.distributed.parallel_state import (
++        destroy_distributed_environment,
++        destroy_model_parallel,
++        get_dcp_group,
++        init_distributed_environment,
++        initialize_model_parallel,
++        set_custom_all_reduce,
++    )
++
++    torch.accelerator.set_device_index(int(os.environ["LOCAL_RANK"]))
++    # These tests exercise NCCL indexer collectives; custom all-reduce is unused.
++    set_custom_all_reduce(False)
++    world_size = int(os.environ["WORLD_SIZE"])
++    from vllm.config import VllmConfig, set_current_vllm_config
++
++    with set_current_vllm_config(VllmConfig()):
++        init_distributed_environment(
++            world_size=world_size,
++            rank=int(os.environ["RANK"]),
++            distributed_init_method="env://",
++            local_rank=int(os.environ["LOCAL_RANK"]),
++        )
++        initialize_model_parallel(
++            tensor_model_parallel_size=world_size,
++            decode_context_model_parallel_size=int(
++                os.environ.get("GLM53_TEST_DCP_SIZE", world_size)
++            ),
++        )
++    yield get_dcp_group()
++    destroy_model_parallel()
++    destroy_distributed_environment()
++
++
++@pytest.mark.parametrize("transport", ["pynccl", "torch"])
++@pytest.mark.parametrize(
++    ("rows", "padding", "interleave"),
++    [(0, 0, 1), (1, 7, 1), (7, 7, 4), (8, 0, 1), (256, 7, 4), (8192, 0, 1)],
++)
++def test_glm53_owner_merge_preserves_ties_masks_and_row_order(
++    owner_merge_group, monkeypatch, transport, rows, padding, interleave
++) -> None:
++    from vllm.v1.attention.backends.mla.b12x_indexer import _merge_dcp_topk
++
++    group = owner_merge_group
++    device = _require_glm_gpu()
++    topk = 512
++    generator = torch.Generator(device=device).manual_seed(73 + group.rank_in_group)
++    storage = torch.full((rows, topk + padding), -77, dtype=torch.int32, device=device)
++    original = storage[:, :topk]
++    original.copy_(torch.arange(topk, device=device).expand(rows, -1))
++    original[:, ::11] = -1
++    scores = torch.randint(
++        -4, 5, (rows, topk + padding), generator=generator, device=device
++    ).float()[:, :topk]
++    if rows:
++        original[0].fill_(-1)
++        scores[0].fill_(-float("inf"))
++    saved_scores = scores.clone()
++    expected = original.clone()
++    assert not _merge_dcp_topk(
++        expected, scores, group.rank_in_group, group.world_size, interleave
++    )
++    if transport == "torch" and group.world_size > 1:
++        monkeypatch.setattr(group.device_communicator, "pynccl_comm", None)
++    elif group.world_size > 1:
++        assert not group.device_communicator.pynccl_comm.disabled
++    used = _merge_dcp_topk(
++        original,
++        scores,
++        group.rank_in_group,
++        group.world_size,
++        interleave,
++        use_owner_merge=True,
++    )
++    assert used == (group.world_size > 1 and rows > 0 and rows % group.world_size == 0)
++    # The stable selection kernel emits IDs via atomic appends. Ordering within
++    # a row is unspecified; the selected multiset and row identity must match.
++    torch.testing.assert_close(
++        original.sort(dim=-1).values, expected.sort(dim=-1).values, rtol=0, atol=0
++    )
++    torch.testing.assert_close(scores, saved_scores, rtol=0, atol=0)
++    assert bool(torch.all(storage[:, topk:] == -77))
++
++
++def test_glm53_owner_merge_keeps_captured_merge_on_existing_path(
++    owner_merge_group,
++) -> None:
++    from vllm.v1.attention.backends.mla.b12x_indexer import _merge_dcp_topk
++
++    group = owner_merge_group
++    device = _require_glm_gpu()
++    source = torch.arange(512, dtype=torch.int32, device=device).expand(8, -1)
++    indices = source.clone()
++    scores = torch.ones((8, 512), device=device)
++    _merge_dcp_topk(indices, scores, group.rank_in_group, group.world_size, 1)
++    expected = indices.clone()
++    graph = torch.cuda.CUDAGraph()
++    with torch.cuda.graph(graph):
++        indices.copy_(source)
++        used = _merge_dcp_topk(
++            indices,
++            scores,
++            group.rank_in_group,
++            group.world_size,
++            1,
++            use_owner_merge=True,
++        )
++    assert not used
++    graph.replay()
++    torch.testing.assert_close(
++        indices.sort(dim=-1).values, expected.sort(dim=-1).values, rtol=0, atol=0
++    )
++
++
++@pytest.mark.parametrize("rows", [7, 16, 64])
++@pytest.mark.parametrize("owner_merge", [False, True])
++@pytest.mark.parametrize("transport", ["pynccl", "torch"])
++def test_glm53_query_split_restores_pool_rows_with_owner_merge(
++    owner_merge_group, monkeypatch, rows, owner_merge, transport
++) -> None:
++    from vllm.distributed.parallel_state import get_query_split_group
++
++    group = owner_merge_group
++    query_group = get_query_split_group()
++    device = _require_glm_gpu()
++    indexer = Glm5NextPooledIndexer.__new__(Glm5NextPooledIndexer)
++    nn.Module.__init__(indexer)
++    indexer.dcp_rank = group.rank_in_group
++    indexer.dcp_world_size = group.world_size
++    indexer.pool_interleave = 1
++    seen_rows = []
++
++    def select_rows(**args):
++        query = args["q"][:, 0]
++        torch.testing.assert_close(args["weights"][:, 0], query + 100)
++        torch.testing.assert_close(args["seq_lens"], query.int() + 7)
++        assert args["block_table"].shape[0] == query.shape[0]
++        seen_rows.append(query.shape[0])
++        ids = query.int()[:, None] * 512 + torch.arange(512, device=device)
++        args["output"].copy_(ids)
++        if args["scores"] is not None:
++            args["scores"].copy_((ids % 31).float())
++
++    indexer.indexer_op = SimpleNamespace(run_paged_topk=select_rows)
++    query = torch.arange(rows, device=device, dtype=torch.float32)[:, None]
++    output = torch.empty((rows, 512), device=device, dtype=torch.int32)
++    scores = (
++        torch.empty_like(output, dtype=torch.float32) if group.world_size > 1 else None
++    )
++    args = dict(
++        q=query,
++        weights=query + 100,
++        index_cache=None,
++        seq_lens=query[:, 0].int() + 7,
++        request_table=torch.ones((1, 2), device=device, dtype=torch.int32),
++        pool_ids=output,
++        pool_scores=scores,
++    )
++    monkeypatch.setenv("VLLM_DCP_QUERY_SPLIT", "0")
++    monkeypatch.setenv("VLLM_DCP_TOPK_OWNER_MERGE", "0")
++    assert indexer._run_prefill_topk(**args) == (1, False)
++    expected = output.clone()
++    output.fill_(-91)
++    monkeypatch.setenv("VLLM_DCP_QUERY_SPLIT", "1")
++    monkeypatch.setenv("VLLM_DCP_TOPK_OWNER_MERGE", str(int(owner_merge)))
++    if transport == "torch" and query_group.world_size > 1:
++        monkeypatch.setattr(query_group.device_communicator, "pynccl_comm", None)
++    split_size, used = indexer._run_prefill_topk(**args)
++    expected_split = query_group.world_size if rows % query_group.world_size == 0 else 1
++    assert split_size == expected_split
++    assert seen_rows == [rows, rows // expected_split]
++    assert used == (
++        owner_merge
++        and group.world_size > 1
++        and (rows // expected_split) % group.world_size == 0
++    )
++    torch.testing.assert_close(
++        output.sort(dim=-1).values, expected.sort(dim=-1).values, rtol=0, atol=0
++    )
++
++
+ def _hadamard128(x: torch.Tensor) -> torch.Tensor:
+     for stride in (1, 2, 4, 8, 16, 32, 64):
+         x = x.reshape(-1, 2, stride)
+diff --git a/vllm/distributed/parallel_state.py b/vllm/distributed/parallel_state.py
+index 9353dbfe3..adb57d8f7 100644
+--- a/vllm/distributed/parallel_state.py
++++ b/vllm/distributed/parallel_state.py
+@@ -1408,6 +1408,26 @@ def get_dcp_group() -> GroupCoordinator:
+     return _DCP
+ 
+ 
++_QUERY_SPLIT: GroupCoordinator | None = None
++
++
++def get_query_split_group() -> GroupCoordinator:
++    assert _QUERY_SPLIT is not None, "query split group is not initialized"
++    return _QUERY_SPLIT
++
++
++def _query_split_rank_groups(
++    tp_groups: list[list[int]], dcp_size: int
++) -> list[list[int]]:
++    """Group replicas of each indexer shard within their TP cohort."""
++    groups: list[list[int]] = []
++    for ranks in tp_groups:
++        if dcp_size < 1 or len(ranks) % dcp_size:
++            raise ValueError("Query splitting requires DCP size to divide TP size")
++        groups.extend(ranks[shard::dcp_size] for shard in range(dcp_size))
++    return groups
++
++
+ _PP: GroupCoordinator | None = None
+ 
+ 
+@@ -1849,6 +1869,7 @@ def initialize_model_parallel(
+         group_ranks = local_all_ranks.view(-1, tensor_model_parallel_size).unbind(0)
+         group_ranks = [x.tolist() for x in group_ranks]
+     # message queue broadcaster is only used in tensor model parallel group
++    tp_group_ranks = group_ranks
+     _TP = init_model_parallel_group(
+         group_ranks,
+         get_world_group().local_rank,
+@@ -1875,6 +1896,18 @@ def initialize_model_parallel(
+         group_name="dcp",
+     )
+ 
++    global _QUERY_SPLIT
++    assert _QUERY_SPLIT is None, "query split group is already initialized"
++    if envs.VLLM_DCP_QUERY_SPLIT:
++        if prefill_context_model_parallel_size != 1:
++            raise ValueError("Indexer query splitting requires PCP size 1")
++        _QUERY_SPLIT = init_model_parallel_group(
++            _query_split_rank_groups(tp_group_ranks, dcp_size),
++            get_world_group().local_rank,
++            backend,
++            group_name="query_split",
++        )
++
+     global _PCP
+     assert _PCP is None, "prefill context parallel group is already initialized"
+     group_ranks = (
+@@ -2103,6 +2136,11 @@ def destroy_model_parallel():
+         _DCP.destroy()
+     _DCP = None
+ 
++    global _QUERY_SPLIT
++    if _QUERY_SPLIT:
++        _QUERY_SPLIT.destroy()
++    _QUERY_SPLIT = None
++
+     global _PCP
+     if _PCP:
+         _PCP.destroy()
+diff --git a/vllm/envs.py b/vllm/envs.py
+index 90dafdc75..6d5c071cc 100755
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -199,6 +199,9 @@ if TYPE_CHECKING:
+     VLLM_GDN_SPEC_DECODE_METADATA_FASTPATH: bool = True
+     VLLM_MTP_NVFP4_LM_HEAD: bool = True
+     VLLM_QWEN3_8_FLASH_NEXT_OVERLAP: bool = True
++    VLLM_DCP_QUERY_SPLIT: bool = False
++    VLLM_DCP_TOPK_OWNER_MERGE: bool = False
++    VLLM_DCP_TOPK_OWNER_MERGE_DIAGNOSTICS: bool = False
+     VLLM_B12X_MLA_CKV_GATHER: bool = False
+     VLLM_B12X_MLA_CKV_GATHER_MIN_TOKENS: int = 16
+     VLLM_B12X_MLA_CKV_GATHER_MAX_TOKENS: int = 524288
+@@ -1670,6 +1673,18 @@ environment_variables: dict[str, Callable[[], Any]] = {
+     "VLLM_QWEN3_8_FLASH_NEXT_OVERLAP": lambda: bool(
+         int(os.getenv("VLLM_QWEN3_8_FLASH_NEXT_OVERLAP", "1"))
+     ),
++    # Split eager GLM pooled-indexer queries across replicas of each DCP shard.
++    "VLLM_DCP_QUERY_SPLIT": lambda: (
++        os.getenv("VLLM_DCP_QUERY_SPLIT", "0").lower() in ("1", "true", "yes", "on")
++    ),
++    # Merge each prefill row's candidates on one DCP rank, then gather IDs.
++    "VLLM_DCP_TOPK_OWNER_MERGE": lambda: (
++        os.getenv("VLLM_DCP_TOPK_OWNER_MERGE", "0").lower()
++        in ("1", "true", "yes", "on")
++    ),
++    "VLLM_DCP_TOPK_OWNER_MERGE_DIAGNOSTICS": lambda: (
++        os.getenv("VLLM_DCP_TOPK_OWNER_MERGE_DIAGNOSTICS", "0") == "1"
++    ),
+     # Gather DCP-sharded C4 records before B12X sparse-MLA prefill. This avoids
+     # query replication plus the per-rank LSE combine and is opt-in while the
+     # path is being qualified on GLM5Next.
+diff --git a/vllm/models/glm5next/nvidia/pooled_indexer.py b/vllm/models/glm5next/nvidia/pooled_indexer.py
+index eb7d2f6cc..c758e877f 100644
+--- a/vllm/models/glm5next/nvidia/pooled_indexer.py
++++ b/vllm/models/glm5next/nvidia/pooled_indexer.py
+@@ -11,9 +11,11 @@ import torch
+ import torch.nn.functional as F
+ from torch import nn
+ 
++import vllm.envs as envs
+ from vllm.compilation.breakable_cudagraph import eager_break_during_capture
+ from vllm.config import CacheConfig, CUDAGraphMode, VllmConfig
+ from vllm.distributed import get_dcp_group
++from vllm.distributed.parallel_state import get_query_split_group
+ from vllm.forward_context import get_forward_context
+ from vllm.model_executor.layers.layernorm import LayerNorm
+ from vllm.model_executor.layers.linear import ReplicatedLinear
+@@ -23,7 +25,11 @@ from vllm.models.deepseek_v4.nvidia.b12x_indexer import (
+     B12xC4SparseIndexer,
+ )
+ from vllm.utils.b12x import get_b12x_sparse_mla
+-from vllm.v1.attention.backends.mla.b12x_indexer import _merge_dcp_topk
++from vllm.v1.attention.backends.mla.b12x_indexer import (
++    _gather_indexer_row_ids,
++    _is_current_stream_capturing,
++    _merge_dcp_topk,
++)
+ 
+ if TYPE_CHECKING:
+     from vllm.v1.attention.backends.mla.b12x_mla_sparse import (
+@@ -49,6 +55,7 @@ _SELECTION_WIDTH = 2051
+ _INDEX_CACHE_WIDTH = 132
+ _INDEX_PAGE_SIZE = 64
+ _INDEX_PAGE_BYTES = _INDEX_PAGE_SIZE * _INDEX_CACHE_WIDTH
++_OWNER_MERGE_DIAGNOSTIC_LAYER: str | None = None
+ 
+ 
+ class Glm5NextPooledIndexer(nn.Module):
+@@ -604,29 +611,43 @@ class Glm5NextPooledIndexer(nn.Module):
+                     # DCP pool ownership is interleaved across ranks, so a global
+                     # sequence length does not define a contiguous local prefix.
+                     request_table = self._pool_block_table[request : request + 1]
+-                shared_table = request_table.expand(int(query_len), -1)
+-                self.indexer_op.run_paged_topk(
++                query_split_size, used_owner_merge = self._run_prefill_topk(
+                     q=q_fp8[row_start:row_end],
+                     weights=weights[row_start:row_end],
+-                    kv_cache=index_cache,
++                    index_cache=index_cache,
+                     seq_lens=seq_lens[row_start:row_end],
+-                    block_table=shared_table,
+-                    output=pool_ids[row_start:row_end],
+-                    scores=(
++                    request_table=request_table,
++                    pool_ids=pool_ids[row_start:row_end],
++                    pool_scores=(
+                         pool_scores[row_start:row_end]
+                         if pool_scores is not None
+                         else None
+                     ),
+-                    shared_page_table=True,
+                 )
+-                if pool_scores is not None:
+-                    _merge_dcp_topk(
+-                        pool_ids[row_start:row_end],
+-                        pool_scores[row_start:row_end],
+-                        self.dcp_rank,
+-                        self.dcp_world_size,
+-                        self.pool_interleave,
+-                    )
++                if (
++                    envs.VLLM_DCP_TOPK_OWNER_MERGE_DIAGNOSTICS
++                    and int(query_len) >= 8192
++                ):
++                    global _OWNER_MERGE_DIAGNOSTIC_LAYER
++                    if _OWNER_MERGE_DIAGNOSTIC_LAYER is None:
++                        _OWNER_MERGE_DIAGNOSTIC_LAYER = self.main_layer_name
++                    if self.main_layer_name == _OWNER_MERGE_DIAGNOSTIC_LAYER:
++                        print(
++                            "GLM_TOPK_OWNER_MERGE",
++                            {
++                                "rank": self.dcp_rank,
++                                "layer": self.main_layer_name,
++                                "rows": int(query_len),
++                                "query_split_size": query_split_size,
++                                "query_rows": int(query_len) // query_split_size,
++                                "owner_rows": int(query_len)
++                                // query_split_size
++                                // self.dcp_world_size,
++                                "topk": _POOL_TOPK,
++                                "used": used_owner_merge,
++                            },
++                            flush=True,
++                        )
+                 row_start = row_end
+             if row_start != live_rows:
+                 raise RuntimeError(
+@@ -657,6 +678,56 @@ class Glm5NextPooledIndexer(nn.Module):
+             )
+         return output
+ 
++    def _run_prefill_topk(
++        self,
++        *,
++        q,
++        weights,
++        index_cache,
++        seq_lens,
++        request_table,
++        pool_ids,
++        pool_scores,
++    ) -> tuple[int, bool]:
++        """Select independent query rows, then restore global pool IDs."""
++        rows = int(q.shape[0])
++        if rows == 0:
++            return 1, False
++        query_group: Any = (
++            get_query_split_group() if envs.VLLM_DCP_QUERY_SPLIT else None
++        )
++        split_size = query_group.world_size if query_group is not None else 1
++        if rows % split_size or _is_current_stream_capturing(q):
++            split_size = 1
++        query_rows = rows // split_size
++        start = query_group.rank_in_group * query_rows if split_size > 1 else 0
++        stop = start + query_rows
++        local_ids = pool_ids[start:stop]
++        local_scores = pool_scores[start:stop] if pool_scores is not None else None
++        self.indexer_op.run_paged_topk(
++            q=q[start:stop],
++            weights=weights[start:stop],
++            kv_cache=index_cache,
++            seq_lens=seq_lens[start:stop],
++            block_table=request_table.expand(query_rows, -1),
++            output=local_ids,
++            scores=local_scores,
++            shared_page_table=True,
++        )
++        used_owner_merge = False
++        if local_scores is not None:
++            used_owner_merge = _merge_dcp_topk(
++                local_ids,
++                local_scores,
++                self.dcp_rank,
++                self.dcp_world_size,
++                self.pool_interleave,
++                use_owner_merge=envs.VLLM_DCP_TOPK_OWNER_MERGE,
++            )
++        if split_size > 1:
++            _gather_indexer_row_ids(query_group, local_ids, pool_ids)
++        return split_size, used_owner_merge
++
+     def snapshot_speculative_interval_starts(self) -> None:
+         self._tail_snapshot.copy_(self._tail)
+ 
+diff --git a/vllm/v1/attention/backends/mla/b12x_indexer.py b/vllm/v1/attention/backends/mla/b12x_indexer.py
+index a94d15f53..486432af7 100644
+--- a/vllm/v1/attention/backends/mla/b12x_indexer.py
++++ b/vllm/v1/attention/backends/mla/b12x_indexer.py
+@@ -249,9 +249,12 @@ def _merge_dcp_topk(
+     dcp_rank: int,
+     dcp_world_size: int,
+     interleave: int,
+-) -> None:
++    *,
++    use_owner_merge: bool = False,
++) -> bool:
++    """Merge global candidate IDs; return whether row ownership is used."""
+     if dcp_world_size <= 1 or indices.numel() == 0:
+-        return
++        return False
+     topk = int(indices.shape[1])
+     if topk not in (512, 1024, 2048):
+         raise RuntimeError(
+@@ -276,12 +279,85 @@ def _merge_dcp_topk(
+         512,
+         num_warps=8,
+     )
++    if (
++        use_owner_merge
++        and indices.shape[0] % dcp_world_size == 0
++        and not _is_current_stream_capturing(indices)
++    ):
++        _merge_dcp_topk_by_owner(packed, indices, dcp_rank, dcp_world_size)
++        return True
+     gathered = get_dcp_group().all_gather(packed, dim=1)
+     from vllm.model_executor.kernels.attention.dsa.dcp_indexer_cutedsl import (
+         stable_topk_from_gathered_candidates_cutedsl,
+     )
+ 
+     stable_topk_from_gathered_candidates_cutedsl(gathered, topk, out=indices)
++    return False
++
++
++def _merge_dcp_topk_by_owner(
++    packed: torch.Tensor,
++    indices: torch.Tensor,
++    dcp_rank: int,
++    dcp_world_size: int,
++) -> None:
++    """Route candidates to row owners and restore the stable global top-k IDs.
++
++    This adapts Gilded Gnosis owner merge to Jovian's packed score/ID layout
++    and stable tie-breaking kernel. Every DCP shard processes all query rows;
++    row ownership applies only to the candidate merge, not indexer queries.
++    """
++    import torch.distributed as dist
++
++    from vllm.model_executor.kernels.attention.dsa.dcp_indexer_cutedsl import (
++        stable_topk_from_gathered_candidates_cutedsl,
++    )
++
++    group = get_dcp_group()
++    if group.world_size != dcp_world_size or group.rank_in_group != dcp_rank:
++        raise RuntimeError("DCP owner merge group does not match the indexer shards")
++    rows, topk, _ = packed.shape
++    owner_rows = rows // dcp_world_size
++    received = torch.empty_like(packed)
++    dist.all_to_all_single(received.view(-1), packed.view(-1), group=group.device_group)
++    # All-to-all receives source-rank-major row slices. Preserve that candidate
++    # order while grouping each owner's row for the existing stable kernel.
++    candidates = (
++        received.view(dcp_world_size, owner_rows, topk, 2)
++        .permute(1, 0, 2, 3)
++        .contiguous()
++        .view(owner_rows, dcp_world_size * topk, 2)
++    )
++    owner_indices = stable_topk_from_gathered_candidates_cutedsl(candidates, topk)
++    _gather_indexer_row_ids(group, owner_indices, indices)
++
++
++def _gather_indexer_row_ids(group, local_ids, all_ids) -> None:
++    """Gather row partitions, preserving caller storage and aliased send slices."""
++    import torch.distributed as dist
++
++    output = (
++        all_ids
++        if all_ids.is_contiguous()
++        else torch.empty_like(all_ids, memory_format=torch.contiguous_format)
++    )
++    local_ids = local_ids.contiguous()
++    communicator = group.device_communicator
++    pynccl = getattr(communicator, "pynccl_comm", None)
++    if pynccl is not None and not pynccl.disabled:
++        pynccl.all_gather(output, local_ids)
++    else:
++        # PyTorch does not expose NCCL's in-place alias contract. Query-split
++        # sends may be views into the caller's final output buffer.
++        begin = local_ids.data_ptr()
++        end = begin + local_ids.numel() * local_ids.element_size()
++        output_begin = output.data_ptr()
++        output_end = output_begin + output.numel() * output.element_size()
++        if begin < output_end and output_begin < end:
++            local_ids = local_ids.clone()
++        dist.all_gather_into_tensor(output, local_ids, group=group.device_group)
++    if output is not all_ids:
++        all_ids.copy_(output)
+ 
+ 
+ class B12xSparseIndexer(nn.Module):
