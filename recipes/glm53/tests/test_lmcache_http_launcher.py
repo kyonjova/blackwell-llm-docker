@@ -15,7 +15,7 @@ WRAPPERS = (
 )
 
 
-def render(wrapper, host=None, dtype=None):
+def render(wrapper, host=None, dtype=None, settings=None, cwd=None):
     source = (RECIPE / wrapper).read_text()
     # The configuration section validates settings and constructs argv. Stop
     # before child-process supervision; no sidecar or vLLM process is launched.
@@ -38,6 +38,7 @@ def render(wrapper, host=None, dtype=None):
         environment["LMCACHE_HTTP_HOST"] = host
     if dtype is not None:
         environment["LMCACHE_KV_CACHE_DTYPE"] = dtype
+    environment.update(settings or {})
     return subprocess.run(
         [
             "bash",
@@ -46,10 +47,83 @@ def render(wrapper, host=None, dtype=None):
             + '\nprintf "%s\\0" "${health_url}" "${lmcache_server[@]}" "vllm_dtype=${KV_CACHE_DTYPE:-}"',
         ],
         env=environment,
+        cwd=cwd,
         capture_output=True,
         text=True,
         check=False,
     )
+
+
+@pytest.mark.parametrize("wrapper", WRAPPERS)
+@pytest.mark.parametrize("policy", [None, "default", "retain"])
+def test_prefetch_retention_defaults_to_reusable_ram(wrapper, policy):
+    settings = {} if policy is None else {"LMCACHE_L2_PREFETCH_POLICY": policy}
+    result = render(wrapper, settings=settings)
+    assert result.returncode == 0, result.stderr
+    fields = result.stdout.rstrip("\0").split("\0")
+    assert fields.count("--l2-prefetch-policy") == 1
+    assert fields[fields.index("--l2-prefetch-policy") + 1] == (policy or "retain")
+
+
+@pytest.mark.parametrize("wrapper", WRAPPERS)
+@pytest.mark.parametrize("policy", ["all", "Retain", "retain default"])
+def test_invalid_retention_policy_fails_before_server_start(wrapper, policy):
+    result = render(wrapper, settings={"LMCACHE_L2_PREFETCH_POLICY": policy})
+    assert result.returncode == 2
+    assert "LMCACHE_L2_PREFETCH_POLICY" in result.stderr
+
+
+@pytest.mark.parametrize("wrapper", WRAPPERS)
+def test_server_arguments_preserve_literal_wildcards_without_execution(
+    wrapper, tmp_path
+):
+    (tmp_path / "match.yaml").touch()
+    result = render(
+        wrapper,
+        settings={
+            "LMCACHE_SERVER_EXTRA_ARGS": "--max-cpu-workers 4 --pattern *.yaml $(touch${IFS}EXECUTED)"
+        },
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    fields = result.stdout.rstrip("\0").split("\0")
+    assert fields[-6:-1] == [
+        "--max-cpu-workers",
+        "4",
+        "--pattern",
+        "*.yaml",
+        "$(touch${IFS}EXECUTED)",
+    ]
+    assert not (tmp_path / "EXECUTED").exists()
+
+
+@pytest.mark.parametrize("wrapper", WRAPPERS)
+@pytest.mark.parametrize(
+    "argument",
+    [
+        "--shm-name other",
+        "--chunk-size=512",
+        "--no-separate-object-groups",
+        "--http-port 9999",
+        "--l2-prefetch-policy=default",
+    ],
+)
+def test_extra_arguments_cannot_override_transfer_or_readiness_contract(
+    wrapper, argument
+):
+    result = render(wrapper, settings={"LMCACHE_SERVER_EXTRA_ARGS": argument})
+    assert result.returncode == 2
+    assert "launcher-managed option" in result.stderr
+
+
+@pytest.mark.parametrize("wrapper", WRAPPERS)
+@pytest.mark.parametrize(
+    "arguments", ["--max-cpu-workers 4\n--max-workers 8", "--max-workers 4\r"]
+)
+def test_extra_arguments_reject_silently_truncated_lines(wrapper, arguments):
+    result = render(wrapper, settings={"LMCACHE_SERVER_EXTRA_ARGS": arguments})
+    assert result.returncode == 2
+    assert "one whitespace-separated line" in result.stderr
 
 
 @pytest.mark.parametrize("wrapper", WRAPPERS)

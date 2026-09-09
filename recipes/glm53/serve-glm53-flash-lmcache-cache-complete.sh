@@ -30,6 +30,8 @@ readonly prometheus_port=${LMCACHE_PROMETHEUS_PORT:-9095}
 readonly startup_timeout=${LMCACHE_STARTUP_TIMEOUT_SECONDS:-120}
 readonly transfer_mode=${LMCACHE_TRANSFER_MODE:-engine_driven}
 readonly broker_dir=${LMCACHE_CUMEM_BROKER_DIR:-/cache/lmcache-cumem}
+readonly prefetch_policy=${LMCACHE_L2_PREFETCH_POLICY:-retain}
+readonly server_extra_args=${LMCACHE_SERVER_EXTRA_ARGS:-}
 readonly chunk_size=${LMCACHE_CHUNK_SIZE:-4096}
 readonly target_token_budget=${LMCACHE_TARGET_TOKEN_BUDGET:-${MAX_NUM_BATCHED_TOKENS:-4096}}
 readonly max_num_seqs=${MAX_NUM_SEQS:-16}
@@ -136,6 +138,15 @@ if [[ -n ${shm_name} && ! ${shm_name} =~ ^[A-Za-z0-9._-]+$ ]]; then
   exit 2
 fi
 
+case "${prefetch_policy}" in
+  default | retain) ;;
+  *)
+    printf 'LMCACHE_L2_PREFETCH_POLICY must be default or retain; got %s\n' \
+      "${prefetch_policy}" >&2
+    exit 2
+    ;;
+esac
+
 case "${lmcache_kv_cache_dtype}" in
   fp8_ds_mla | nvfp4_ds_mla) ;;
   *)
@@ -192,6 +203,7 @@ lmcache_server=(
   --l1-size-gb "${LMCACHE_L1_SIZE_GB:-64}"
   --l1-init-size-gb "${LMCACHE_L1_INIT_SIZE_GB:-2}"
   --eviction-policy LRU
+  --l2-prefetch-policy "${prefetch_policy}"
   --http-host "${http_host}"
   --http-port "${http_port}"
   --prometheus-port "${prometheus_port}"
@@ -247,6 +259,27 @@ case "${LMCACHE_L2_ENABLED:-1}" in
     exit 2
     ;;
 esac
+
+if [[ ${server_extra_args} == *$'\n'* || ${server_extra_args} == *$'\r'* ]]; then
+  printf 'LMCACHE_SERVER_EXTRA_ARGS must be one whitespace-separated line\n' >&2
+  exit 2
+fi
+server_extra_argv=()
+read -r -a server_extra_argv <<< "${server_extra_args}"
+for argument in "${server_extra_argv[@]}"; do
+  case "${argument%%=*}" in
+    --instance-id | --host | --port | --http-host | --http-port | --prometheus-port | \
+      --supported-transfer-mode | --chunk-size | --hash-algorithm | \
+      --separate-object-groups | --no-separate-object-groups | --shm-name | \
+      --l1-use-lazy | --no-l1-use-lazy | --checkpoint-index-path | --l2-prefetch-policy)
+      printf 'LMCACHE_SERVER_EXTRA_ARGS cannot override launcher-managed option %s; use its dedicated setting\n' \
+        "${argument%%=*}" >&2
+      exit 2
+      ;;
+  esac
+done
+# Preserve literal wildcard characters and never evaluate shell expressions.
+lmcache_server+=("${server_extra_argv[@]}")
 
 lmcache_pid=
 vllm_pid=

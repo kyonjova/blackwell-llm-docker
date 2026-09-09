@@ -122,8 +122,30 @@ listener also exposes administrative APIs. Readiness probes use a concrete
 address compatible with the selected bind, including IPv6.
 
 Use this explicit setting for HTTP binding. The GLM wrappers do not interpret
-`LMCACHE_EXTRA_ARGS` as a shell command or permit it to override the checkpoint
-transport and ownership configuration.
+extra arguments as shell commands or permit them to override checkpoint
+transport, shared-memory ownership, or readiness addresses.
+
+### LMCache disk-to-RAM retention and server arguments
+
+Status: **implemented**; GPU qualification must identify the tested image.
+`LMCACHE_L2_PREFETCH_POLICY` accepts `retain` (default) or `default`.
+`retain` keeps objects loaded from the filesystem tier in the bounded L1 RAM
+pool after readers finish. They remain eligible for ordinary eviction.
+`default` releases temporary loaded objects when their final reader finishes.
+This setting does not control the GPU hardware L2 prefetcher.
+
+`LMCACHE_SERVER_EXTRA_ARGS` appends whitespace-separated server arguments,
+for example `--max-cpu-workers 4`. Arguments are literal: shell expansion,
+quote interpretation, and multiline values are unsupported. Quoted array
+expansion prevents wildcard characters from becoming filenames. Additional
+scalar options take precedence over earlier defaults when the server accepts
+repetition. Launcher-managed transport, identity, geometry, prefetch policy,
+and listener options must use their dedicated settings instead.
+
+The interface derives from Tim Rice's
+[launcher proposal](https://github.com/local-inference-lab/rtx6kpro/pull/100),
+with literal argument handling and explicit protection for launcher-owned
+configuration.
 
 Persistent LMCache namespaces resolve the effective positional or `MODEL`
 checkpoint and its immutable model/draft identity in both request-boundary and
