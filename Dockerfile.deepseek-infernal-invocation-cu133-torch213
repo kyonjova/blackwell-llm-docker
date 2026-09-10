@@ -42,7 +42,7 @@ ARG LMCACHE_INTEGRATION_LOCK_SHA256
 ARG LMCACHE_PRS
 ARG LMCACHE_UPSTREAM_BASE
 ARG LMCACHE_MERGE_HEADS
-ARG LMCACHE_BUILD_VERSION=0.5.2+glm52dcp.5
+ARG LMCACHE_BUILD_VERSION=0.5.2+jj.ds4.r6
 ARG INSTANTTENSOR_REPO=https://github.com/voipmonitor/InstantTensor.git
 ARG INSTANTTENSOR_COMMIT=49b4010afc1cae0441e71fe0b0bffc24fa05e932
 ARG FLASHINFER_WHEEL_IMAGE
@@ -353,10 +353,13 @@ RUN set -eux; \
 
 # LMCache is built against the same PyTorch ABI and includes only RAM and
 # buffered filesystem dependencies in the serving runtime.
-RUN BUILD_WITH_CUDA=1 TORCH_CUDA_ARCH_LIST=12.0 MAX_JOBS=48 \
+RUN rm -rf /tmp/lmcache-wheels \
+ && mkdir -p /tmp/lmcache-wheels \
+ && BUILD_WITH_CUDA=1 TORCH_CUDA_ARCH_LIST=12.0 MAX_JOBS=48 \
       SETUPTOOLS_SCM_PRETEND_VERSION_FOR_LMCACHE="${LMCACHE_BUILD_VERSION}" \
       python -m pip wheel --no-build-isolation --no-deps \
       -w /tmp/lmcache-wheels /opt/infernal-invocation/lmcache \
+ && test "$(find /tmp/lmcache-wheels -maxdepth 1 -name 'lmcache-*.whl' | wc -l)" -eq 1 \
  && python -m pip install --no-deps --force-reinstall /tmp/lmcache-wheels/lmcache-*.whl \
  && test "$(python -c 'import importlib.metadata as m; print(m.version("lmcache"))')" = \
       "${LMCACHE_BUILD_VERSION}"
@@ -552,7 +555,8 @@ LABEL org.opencontainers.image.title="Source-locked CUDA 13.3 PyTorch 2.13 infer
 
 ENV NCCL_VERSION=2.31.2 \
     NCCL_NET_PLUGIN=none \
-    NCCL_TUNER_PLUGIN=none
+    NCCL_TUNER_PLUGIN=none \
+    LMCACHE_AUTO_TRANSFER_MODE=engine_driven
 
 WORKDIR /
 ENTRYPOINT ["/usr/local/bin/lmcache-mp-wrapper.sh", "/usr/local/bin/serve-ds4-flash.sh"]
