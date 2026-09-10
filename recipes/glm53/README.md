@@ -33,7 +33,7 @@ These source refs are **implemented**, not by themselves release approval.
 
 | Checkout | Repository | Commit |
 |---|---|---|
-| `vllm-source` | [voipmonitor/vllm](https://github.com/voipmonitor/vllm/tree/release/jovian-b12x-default-r34-20260910) | `c496604123b1f4441007b952a7ee37ab12c8f6ad` |
+| `vllm-source` | [voipmonitor/vllm](https://github.com/voipmonitor/vllm/tree/codex/jovian-b12x-default-r34-20260910) | `c496604123b1f4441007b952a7ee37ab12c8f6ad` |
 | `b12x-source` | [voipmonitor/b12x](https://github.com/voipmonitor/b12x/tree/release/jovian-nvfp4-split-r33-20260910) | `59d51a36a942d56a9c36265855cdc7856fa7712e` |
 | `lmcache-source` | [local-inference-lab/LMCache](https://github.com/local-inference-lab/LMCache/tree/release/jovian-fp4-fs-ledger-r33-20260910) | `29bc5a2efde737c436b04499eb62cd1776cebeec` |
 
