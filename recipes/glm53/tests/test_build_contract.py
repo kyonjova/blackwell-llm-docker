@@ -79,6 +79,14 @@ def test_unchanged_dependency_labels_are_preserved_by_inheritance(lock):
         assert overrides[f"local-inference.{name}.commit"] == lock[f"{name}.commit"]
 
 
+def test_deployment_moe_backend_is_declared_in_image_and_lock(lock):
+    lock["runtime.moe-backend.default"] = "b12x"
+    overrides = labels.image_labels(lock, {}, "b" * 64)
+    assert overrides["local-inference.runtime.default.moe-backend"] == "b12x"
+    dockerfile = (RECIPE / "Dockerfile.glm53-cache-contracts").read_text()
+    assert "VLLM_DEFAULT_MOE_BACKEND=b12x" in dockerfile
+
+
 def test_source_repository_labels_use_manifest_not_inferred_ownership(lock):
     lock["vllm.repository"] = "https://github.com/voipmonitor/vllm.git"
     overrides = labels.image_labels(lock, {}, "b" * 64)

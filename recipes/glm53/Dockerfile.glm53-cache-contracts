@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 ARG BASE_IMAGE=voipmonitor/vllm@sha256:93ac5228f1cbde2182ca294d8b479259144742af2756a49ff207dd245429bf43
 ARG FLASHINFER_WHEELS_IMAGE=voipmonitor/vllm@sha256:79edbc91874d9468e3e6268e1584503e3dec55f2a4d3bdd70d5c43e9b41675c7
-ARG LMCACHE_NATIVE_IMAGE=localinferencelab/vllm@sha256:5f6fcbc681f20b7c052815ca17511d9fe789aea314a17723c202789dd7adc131
+ARG LMCACHE_NATIVE_IMAGE=localinferencelab/vllm@sha256:3ae04d964f8e7e936ef4b34dd75406b9169fead8062fb8b4b1634f3bbf512827
 FROM ${FLASHINFER_WHEELS_IMAGE} AS flashinfer-wheels
 FROM ${LMCACHE_NATIVE_IMAGE} AS lmcache-build
 COPY --from=source_bundles /lmcache.bundle /source-bundles/lmcache.bundle
@@ -49,6 +49,7 @@ RUN --mount=type=bind,from=source_bundles,source=/,target=/source-bundles,ro \
     bash /build-inputs/install_glm53_source_locked.sh
 
 ENV LMCACHE_EXPECTED_SOURCE_ROOT=/opt/venv/lib/python3.12/site-packages/lmcache \
+    VLLM_DEFAULT_MOE_BACKEND=b12x \
     LOCAL_INFERENCE_CACHE_FINGERPRINT=${CACHE_FINGERPRINT} \
     XDG_CACHE_HOME=/cache/jit/${CACHE_FINGERPRINT} \
     VLLM_CACHE_ROOT=/cache/jit/${CACHE_FINGERPRINT}/vllm \

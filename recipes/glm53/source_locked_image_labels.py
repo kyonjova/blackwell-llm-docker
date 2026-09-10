@@ -80,6 +80,9 @@ def image_labels(
                 "runtime.cache.fingerprint"
             ],
             "local-inference.runtime.cudagraph-mode": lock["runtime.cudagraph.mode"],
+            "local-inference.runtime.default.moe-backend": lock.get(
+                "runtime.moe-backend.default", "auto"
+            ),
             "local-inference.runtime.default.gpu-local.target-page-tokens": "2048",
             "local-inference.runtime.default.recurrent-checkpoint-policy": "auto",
             "local-inference.runtime.lmcache-transfer": lock[

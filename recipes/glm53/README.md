@@ -33,7 +33,7 @@ These source refs are **implemented**, not by themselves release approval.
 
 | Checkout | Repository | Commit |
 |---|---|---|
-| `vllm-source` | [voipmonitor/vllm](https://github.com/voipmonitor/vllm/tree/codex/jovian-nvfp4-split-r33-20260910) | `ae89131442359dc332d9c46009be3c1f8cdee0b4` |
+| `vllm-source` | [voipmonitor/vllm](https://github.com/voipmonitor/vllm/tree/release/jovian-b12x-default-r34-20260910) | `c496604123b1f4441007b952a7ee37ab12c8f6ad` |
 | `b12x-source` | [voipmonitor/b12x](https://github.com/voipmonitor/b12x/tree/release/jovian-nvfp4-split-r33-20260910) | `59d51a36a942d56a9c36265855cdc7856fa7712e` |
 | `lmcache-source` | [local-inference-lab/LMCache](https://github.com/local-inference-lab/LMCache/tree/release/jovian-fp4-fs-ledger-r33-20260910) | `29bc5a2efde737c436b04499eb62cd1776cebeec` |
 
@@ -81,7 +81,7 @@ uv run --no-project --python 3.12 prepare_glm53_source_bundles.py \
   --b12x-repository https://github.com/voipmonitor/b12x.git \
   --lmcache-repository https://github.com/local-inference-lab/LMCache.git \
   --native-artifact ./flashkda-artifact --uv "$(command -v uv)" \
-  --lmcache-native-mode cpu-rebuild-cuda-reuse \
+  --lmcache-native-mode reuse-all \
   --output ./source-bundles \
   --release-name jovian-judgement-community-source-locked \
   --release-version source-locked
@@ -178,8 +178,19 @@ The filesystem connector reconciles missing objects during idempotent deletion
 and protects keys with pending native stores, following Derek Yates's
 [LMCache #67](https://github.com/local-inference-lab/LMCache/pull/67). Bounded
 object paths, readable legacy paths and real filesystem errors remain supported.
-This correction requires the CPU-native rebuild mode; copying only Python would
-leave the defective filesystem binary installed.
+The native donor identified in `lmcache.native.artifact.image` contains this
+filesystem correction. `reuse-all` retains that compiled implementation after
+the source comparison. A donor without the correction requires
+`cpu-rebuild-cuda-reuse`; copying only Python is insufficient.
+
+The image sets `VLLM_DEFAULT_MOE_BACKEND=b12x`. Native `vllm serve` and Python
+`KernelConfig()` therefore select B12X when no MoE backend is supplied. An
+explicit `--moe-backend auto`, another backend, or a nested kernel configuration
+overrides that default. The GLM wrapper also supports `MOE_BACKEND`; its default
+is B12X. This policy does not replace attention or sampler backends, nor explicit
+speculative-model backend choices. Outside the image, vLLM retains `auto` when
+`VLLM_DEFAULT_MOE_BACKEND` is unset. Unsupported explicit B12X configurations
+fail normally rather than silently selecting another implementation.
 
 Persistent LMCache namespaces resolve the effective positional or `MODEL`
 checkpoint and its immutable model/draft identity in both request-boundary and
