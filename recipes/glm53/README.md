@@ -33,9 +33,9 @@ These source refs are **implemented**, not by themselves release approval.
 
 | Checkout | Repository | Commit |
 |---|---|---|
-| `vllm-source` | [voipmonitor/vllm](https://github.com/voipmonitor/vllm/tree/integration/jovian-warmup-buffer-reuse-20260909) | `5576927057cf71b6ec61d120932338b333efa089` |
-| `b12x-source` | [voipmonitor/b12x](https://github.com/voipmonitor/b12x/tree/release/jovian-judgement-20260909-r29) | `3edbcbce70f491741b82f5eab9c1b30b39447228` |
-| `lmcache-source` | [local-inference-lab/LMCache](https://github.com/local-inference-lab/LMCache/tree/integration/jovian-concurrent-checkpoint-publication-20260909) | `35ad809fdddd430c3970777a2ff3d984bf8d1963` |
+| `vllm-source` | [voipmonitor/vllm](https://github.com/voipmonitor/vllm/tree/codex/jovian-nvfp4-split-r33-20260910) | `ae89131442359dc332d9c46009be3c1f8cdee0b4` |
+| `b12x-source` | [voipmonitor/b12x](https://github.com/voipmonitor/b12x/tree/release/jovian-nvfp4-split-r33-20260910) | `59d51a36a942d56a9c36265855cdc7856fa7712e` |
+| `lmcache-source` | [local-inference-lab/LMCache](https://github.com/local-inference-lab/LMCache/tree/release/jovian-fp4-fs-ledger-r33-20260910) | `29bc5a2efde737c436b04499eb62cd1776cebeec` |
 
 Clone each linked branch into its checkout directory, then verify `git rev-parse HEAD`
 against the table. Complete checkouts are required; do not use shallow clones
@@ -81,6 +81,7 @@ uv run --no-project --python 3.12 prepare_glm53_source_bundles.py \
   --b12x-repository https://github.com/voipmonitor/b12x.git \
   --lmcache-repository https://github.com/local-inference-lab/LMCache.git \
   --native-artifact ./flashkda-artifact --uv "$(command -v uv)" \
+  --lmcache-native-mode cpu-rebuild-cuda-reuse \
   --output ./source-bundles \
   --release-name jovian-judgement-community-source-locked \
   --release-version source-locked
@@ -163,11 +164,22 @@ The interface derives from Tim Rice's
 with literal argument handling and explicit protection for launcher-owned
 configuration.
 
-LMCache Python packaging reuses compiled extensions from the immutable artifact
-image recorded as `lmcache.native.artifact.image` in the source lock. Native
-sources, Rust sources, build policy and requirements must match before reuse;
-the platform wheel's tags and RECORD are regenerated. This build-stage input
-does not add its filesystem layers to the serving image, which retains two layers.
+LMCache packaging records `lmcache.native.mode` in the source lock.
+`reuse-all` requires identical native sources, Rust sources, build policy and
+requirements before copying the compiled payload. `cpu-rebuild-cuda-reuse`
+builds all three common C++ extensions with `NO_GPU_EXT=1`, then copies only the
+CUDA extension from the immutable `lmcache.native.artifact.image`. Every native
+input outside the two CPU implementation directories must match that reference,
+including shared headers and build policy. The platform wheel's tags and RECORD
+describe the combined payload. The build-stage image does not contribute its
+layers to the serving image, which retains two filesystem layers.
+
+The filesystem connector reconciles missing objects during idempotent deletion
+and protects keys with pending native stores, following Derek Yates's
+[LMCache #67](https://github.com/local-inference-lab/LMCache/pull/67). Bounded
+object paths, readable legacy paths and real filesystem errors remain supported.
+This correction requires the CPU-native rebuild mode; copying only Python would
+leave the defective filesystem binary installed.
 
 Persistent LMCache namespaces resolve the effective positional or `MODEL`
 checkpoint and its immutable model/draft identity in both request-boundary and
