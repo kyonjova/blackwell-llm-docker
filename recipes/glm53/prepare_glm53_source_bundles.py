@@ -50,6 +50,11 @@ def main() -> None:
         "--release-name", default="jovian-judgement-community-source-locked"
     )
     parser.add_argument("--release-version", default="source-locked")
+    parser.add_argument(
+        "--lmcache-native-mode",
+        choices=("reuse-all", "cpu-rebuild-cuda-reuse"),
+        default="reuse-all",
+    )
     args = parser.parse_args()
     args.output = args.output.resolve()
     roots = {
@@ -76,6 +81,7 @@ def main() -> None:
         "runtime.nccl.buffer.bytes": "2097152",
         "runtime.recurrent-checkpoint-policy": "auto",
         "lmcache.native.artifact.image": "localinferencelab/vllm@sha256:5f6fcbc681f20b7c052815ca17511d9fe789aea314a17723c202789dd7adc131",
+        "lmcache.native.mode": args.lmcache_native_mode,
         "runtime.lmcache.transfer": "engine-driven asynchronous shared memory",
         "runtime.lmcache.checkpoints": "atomic target and draft bundles for request_boundaries; independent chunks for explicit aligned",
         "model.repository": "local-inference-lab/GLM-5.3-Flash-NVFP4",

@@ -71,13 +71,48 @@ def test_incompatible_native_payload_is_rejected(wheel_members, native, tag):
         packer.platform_wheel(wheel_members, native, tag)
 
 
-@pytest.mark.parametrize("native_source_changed", [False, True])
+def test_cuda_reuse_preserves_rebuilt_cpu_libraries(wheel_members):
+    rebuilt = {
+        f"lmcache/{name}.so": b"rebuilt " + name.encode()
+        for name in packer.CPU_EXTENSIONS
+    }
+    reference = {f"lmcache/{name}.so": b"reference" for name in packer.CPU_EXTENSIONS}
+    reference["lmcache/cuda_ops.so"] = b"qualified CUDA"
+    files = {**wheel_members, **rebuilt}
+    selected = packer.select_native(files, reference, "cpu-rebuild-cuda-reuse")
+    result = packer.platform_wheel(files, selected, TAG)
+    assert result["lmcache/cuda_ops.so"] == b"qualified CUDA"
+    for path, data in rebuilt.items():
+        assert result[path] == data
+    del files["lmcache/lmcache_fs.so"]
+    with pytest.raises(ValueError, match="all three rebuilt CPU"):
+        packer.select_native(files, reference, "cpu-rebuild-cuda-reuse")
+
+
+@pytest.mark.parametrize("mode", ["reuse-all", "cpu-rebuild-cuda-reuse"])
+@pytest.mark.parametrize(
+    "changed",
+    [
+        None,
+        "csrc/storage_backends/fs/connector.cpp",
+        "csrc/cuda/kernel.cu",
+        "csrc/shared.h",
+        "setup.py",
+    ],
+)
 def test_cli_reuses_only_native_inputs_with_identical_git_identity(
-    tmp_path, wheel_members, native_source_changed
+    tmp_path, wheel_members, mode, changed
 ):
     reference = tmp_path / "reference"
     reference.mkdir()
-    for name in packer.NATIVE_INPUTS:
+    paths = [name for name in packer.NATIVE_INPUTS if name != "csrc"]
+    paths += [
+        "csrc/storage_backends/fs/connector.cpp",
+        "csrc/cuda/kernel.cu",
+        "csrc/shared.h",
+    ]
+    for name in paths:
+        (reference / name).parent.mkdir(parents=True, exist_ok=True)
         (reference / name).write_text(f"native input: {name}\n")
     subprocess.run(["git", "init", "-q", str(reference)], check=True)
     subprocess.run(["git", "-C", str(reference), "add", "."], check=True)
@@ -95,19 +130,29 @@ def test_cli_reuses_only_native_inputs_with_identical_git_identity(
     source = tmp_path / "source"
     subprocess.run(["git", "clone", "-q", str(reference), str(source)], check=True)
     (source / "python.py").write_text("# Python-only source change\n")
-    if native_source_changed:
-        (source / "csrc").write_text("incompatible CUDA source\n")
+    if changed:
+        (source / changed).write_text("changed native source\n")
     subprocess.run(["git", "add", "."], cwd=source, check=True)
     subprocess.run(git_commit, cwd=source, check=True)
     package = tmp_path / "site-packages" / "lmcache"
     package.mkdir(parents=True)
     (package / "cuda_ops.so").write_bytes(b"compiled CUDA fixture")
+    for name in packer.CPU_EXTENSIONS:
+        (package / f"{name}.so").write_bytes(b"reference CPU fixture")
     dist_info = package.parent / "lmcache-0.1.dist-info"
     dist_info.mkdir()
     (dist_info / "WHEEL").write_text(f"Tag: {TAG}\n")
     wheel_dir = tmp_path / "wheels"
     wheel_dir.mkdir()
-    pure = wheel_dir / "lmcache-0.1-py3-none-any.whl"
+    suffix = "py3-none-any" if mode == "reuse-all" else TAG
+    pure = wheel_dir / f"lmcache-0.1-{suffix}.whl"
+    if mode == "cpu-rebuild-cuda-reuse":
+        wheel_members.update(
+            {
+                f"lmcache/{name}.so": b"rebuilt CPU fixture"
+                for name in packer.CPU_EXTENSIONS
+            }
+        )
     with zipfile.ZipFile(pure, "w") as archive:
         for name, data in wheel_members.items():
             archive.writestr(name, data)
@@ -123,19 +168,29 @@ def test_cli_reuses_only_native_inputs_with_identical_git_identity(
             str(package),
             "--wheel-dir",
             str(wheel_dir),
+            "--mode",
+            mode,
         ],
         capture_output=True,
         text=True,
         check=False,
     )
     platform = wheel_dir / f"lmcache-0.1-{TAG}.whl"
-    if native_source_changed:
+    compatible = changed is None or (
+        mode == "cpu-rebuild-cuda-reuse"
+        and changed == "csrc/storage_backends/fs/connector.cpp"
+    )
+    if not compatible:
         assert result.returncode != 0
         assert "native build inputs differ" in result.stderr
         assert pure.exists()
-        assert not platform.exists()
+        if pure != platform:
+            assert not platform.exists()
     else:
         assert result.returncode == 0, result.stderr
-        assert not pure.exists()
+        if pure != platform:
+            assert not pure.exists()
         with zipfile.ZipFile(platform) as archive:
             assert archive.read("lmcache/cuda_ops.so") == b"compiled CUDA fixture"
+            if mode == "cpu-rebuild-cuda-reuse":
+                assert archive.read("lmcache/lmcache_fs.so") == b"rebuilt CPU fixture"

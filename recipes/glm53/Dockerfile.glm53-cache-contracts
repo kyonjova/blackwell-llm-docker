@@ -12,6 +12,7 @@ ARG LMCACHE_COMMIT
 ARG LMCACHE_TREE
 ARG LMCACHE_BUNDLE_SHA256
 ARG LMCACHE_VERSION
+ARG LMCACHE_NATIVE_MODE=reuse-all
 ARG UV_SHA256
 WORKDIR /tmp
 RUN test "$(sha256sum /source-bundles/lmcache.bundle | cut -d' ' -f1)" = "${LMCACHE_BUNDLE_SHA256}" \
@@ -21,14 +22,18 @@ RUN test "$(sha256sum /source-bundles/lmcache.bundle | cut -d' ' -f1)" = "${LMCA
     && /source-bundles/uv pip install --python /opt/venv/bin/python \
         'setuptools>=77.0.3,<81' setuptools_scm wheel packaging ninja \
     && cd /tmp/lmcache-source \
+    && case "${LMCACHE_NATIVE_MODE}" in \
+         reuse-all) export NO_NATIVE_EXT=1 ;; \
+         cpu-rebuild-cuda-reuse) unset NO_NATIVE_EXT; export NO_GPU_EXT=1 MAX_JOBS=8 ;; \
+         *) echo "Unsupported LMCache native mode" >&2; exit 1 ;; \
+       esac \
     && SETUPTOOLS_SCM_PRETEND_VERSION_FOR_LMCACHE="${LMCACHE_VERSION}" \
-        NO_NATIVE_EXT=1 \
         /source-bundles/uv run --no-project --python /opt/venv/bin/python \
         /opt/venv/bin/python -m pip wheel --no-build-isolation --no-deps --wheel-dir /artifacts . \
     && /opt/venv/bin/python /build-tools/pack_lmcache_native_reuse.py \
         --source /tmp/lmcache-source --reference-source /opt/lmcache/source \
         --reference-package /opt/venv/lib/python3.12/site-packages/lmcache \
-        --wheel-dir /artifacts \
+        --wheel-dir /artifacts --mode "${LMCACHE_NATIVE_MODE}" \
     && install -Dm755 /opt/lmcache/lib/liblmcache_cumem_shareable.so /artifacts/liblmcache_cumem_shareable.so \
     && cd /artifacts && sha256sum *.whl *.so > SHA256SUMS
 

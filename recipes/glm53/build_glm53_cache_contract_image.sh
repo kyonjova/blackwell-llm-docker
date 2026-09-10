@@ -26,6 +26,7 @@ docker buildx build --load --progress plain --tag "$tag" \
     --build-arg "LMCACHE_TREE=$(value lmcache.tree)" \
     --build-arg "LMCACHE_BUNDLE_SHA256=$(value lmcache.bundle.sha256)" \
     --build-arg "LMCACHE_VERSION=$(value lmcache.version)" \
+    --build-arg "LMCACHE_NATIVE_MODE=$(value lmcache.native.mode)" \
     --build-arg "UV_SHA256=$(value build.uv.sha256)" \
     --build-arg "CACHE_FINGERPRINT=$fingerprint" "${labels[@]}" \
     --build-context "source_bundles=$bundles" --build-context "native_artifact=$native" \

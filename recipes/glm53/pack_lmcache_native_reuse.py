@@ -1,9 +1,13 @@
-"""Package Python-only LMCache changes with ABI-matched compiled extensions.
+"""Package LMCache wheels with source- and ABI-matched compiled extensions.
 
 The reference image must contain the same native sources and build policy.
 Compiled payloads are copied byte-for-byte; wheel tags and RECORD describe the
 resulting platform wheel. Native-source changes fail rather than reusing an
 incompatible binary.
+
+``cpu-rebuild-cuda-reuse`` requires a wheel containing rebuilt common C++
+extensions and preserves only the CUDA extension. Every native input outside
+the two CPU implementation directories must still match the reference.
 """
 
 from __future__ import annotations
@@ -29,13 +33,49 @@ NATIVE_INPUTS = (
 )
 
 
-def native_identity(root: Path) -> dict[str, str]:
-    return {
+CPU_SOURCE_DIRS = ("csrc/lmcache_native/", "csrc/storage_backends/")
+CPU_EXTENSIONS = {"lmcache_native", "lmcache_fs", "lmcache_redis"}
+
+
+def native_identity(root: Path, mode: str = "reuse-all") -> dict[str, str]:
+    identity = {
         name: subprocess.check_output(
             ["git", "-C", str(root), "rev-parse", f"HEAD:{name}"], text=True
         ).strip()
         for name in NATIVE_INPUTS
+        if mode == "reuse-all" or name != "csrc"
     }
+    if mode == "cpu-rebuild-cuda-reuse":
+        sources = subprocess.check_output(
+            ["git", "-C", str(root), "ls-tree", "-r", "HEAD", "csrc"], text=True
+        )
+        for line in sources.splitlines():
+            metadata, path = line.split("\t", 1)
+            if not path.startswith(CPU_SOURCE_DIRS):
+                identity[path] = metadata
+    return identity
+
+
+def select_native(
+    files: dict[str, bytes], native: dict[str, bytes], mode: str
+) -> dict[str, bytes]:
+    if mode == "reuse-all":
+        if any(path.endswith(".so") for path in files):
+            raise ValueError("Full native reuse requires a Python-only wheel")
+        return native
+    compiled = {path for path in files if path.endswith(".so")}
+    if {Path(path).name.split(".")[0] for path in compiled} != CPU_EXTENSIONS:
+        raise ValueError("CUDA-only reuse requires all three rebuilt CPU extensions")
+    if any(not path.startswith("lmcache/") for path in compiled):
+        raise ValueError("Rebuilt CPU extensions must belong to lmcache")
+    cuda = {
+        path: data
+        for path, data in native.items()
+        if Path(path).name.startswith("cuda_ops.")
+    }
+    if len(cuda) != 1:
+        raise ValueError("Expected exactly one reference CUDA extension")
+    return cuda
 
 
 def platform_wheel(
@@ -81,14 +121,24 @@ def main() -> None:
     parser.add_argument("--reference-source", type=Path, required=True)
     parser.add_argument("--reference-package", type=Path, required=True)
     parser.add_argument("--wheel-dir", type=Path, required=True)
+    parser.add_argument(
+        "--mode", choices=("reuse-all", "cpu-rebuild-cuda-reuse"), default="reuse-all"
+    )
     args = parser.parse_args()
-    if native_identity(args.source) != native_identity(args.reference_source):
+    if native_identity(args.source, args.mode) != native_identity(
+        args.reference_source, args.mode
+    ):
         raise ValueError(
             "LMCache native build inputs differ; provide compatible compiled artifacts"
         )
     wheels = list(args.wheel_dir.glob("*.whl"))
-    if len(wheels) != 1 or not wheels[0].name.endswith("-py3-none-any.whl"):
-        raise ValueError("Expected one Python-only LMCache wheel")
+    suffix = (
+        "-py3-none-any.whl"
+        if args.mode == "reuse-all"
+        else "-cp312-cp312-linux_x86_64.whl"
+    )
+    if len(wheels) != 1 or not wheels[0].name.endswith(suffix):
+        raise ValueError(f"Expected one LMCache wheel ending in {suffix}")
     source = wheels[0]
     reference_metadata = list(
         args.reference_package.parent.glob("lmcache-*.dist-info/WHEEL")
@@ -108,15 +158,19 @@ def main() -> None:
     }
     with zipfile.ZipFile(source) as archive:
         files = {name: archive.read(name) for name in archive.namelist()}
-    output = source.with_name(
-        source.name.removesuffix("-py3-none-any.whl") + f"-{tags[0]}.whl"
-    )
-    if output.exists():
+    native = select_native(files, native, args.mode)
+    output = source.with_name(source.name.removesuffix(suffix) + f"-{tags[0]}.whl")
+    if output != source and output.exists():
         raise FileExistsError(output)
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    staged = output.with_suffix(".whl.tmp")
+    if staged.exists():
+        raise FileExistsError(staged)
+    with zipfile.ZipFile(staged, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for name, data in platform_wheel(files, native, tags[0]).items():
             archive.writestr(name, data)
-    source.unlink()
+    staged.replace(output)
+    if source != output:
+        source.unlink()
     print(f"Preserved {len(native)} compiled LMCache artifacts in {output.name}")
 
 
