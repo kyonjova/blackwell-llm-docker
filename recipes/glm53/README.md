@@ -2,6 +2,11 @@
 
 Status: **implemented; release qualification is tracked separately**.
 
+The source references below include the corrected NVFP4 SwiGLU clamp. The
+published R34 image does not: do not use its B12X revision as a deployment
+baseline. See the [R34 preservation and correctness audit](r34-preservation.md)
+for immutable artifact identities, the GPU reproducer and qualification limits.
+
 The build installs complete committed vLLM, B12X and LMCache Git trees over an
 immutable CUDA 13.3/PyTorch 2.13 runtime. It reuses source-compatible LMCache
 native extensions and installs a source-authenticated FlashKDA operator with packed recurrent
@@ -20,8 +25,9 @@ authenticated. Replacing any native dependency requires serving qualification.
 For a pinned branch-plus-PR reconstruction, use the
 [public review composition contract](review-composition.md). It verifies all
 three component trees from public review heads without private resolution
-patches. Its composition is distinct from the published R34 source references
-below; do not mix revisions from the two descriptions.
+patches. The source table below identifies those composed trees. Historical
+R34 identities are recorded separately in the preservation audit; do not mix
+components from the two compositions.
 
 Provide clean, complete Git checkouts as `vllm-source`, `b12x-source` and
 `lmcache-source`. Use the release's published source refs and revisions, not
@@ -34,13 +40,15 @@ is needed for image construction. Compilation uses the runtime foundation.
 
 The GLM/Qwen/DS4 shared serving artifact uses the following published integration
 refs. They preserve contributor history and integration resolutions; simply
-merging a list of open PRs does not reproduce those resolutions automatically.
+merging arbitrary PR heads or changing the declared merge order does not
+reproduce the source contract. The pinned, ordered manifests reproduce these
+trees including their required integration resolutions.
 These source refs are **implemented**, not by themselves release approval.
 
 | Checkout | Repository | Commit |
 |---|---|---|
-| `vllm-source` | [voipmonitor/vllm](https://github.com/voipmonitor/vllm/tree/codex/jovian-b12x-default-r34-20260910) | `c496604123b1f4441007b952a7ee37ab12c8f6ad` |
-| `b12x-source` | [voipmonitor/b12x](https://github.com/voipmonitor/b12x/tree/release/jovian-nvfp4-split-r33-20260910) | `59d51a36a942d56a9c36265855cdc7856fa7712e` |
+| `vllm-source` | [voipmonitor/vllm](https://github.com/voipmonitor/vllm/tree/integration/jovian-reviewed-sources-20260911) | `de982a50c6a3e4718e5cf9f00423a92192718da1` |
+| `b12x-source` | [voipmonitor/b12x](https://github.com/voipmonitor/b12x/tree/integration/jovian-reviewed-sources-20260911) | `98086604c86ec1e78977e5023ce282ecb97ab8a7` |
 | `lmcache-source` | [local-inference-lab/LMCache](https://github.com/local-inference-lab/LMCache/tree/release/jovian-fp4-fs-ledger-r33-20260910) | `29bc5a2efde737c436b04499eb62cd1776cebeec` |
 
 Clone each linked branch into its checkout directory, then verify `git rev-parse HEAD`

@@ -85,6 +85,12 @@ native layer imports. JJ's standalone B12X imports are preserved; actual
 DeepSeek V4.1 dispatch still requires its native backend. Import isolation is
 not a fallback implementation or a DeepSeek V4.1 serving qualification.
 
-The published R34 image and its source refs in [the build guide](README.md) are
-immutable reference artifacts. These review manifests identify a distinct
-composition. They do not change the contents of an already-published image.
+The published R34 image and the source identities in the preservation audit are
+immutable reference artifacts. These review manifests and the [build guide](README.md)
+identify the corrected composition. They do not change the contents of an
+already-published image.
+
+The [installed-artifact and R34 preservation audit](r34-preservation.md) verifies
+this compatibility statement independently of composition replay. It also
+proves that the pinned B12X base fixes R34's omitted split-NVFP4 SwiGLU clamp.
+R34 is a performance reference, not a valid oracle for that clamped operation.

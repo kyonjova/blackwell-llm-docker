@@ -3,6 +3,10 @@
 Status: **qualified for the bounded checks below**, measured 2026-09-11.
 This is not a DockerHub release or a full GLM/Qwen/DeepSeek qualification.
 
+The separate [R34 preservation and activation-correctness audit](r34-preservation.md)
+checks actual installed files, retained runtime behavior and the split-NVFP4
+SwiGLU correction. R34 fails that clamp regression; the composed image passes.
+
 The [review manifests](review-composition.md) reproduce complete source trees
 from public GitHub refs with no additional patches. Network fetch, ordered
 merge and generated-patch replay passed for 32 vLLM, 3 B12X and 9 LMCache

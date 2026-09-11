@@ -1,0 +1,31 @@
+{
+  "bytecode_classification": {
+    "directory_or_other": 1,
+    "header_only_source_identical": 791,
+    "source_changed_or_added": 34
+  },
+  "bytecode_unexplained_differences": [],
+  "component_untracked_differences": {
+    "b12x": [
+      "opt/glm53-flash/b12x/b12x/attention/mla_compress",
+      "opt/glm53-flash/b12x/b12x/sequence/_shared/delta_prefill",
+      "opt/glm53-flash/b12x/b12x/sequence/embedding",
+      "opt/glm53-flash/b12x/b12x/sequence/engram",
+      "opt/glm53-flash/b12x/b12x/sequence/gdn_prefill",
+      "opt/glm53-flash/b12x/benchmarks/moe",
+      "opt/glm53-flash/b12x/docs/evidence/nvfp4-immutable-input",
+      "opt/glm53-flash/b12x/validation/deepseek_v41"
+    ],
+    "lmcache": [],
+    "vllm": [
+      "opt/glm53-flash/vllm/vllm.egg-info/PKG-INFO",
+      "opt/glm53-flash/vllm/vllm/_version.py",
+      "opt/glm53-flash/vllm/vllm/models/deepseek_v4_1",
+      "opt/glm53-flash/vllm/vllm/models/deepseek_v4_1/common",
+      "opt/glm53-flash/vllm/vllm/models/deepseek_v4_1/nvidia"
+    ]
+  },
+  "native_library_differences": [],
+  "notes": "The base DiffID is identical; this examines all native overrides in the image-specific layer.",
+  "identical_upper_layer_native_library_count": 670
+}
