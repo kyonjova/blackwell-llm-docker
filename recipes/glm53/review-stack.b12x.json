@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "name": "B12X caller-owned execution review composition",
+  "repository": "https://github.com/local-inference-lab/b12x.git",
+  "base_ref": "refs/heads/master",
+  "base_commit": "00b69ac22e21413622c4ecd98f607a2c3e015161",
+  "expected_tree": "d963f030c72a426753d2afa412b35d29eeb045f7",
+  "composition_strategy": "merge",
+  "pull_requests": [
+    {
+      "number": 279,
+      "head": "637f056d2a727e732f5ec49907ef4ee4d89c43e5"
+    },
+    {
+      "number": 280,
+      "head": "d65b1a32b2cb9022e017370d837cb4df811fdf0e"
+    },
+    {
+      "number": 356,
+      "head": "6f356271d5b697f25b3bbf1586b198d4f9747c57"
+    }
+  ]
+}

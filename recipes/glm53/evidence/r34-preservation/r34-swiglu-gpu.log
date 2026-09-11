@@ -1,0 +1,56 @@
+F
+=================================== FAILURES ===================================
+________ TestNvfp4SplitDispatch.test_swiglu_limit_changes_split_output _________
+
+self = <tests.moe.test_nvfp4_split_dispatch_policy.TestNvfp4SplitDispatch object at 0x74ea3817f800>
+domain = {'E': 8, 'K': 256, 'expert_tile_base': tensor([ 0,  1,  2,  3,  5,  6,  7,  9, 11], device='cuda:0',
+       dtype=torch.int32), 'intermediate_tiles': 1, ...}
+
+    def test_swiglu_limit_changes_split_output(self, domain):
+        experts = _prepare_dispatch_experts(domain)
+        clamped_oracle = _dispatch_oracle(domain, swiglu_limit=2.0)
+        outputs = []
+        for limit in (None, 2.0):
+            binding = make_tp_moe_fp4_binding(
+                a=domain["x"],
+                experts=experts,
+                topk_ids=domain["topk_ids"],
+                topk_weights=domain["topk_weights"],
+                input_scales_static=True,
+                fast_math=False,
+                swiglu_limit=limit,
+            )
+            outputs.append(fused_moe.run(binding=binding).clone())
+        torch.cuda.synchronize()
+        unclamped, clamped = outputs
+        _assert_dispatch_matches(unclamped, domain["oracle"])
+>       _assert_dispatch_matches(clamped, clamped_oracle)
+
+tests/moe/test_nvfp4_split_dispatch_policy.py:254: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+actual = tensor([[ 2.3750,  0.1846,  0.4336,  ..., -0.6641,  0.6680, -1.3828],
+        [-0.0693, -0.1826, -0.1660,  ...,  0.226...],
+        [-0.6133,  0.2158,  0.5938,  ..., -0.0352, -0.2012, -0.5859]],
+       device='cuda:0', dtype=torch.bfloat16)
+reference = tensor([[ 1.3594, -0.0732,  0.0640,  ..., -0.3535,  0.3438, -1.0234],
+        [-0.2344, -0.0815,  0.0918,  ...,  0.271...],
+        [-0.5352,  0.0151,  0.3633,  ..., -0.1299, -0.0254, -0.5312]],
+       device='cuda:0', dtype=torch.bfloat16)
+
+    def _assert_dispatch_matches(actual, reference):
+        assert torch.isfinite(actual).all()
+        metrics = compare_to_reference(actual, reference)
+        bound = _bf16_output_bound(reference)
+>       assert metrics.cos > 0.9999, metrics
+E       AssertionError: OracleMetrics(max_abs=3.11328125, rmse=0.3658149838447571, mean_abs=0.27279627323150635, cos=0.9297209978103638)
+E       assert 0.9297209978103638 > 0.9999
+E        +  where 0.9297209978103638 = OracleMetrics(max_abs=3.11328125, rmse=0.3658149838447571, mean_abs=0.27279627323150635, cos=0.9297209978103638).cos
+
+tests/moe/test_nvfp4_split_dispatch_policy.py:203: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  b12x.policy.context:context.py:61 b12x policy fallback: moe.decode is using a heuristic on nvidia rtx pro 6000 blackwell workstation edition (compute capability 12.0, 188 SMs) because profile 'nvidia.rtx.pro.6000.blackwell' does not cover the query; query={'activation': 'silu', 'hidden_size': 256, 'intermediate_size': 128, 'num_experts': 8, 'num_tokens': 512, 'quant_mode': 'nvfp4', 'routed_rows': 1024, 'source_format': 'modelopt_nvfp4', 'top_k': 2}
+WARNING  b12x.policy.context:context.py:61 b12x policy fallback: moe.decode is using a heuristic on nvidia rtx pro 6000 blackwell workstation edition (compute capability 12.0, 188 SMs) because profile 'nvidia.rtx.pro.6000.blackwell' does not cover the query; query={'activation': 'silu', 'hidden_size': 256, 'intermediate_size': 128, 'num_experts': 8, 'num_tokens': 32, 'quant_mode': 'nvfp4', 'routed_rows': 64, 'source_format': 'modelopt_nvfp4', 'top_k': 2}
+=========================== short test summary info ============================
+FAILED tests/moe/test_nvfp4_split_dispatch_policy.py::TestNvfp4SplitDispatch::test_swiglu_limit_changes_split_output
+1 failed in 13.33s

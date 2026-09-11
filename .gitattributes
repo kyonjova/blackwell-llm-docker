@@ -1,1 +1,3 @@
 patches/releases/**/integration.patch -whitespace
+# Captured diagnostics retain their original bytes for evidence checksums.
+recipes/glm53/evidence/**/*.log -whitespace
