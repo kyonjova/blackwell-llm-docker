@@ -1,0 +1,62 @@
+{
+  "b12x": {
+    "automatic_merge_tree": "001237736e737e5889c6d20e6807a17de8e0160f",
+    "common_ancestor": "6483963275dcf32eb2eec6d100e644d1ea647ed6",
+    "composition": "98086604c86ec1e78977e5023ce282ecb97ab8a7",
+    "merge_has_conflicts": true,
+    "release": "59d51a36a942d56a9c36265855cdc7856fa7712e",
+    "residual_paths": [
+      "M\tb12x/moe/_shared/kernels/dynamic.py",
+      "M\tb12x/moe/_shared/kernels/nvfp4_phase1.py",
+      "M\tb12x/moe/_shared/kernels/silu.py",
+      "M\tb12x/moe/fused_moe/_impl.py",
+      "M\tb12x/norm/mhc/_impl.py",
+      "M\tb12x/policy/_profiles/data/nvidia.gb10.48sm.json.gz",
+      "M\tb12x/policy/_profiles/data/nvidia.rtx.pro.6000.blackwell.json.gz",
+      "M\tb12x/policy/_profiles/data/nvidia.rtx.pro.6000.blackwell.max-q.json.gz",
+      "M\tbenchmarks/benchmark_nvfp4_split_materialized.py",
+      "M\tbenchmarks/gen_nvfp4_split_readme.py",
+      "D\tbenchmarks/moe/bench_glm_nvfp4_split.py",
+      "M\tdocs/evidence/nvfp4_split/20260910-rtx5090-nvfp4-split-prefill.json",
+      "M\tdocs/evidence/nvfp4_split/README.md",
+      "M\ttests/gemm/test_launch_custom_ops.py",
+      "M\ttests/gemm/test_mxfp8_linear.py",
+      "M\ttests/moe/test_cute_migration_moe_standard_corpus.py",
+      "M\ttests/moe/test_nvfp4_phase_kernels.py",
+      "M\ttests/moe/test_nvfp4_shared_input_scales.py",
+      "M\ttests/moe/test_nvfp4_split_backend.py",
+      "M\ttests/moe/test_nvfp4_split_dispatch_policy.py"
+    ],
+    "upstream": "00b69ac22e21413622c4ecd98f607a2c3e015161"
+  },
+  "lmcache": {
+    "automatic_merge_tree": "5a88a1ea9d2627c76288d056e7193f7454669b64",
+    "common_ancestor": "7ed4675404a31f4ffafd98975899dc83832ba965",
+    "composition": "29bc5a2efde737c436b04499eb62cd1776cebeec",
+    "merge_has_conflicts": false,
+    "release": "29bc5a2efde737c436b04499eb62cd1776cebeec",
+    "residual_paths": [],
+    "upstream": "7ed4675404a31f4ffafd98975899dc83832ba965"
+  },
+  "vllm": {
+    "automatic_merge_tree": "d48ba1be367143c9ce33d81012d2849ccc0b36a1",
+    "common_ancestor": "aba94d396d27ea92a2044ad024c003b36da505d3",
+    "composition": "de982a50c6a3e4718e5cf9f00423a92192718da1",
+    "merge_has_conflicts": false,
+    "release": "c496604123b1f4441007b952a7ee37ab12c8f6ad",
+    "residual_paths": [
+      "M\ttests/models/test_glm5next_pooled_indexer.py",
+      "M\ttests/quantization/test_register_quantization_config.py",
+      "M\ttests/v1/core/test_boundary_admission.py",
+      "M\ttests/v1/core/test_boundary_admission_continuation.py",
+      "M\ttests/v1/core/test_prefill_compute_share_scheduler.py",
+      "M\ttests/v1/core/test_scheduler.py",
+      "M\tvllm/distributed/kv_transfer/kv_connector/v1/base.py",
+      "M\tvllm/models/deepseek_v4_1/quant_config.py",
+      "M\tvllm/models/glm5next/nvidia/kda.py",
+      "M\tvllm/v1/attention/backends/mla/sparse_utils.py",
+      "M\tvllm/v1/core/kv_cache_manager.py"
+    ],
+    "upstream": "a6571d0a602ed42525a7a77cf960f39ca7f8d7a8"
+  }
+}

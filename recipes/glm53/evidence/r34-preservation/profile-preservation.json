@@ -1,0 +1,23 @@
+{
+  "b12x/policy/_profiles/data/nvidia.gb10.48sm.json.gz": {
+    "exceptions": [],
+    "field_counts": {
+      "release_specific_retained": 1,
+      "upstream_or_unchanged": 24
+    }
+  },
+  "b12x/policy/_profiles/data/nvidia.rtx.pro.6000.blackwell.json.gz": {
+    "exceptions": [],
+    "field_counts": {
+      "release_specific_retained": 1,
+      "upstream_or_unchanged": 24
+    }
+  },
+  "b12x/policy/_profiles/data/nvidia.rtx.pro.6000.blackwell.max-q.json.gz": {
+    "exceptions": [],
+    "field_counts": {
+      "release_specific_retained": 1,
+      "upstream_or_unchanged": 24
+    }
+  }
+}

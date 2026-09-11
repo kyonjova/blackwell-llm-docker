@@ -1,0 +1,112 @@
+{
+  "configuration_differences": {},
+  "difference_counts": {
+    "b12x": 275,
+    "build_cache": 18807,
+    "git_provenance": 31,
+    "python_bytecode": 826,
+    "python_environment": 2,
+    "runtime_packaging": 2,
+    "vllm": 114
+  },
+  "environment_difference_hashes": {
+    "B12X_COMPILE_CACHE_DIR": {
+      "composition": "27f46020fd34240a1cb0ebd30abad4d00d775cd037fbf7880ce073a62330226c",
+      "r34": "08aeb13a1a72b27b8a7a40fc7867129972bbc0773e3f6a87851163b30a20f86f"
+    },
+    "B12X_CUTE_COMPILE_CACHE_DIR": {
+      "composition": "d8f02bc216f2a3f92a44f4e0ad17a9a6924c73ad9af8a171f7f88c8d39c40bd9",
+      "r34": "3b1281a4a1f968ce467bec6f42dbe153940c049f26d3bb1c872a15d65386eaff"
+    },
+    "CUDA_CACHE_PATH": {
+      "composition": "31ee71ed3cf5fd742b650e9a157a3b02745ad0324d16ac5a02b333303aaf1abd",
+      "r34": "c039afa0f9556ea3406191b2414996b93727aada193ac545b889e5e3c6484135"
+    },
+    "CUTE_DSL_CACHE_DIR": {
+      "composition": "6d59cac25ec45b9349bd6e09cb1b500434f61be0dda0a5e434ad5791431368ee",
+      "r34": "74d43a397d0979ad20f66bf01b43699f71a1cdb3e79d202afeb6f19c04815ee0"
+    },
+    "LOCAL_INFERENCE_CACHE_FINGERPRINT": {
+      "composition": "7bd4ce4bf06b3a9c0105c9439e3592905edbbc5a23652f06a2b78517525f1615",
+      "r34": "de4eb55836928881f9d04267fd56ef4c400df4bcee6f1341cdf0c684f1d7f366"
+    },
+    "SPARKINFER_COMPILE_CACHE_DIR": {
+      "composition": "27f46020fd34240a1cb0ebd30abad4d00d775cd037fbf7880ce073a62330226c",
+      "r34": "08aeb13a1a72b27b8a7a40fc7867129972bbc0773e3f6a87851163b30a20f86f"
+    },
+    "TORCHINDUCTOR_CACHE_DIR": {
+      "composition": "c2344d4d5d9985bc4c0f9e0eefecdce953825a7feed14a2473bdb8aa4668f1c1",
+      "r34": "77be359c6339f7932c2327e035abd6be340d552e53c37716693057c709b2358b"
+    },
+    "TRITON_CACHE_DIR": {
+      "composition": "8c479d24391187ed97cd416b2ef19475e5d94f7ff43d47b8f495e92eb8520b15",
+      "r34": "192d18a5cf61cf6e004f6297280279a69cf667f2eb984e4ea38761db1d59ed97"
+    },
+    "VLLM_CACHE_DIR": {
+      "composition": "30af5b23112c380ce2351130122b3ac8e558e7d28bf25494a77dbb2796280b60",
+      "r34": "c76ecfb2819d4c53e431d3854dafe4b34b603936681a1c71bb874d985c85895c"
+    },
+    "VLLM_CACHE_ROOT": {
+      "composition": "30af5b23112c380ce2351130122b3ac8e558e7d28bf25494a77dbb2796280b60",
+      "r34": "c76ecfb2819d4c53e431d3854dafe4b34b603936681a1c71bb874d985c85895c"
+    },
+    "XDG_CACHE_HOME": {
+      "composition": "40e81ba07b05f84f3eaff635e840a36066fabe50ae05a3cc5b68133dc96e74e0",
+      "r34": "8631dc8a1b9389303827ec1efbb9202c072f42b11992482ff1bc1cb278d0a252"
+    }
+  },
+  "images": {
+    "composition": "sha256:d3508d5afd3c616db55efb5d18490e12370fdd0f9c6821f434136e4f4fc21c6a",
+    "r34": "sha256:eca2707b9ba1748196a0db72f659ebd1d2f4863cfde33d8da59924ea5983a19e"
+  },
+  "scope": "Upper-layer content, modes, ownership and xattrs; timestamps excluded.",
+  "shared_runtime_base_layer": "sha256:cb220f94ebc323749ae8e960eecd0076d01b4a23ee7d2dabdb463b44fdc37d68",
+  "source_checks": {
+    "composition": {
+      "b12x": {
+        "commit": "98086604c86ec1e78977e5023ce282ecb97ab8a7",
+        "differences": [],
+        "submodules_not_recursed": [],
+        "tracked_files": 1015,
+        "tree": "d963f030c72a426753d2afa412b35d29eeb045f7"
+      },
+      "lmcache": {
+        "commit": "29bc5a2efde737c436b04499eb62cd1776cebeec",
+        "differences": [],
+        "submodules_not_recursed": [],
+        "tracked_files": 2423,
+        "tree": "5a88a1ea9d2627c76288d056e7193f7454669b64"
+      },
+      "vllm": {
+        "commit": "de982a50c6a3e4718e5cf9f00423a92192718da1",
+        "differences": [],
+        "submodules_not_recursed": [],
+        "tracked_files": 6870,
+        "tree": "6d5cc3490735a53e849a4f0909183cb5e3a22e8b"
+      }
+    },
+    "r34": {
+      "b12x": {
+        "commit": "59d51a36a942d56a9c36265855cdc7856fa7712e",
+        "differences": [],
+        "submodules_not_recursed": [],
+        "tracked_files": 881,
+        "tree": "474364a1f7ae3e6d379be88a57ebbe02bb5f9dba"
+      },
+      "lmcache": {
+        "commit": "29bc5a2efde737c436b04499eb62cd1776cebeec",
+        "differences": [],
+        "submodules_not_recursed": [],
+        "tracked_files": 2423,
+        "tree": "5a88a1ea9d2627c76288d056e7193f7454669b64"
+      },
+      "vllm": {
+        "commit": "c496604123b1f4441007b952a7ee37ab12c8f6ad",
+        "differences": [],
+        "submodules_not_recursed": [],
+        "tracked_files": 6835,
+        "tree": "e5fbfbaf6815210b68daea1b0e09f373a2f6df1f"
+      }
+    }
+  }
+}

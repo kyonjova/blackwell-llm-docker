@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "name": "Engine-driven checkpoint review-tree audit",
+  "repository": "https://github.com/local-inference-lab/LMCache.git",
+  "base_ref": "refs/heads/dev",
+  "base_commit": "7ed4675404a31f4ffafd98975899dc83832ba965",
+  "expected_tree": "5a88a1ea9d2627c76288d056e7193f7454669b64",
+  "composition_strategy": "merge",
+  "pull_requests": [
+    {
+      "number": 49,
+      "head": "b4b79a0ffeeec0e7ede02744cb50a8271bb1c89e"
+    },
+    {
+      "number": 50,
+      "head": "2151e373c4fa954edeb3b170c3ce9c77550c00b4",
+      "requires": [
+        49
+      ]
+    },
+    {
+      "number": 51,
+      "head": "63919a2c6c310f9b34de7049b9b28b77fab13ca0",
+      "requires": [
+        50
+      ]
+    },
+    {
+      "number": 55,
+      "head": "078199fa3e08a0a515eae738194d29119d523b2f"
+    },
+    {
+      "number": 56,
+      "head": "a726d4673d1f4b1219fd35e5183c9e38bd9ae119"
+    },
+    {
+      "number": 61,
+      "head": "e0314df904cc61e988e81d8fb8b495a5ef1c272d"
+    },
+    {
+      "number": 62,
+      "head": "91bbbb837cfe4e8c4360f3d61936c8401eabfeff"
+    },
+    {
+      "number": 65,
+      "head": "da7df9299ee4d02d9101b18259ffc96b65792d18",
+      "requires": [
+        62
+      ]
+    },
+    {
+      "number": 66,
+      "head": "d59dc499b5b1b8f60716b5e6a671faa20356b42b",
+      "requires": [
+        62
+      ]
+    }
+  ]
+}
