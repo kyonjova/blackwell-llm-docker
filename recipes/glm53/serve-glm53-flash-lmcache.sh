@@ -29,6 +29,7 @@ readonly http_port=${LMCACHE_HTTP_PORT:-8085}
 readonly prometheus_port=${LMCACHE_PROMETHEUS_PORT:-9095}
 readonly startup_timeout=${LMCACHE_STARTUP_TIMEOUT_SECONDS:-120}
 readonly transfer_mode=${LMCACHE_TRANSFER_MODE:-lmcache_driven}
+readonly instance_id=${LMCACHE_INSTANCE_ID:-glm53-jovian-judgement-lmcache}
 readonly broker_dir=${LMCACHE_CUMEM_BROKER_DIR:-/cache/lmcache-cumem}
 readonly prefetch_policy=${LMCACHE_L2_PREFETCH_POLICY:-retain}
 readonly server_extra_args=${LMCACHE_SERVER_EXTRA_ARGS:-}
@@ -87,6 +88,20 @@ case "${transfer_mode}" in
     ;;
 esac
 
+shm_name=${LMCACHE_SHM_NAME:-}
+if [[ ${transfer_mode} == engine_driven && -z ${shm_name} ]]; then
+  # Concurrent host-network sidecars have distinct MP ports. Include that port
+  # in the arena name so their worker-owned copies cannot alias another pool.
+  safe_instance_id=${instance_id//[^A-Za-z0-9._-]/_}
+  shm_name="lmcache-${safe_instance_id}-${mp_port}"
+fi
+readonly shm_name
+if [[ -n ${shm_name} && ! ${shm_name} =~ ^[A-Za-z0-9._-]+$ ]]; then
+  printf 'LMCACHE_SHM_NAME contains unsupported characters: %s\n' \
+    "${shm_name}" >&2
+  exit 2
+fi
+
 case "${prefetch_policy}" in
   default | retain) ;;
   *)
@@ -116,7 +131,7 @@ fi
 
 lmcache_server=(
   /opt/venv/bin/lmcache server
-  --instance-id "${LMCACHE_INSTANCE_ID:-glm53-jovian-judgement-lmcache}"
+  --instance-id "${instance_id}"
   --host "${mp_host}"
   --port "${mp_port}"
   --chunk-size "${chunk_size}"
@@ -127,7 +142,6 @@ lmcache_server=(
   --supported-transfer-mode "${transfer_mode}"
   --separate-object-groups
   --l1-size-gb "${LMCACHE_L1_SIZE_GB:-64}"
-  --l1-use-lazy
   --l1-init-size-gb "${LMCACHE_L1_INIT_SIZE_GB:-2}"
   --eviction-policy LRU
   --l2-prefetch-policy "${prefetch_policy}"
@@ -135,6 +149,13 @@ lmcache_server=(
   --http-port "${http_port}"
   --prometheus-port "${prometheus_port}"
 )
+
+if [[ ${transfer_mode} == engine_driven ]]; then
+  # Worker-owned SHM copies require stable views into a preallocated L1 arena.
+  lmcache_server+=(--no-l1-use-lazy --shm-name "${shm_name}")
+else
+  lmcache_server+=(--l1-use-lazy)
+fi
 
 case "${LMCACHE_L2_ENABLED:-1}" in
   0) ;;

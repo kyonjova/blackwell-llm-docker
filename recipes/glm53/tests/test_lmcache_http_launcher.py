@@ -1,7 +1,7 @@
 """Validate sidecar bind arguments without starting a cache or model server."""
 
-import os
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -56,6 +56,55 @@ def render(wrapper, host=None, dtype=None, settings=None, cwd=None):
         text=True,
         check=False,
     )
+
+
+@pytest.mark.parametrize("wrapper", WRAPPERS)
+@pytest.mark.parametrize("transfer", ["engine_driven", "lmcache_driven", "auto"])
+def test_engine_transport_has_a_stable_shared_memory_arena(wrapper, transfer):
+    result = render(
+        wrapper,
+        settings={
+            "LMCACHE_TRANSFER_MODE": transfer,
+            "LMCACHE_INSTANCE_ID": "glm/test",
+            "LMCACHE_MP_PORT": "5566",
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    fields = result.stdout.rstrip("\0").split("\0")
+    if transfer == "engine_driven":
+        assert fields.count("--no-l1-use-lazy") == 1
+        assert "--l1-use-lazy" not in fields
+        assert fields.count("--shm-name") == 1
+        assert fields[fields.index("--shm-name") + 1] == "lmcache-glm_test-5566"
+    else:
+        assert fields.count("--l1-use-lazy") == 1
+        assert "--no-l1-use-lazy" not in fields
+        assert "--shm-name" not in fields
+
+
+@pytest.mark.parametrize("wrapper", WRAPPERS)
+def test_engine_transport_preserves_explicit_shared_memory_name(wrapper):
+    result = render(
+        wrapper,
+        settings={
+            "LMCACHE_TRANSFER_MODE": "engine_driven",
+            "LMCACHE_SHM_NAME": "glm-checkpoints.1",
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    fields = result.stdout.rstrip("\0").split("\0")
+    assert fields[fields.index("--shm-name") + 1] == "glm-checkpoints.1"
+
+
+@pytest.mark.parametrize("wrapper", WRAPPERS)
+@pytest.mark.parametrize("name", ["a/b", "a b", "$(id)"])
+def test_invalid_shared_memory_name_fails_before_server_start(wrapper, name):
+    result = render(
+        wrapper,
+        settings={"LMCACHE_TRANSFER_MODE": "engine_driven", "LMCACHE_SHM_NAME": name},
+    )
+    assert result.returncode == 2
+    assert "LMCACHE_SHM_NAME" in result.stderr
 
 
 @pytest.mark.parametrize("wrapper", WRAPPERS)

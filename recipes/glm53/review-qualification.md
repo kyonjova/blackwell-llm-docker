@@ -14,11 +14,11 @@ review units. All 44 were open and non-draft at the audit.
 
 ## Attributed source mirrors
 
-| Component | Complete Git source | Tested commit |
+| Component and review repository | Complete source mirror | Tested commit |
 |---|---|---|
-| vLLM | [voipmonitor/vllm](https://github.com/voipmonitor/vllm/tree/integration/jovian-reviewed-sources-20260911) | `de982a50c6a3e4718e5cf9f00423a92192718da1` |
-| B12X | [voipmonitor/b12x](https://github.com/voipmonitor/b12x/tree/integration/jovian-reviewed-sources-20260911) | `98086604c86ec1e78977e5023ce282ecb97ab8a7` |
-| LMCache | [local-inference-lab/LMCache](https://github.com/local-inference-lab/LMCache/tree/release/jovian-fp4-fs-ledger-r33-20260910) | `29bc5a2efde737c436b04499eb62cd1776cebeec` |
+| vLLM — [local-inference-lab/vllm](https://github.com/local-inference-lab/vllm) | [voipmonitor/vllm](https://github.com/voipmonitor/vllm/tree/integration/jovian-reviewed-sources-20260911) | `de982a50c6a3e4718e5cf9f00423a92192718da1` |
+| B12X — [local-inference-lab/b12x](https://github.com/local-inference-lab/b12x) | [voipmonitor/b12x](https://github.com/voipmonitor/b12x/tree/integration/jovian-reviewed-sources-20260911) | `98086604c86ec1e78977e5023ce282ecb97ab8a7` |
+| LMCache — [local-inference-lab/LMCache](https://github.com/local-inference-lab/LMCache) | [local-inference-lab/LMCache](https://github.com/local-inference-lab/LMCache/tree/release/jovian-fp4-fs-ledger-r33-20260910) | `29bc5a2efde737c436b04499eb62cd1776cebeec` |
 
 The candidate has two filesystem layers and source-lock SHA-256
 `7be25b839e3c34b68e5f54dbec6d12b2cb540277966e49c424e082e57c448e88`.

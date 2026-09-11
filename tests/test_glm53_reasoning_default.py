@@ -2,11 +2,10 @@
 
 import json
 import os
-from pathlib import Path
 import shlex
 import subprocess
 import unittest
-
+from pathlib import Path
 
 LAUNCHER = (
     Path(__file__).resolve().parents[1]
@@ -41,7 +40,8 @@ class ReasoningDefaultTest(unittest.TestCase):
         for mode in ("mtp", "dflash2"):
             with self.subTest(mode=mode):
                 self.assertEqual(
-                    self.defaults(self.command(mode)), {"reasoning_effort": "high"}
+                    self.defaults(self.command(mode)),
+                    {"reasoning_effort": "high", "clear_thinking": False},
                 )
 
     def test_operator_can_override_default_json(self):
