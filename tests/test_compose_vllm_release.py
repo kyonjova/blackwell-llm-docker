@@ -7,8 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.compose_vllm_release import CompositionError, compose
-
+from scripts.compose_vllm_release import CompositionError, compose, verify_review_tree
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
@@ -19,8 +18,7 @@ def _git(cwd: Path, *args: str) -> str:
         cwd=cwd,
         check=True,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     ).stdout.strip()
 
 
@@ -128,6 +126,23 @@ def test_composition_lock_is_reproducible(tmp_path: Path) -> None:
     ).read_bytes()
 
 
+def test_composition_preserves_unified_diff_context_whitespace(tmp_path: Path) -> None:
+    source, remote, _ = _repositories(tmp_path)
+    patch = "--- a/model.py\n+++ b/model.py\n@@ -1,2 +1,3 @@\n first\n \n+last\n"
+    head = _create_pr(source, remote, 1, "kernel.patch", patch)
+    manifest = _manifest(tmp_path / "manifest.json", remote, [(1, head)])
+    lock = compose(manifest, tmp_path / "output")
+    assert lock["result"]["tree"] == _git(source, "rev-parse", f"{head}^{{tree}}")
+
+
+def test_composition_rejects_source_trailing_whitespace(tmp_path: Path) -> None:
+    source, remote, _ = _repositories(tmp_path)
+    head = _create_pr(source, remote, 1, "feature.py", "value = 1 \n")
+    manifest = _manifest(tmp_path / "manifest.json", remote, [(1, head)])
+    with pytest.raises(CompositionError, match="trailing whitespace"):
+        compose(manifest, tmp_path / "output")
+
+
 def test_composition_supports_a_base_without_pull_requests(tmp_path: Path) -> None:
     _, remote, base = _repositories(tmp_path)
     manifest = _manifest(tmp_path / "manifest.json", remote, [])
@@ -139,6 +154,106 @@ def test_composition_supports_a_base_without_pull_requests(tmp_path: Path) -> No
     assert lock["pull_requests"] == []
     assert lock["result"]["tree"] == _git(remote, "rev-parse", f"{base}^{{tree}}")
     assert (output / "integration.patch").read_bytes() == b""
+
+
+def _pin_tree(path: Path, base: str, tree: str) -> Path:
+    manifest = json.loads(path.read_text())
+    manifest.update(base_commit=base, expected_tree=tree)
+    path.write_text(json.dumps(manifest))
+    return path
+
+
+def test_review_tree_preserves_authors_and_dirty_checkout(tmp_path: Path) -> None:
+    source, remote, base = _repositories(tmp_path)
+    head = _create_pr(source, remote, 1, "feature.py", "feature\n")
+    manifest = _pin_tree(
+        _manifest(tmp_path / "manifest.json", remote, [(1, head)]),
+        base,
+        _git(source, "rev-parse", f"{head}^{{tree}}"),
+    )
+    (source / "model.py").write_text("user edits\n")
+    _git(source, "add", "model.py")
+    index_before = _git(source, "write-tree")
+    first = verify_review_tree(manifest, source)
+    second = verify_review_tree(manifest, source)
+    assert first == second
+    assert first["matches_expected_tree"]
+    assert _git(source, "write-tree") == index_before
+    assert _git(source, "rev-parse", "HEAD") == base
+    assert (source / "model.py").read_text() == "user edits\n"
+    assert _git(source, "rev-parse", f"{first['result_commit']}^2") == head
+    assert (
+        _git(source, "show", "-s", "--format=%an <%ae>", head)
+        == "Test <test@example.com>"
+    )
+
+
+def test_review_tree_rejects_missing_source_changes(tmp_path: Path) -> None:
+    source, remote, base = _repositories(tmp_path)
+    head = _create_pr(source, remote, 1, "feature.py", "feature\n")
+    manifest = _pin_tree(
+        _manifest(tmp_path / "manifest.json", remote, []),
+        base,
+        _git(source, "rev-parse", f"{head}^{{tree}}"),
+    )
+    with pytest.raises(CompositionError, match="differs from expected tree"):
+        verify_review_tree(manifest, source)
+
+
+def test_review_tree_requires_public_conflict_resolution(tmp_path: Path) -> None:
+    source, remote, base = _repositories(tmp_path)
+    first = _create_pr(source, remote, 1, "model.py", "first\n")
+    second = _create_pr(source, remote, 2, "model.py", "second\n")
+    manifest = _pin_tree(
+        _manifest(tmp_path / "manifest.json", remote, [(1, first), (2, second)]),
+        base,
+        _git(source, "rev-parse", f"{base}^{{tree}}"),
+    )
+    with pytest.raises(CompositionError, match="PR #2 conflicts"):
+        verify_review_tree(manifest, source)
+    assert _git(source, "status", "--porcelain") == ""
+
+
+def test_review_tree_requires_ordered_dependencies(tmp_path: Path) -> None:
+    source, remote, base = _repositories(tmp_path)
+    head = _create_pr(source, remote, 1, "feature.py", "feature\n")
+    path = _pin_tree(
+        _manifest(tmp_path / "manifest.json", remote, [(1, head)]),
+        base,
+        _git(source, "rev-parse", f"{head}^{{tree}}"),
+    )
+    manifest = json.loads(path.read_text())
+    manifest["pull_requests"][0]["requires"] = [2]
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(CompositionError, match="unresolved review dependencies"):
+        verify_review_tree(path, source)
+
+
+def test_composition_pins_base_when_branch_advances(tmp_path: Path) -> None:
+    source, remote, base = _repositories(tmp_path)
+    tree = _git(source, "rev-parse", f"{base}^{{tree}}")
+    _commit(source, "base-update.py", "advanced\n", "advance base")
+    _git(source, "push", "--quiet", "origin", "dev/gilded-gnosis")
+    manifest = _pin_tree(_manifest(tmp_path / "manifest.json", remote, []), base, tree)
+    lock = compose(manifest, tmp_path / "output")
+    assert lock["base"]["commit"] == base
+    assert lock["result"]["tree"] == tree
+
+
+@pytest.mark.parametrize("requires", [None, "1", [True], [-1], [{}]])
+def test_review_tree_rejects_invalid_dependencies(tmp_path: Path, requires) -> None:
+    source, remote, base = _repositories(tmp_path)
+    head = _create_pr(source, remote, 1, "feature.py", "feature\n")
+    path = _pin_tree(
+        _manifest(tmp_path / "manifest.json", remote, [(1, head)]),
+        base,
+        _git(source, "rev-parse", f"{head}^{{tree}}"),
+    )
+    manifest = json.loads(path.read_text())
+    manifest["pull_requests"][0]["requires"] = requires
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(CompositionError, match="requires must be a list"):
+        verify_review_tree(path, source)
 
 
 def test_composition_applies_digest_locked_source_patch(tmp_path: Path) -> None:

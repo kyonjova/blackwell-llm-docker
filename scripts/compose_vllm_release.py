@@ -13,7 +13,6 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -35,8 +34,7 @@ def _run(
         env=env,
         check=False,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
     if check and completed.returncode:
         detail = completed.stderr.strip() or completed.stdout.strip()
@@ -82,6 +80,13 @@ def _load_manifest(path: Path) -> dict[str, Any]:
             "composition_strategy must be 'merge', 'cherry_pick', or 'pinned_branch'"
         )
     manifest["composition_strategy"] = strategy
+
+    for key in ("base_commit", "expected_tree"):
+        value = manifest.get(key)
+        if value is not None and (
+            not isinstance(value, str) or not SHA_RE.fullmatch(value)
+        ):
+            raise CompositionError(f"{key} must be a 40-character Git object ID")
 
     composition_ref = manifest.get("composition_ref")
     composition_commit = manifest.get("composition_commit")
@@ -132,6 +137,13 @@ def _load_manifest(path: Path) -> dict[str, Any]:
             )
         entry["ref"] = ref
         entry["commits"] = commits
+        requires = entry.get("requires", [])
+        if not isinstance(requires, list) or any(
+            type(dependency) is not int or dependency <= 0 for dependency in requires
+        ):
+            raise CompositionError(f"PR #{number} requires must be a list of PR numbers")
+        if not set(requires).issubset(seen):
+            raise CompositionError(f"PR #{number} has unresolved review dependencies")
         seen.add(number)
 
     source_patches = manifest.get("source_patches", [])
@@ -154,6 +166,87 @@ def _load_manifest(path: Path) -> dict[str, Any]:
     return manifest
 
 
+def verify_review_tree(manifest_path: Path, repository: Path) -> dict[str, Any]:
+    """Prove pinned review heads reproduce a tree without editing a checkout.
+
+    The object database must contain the audited public commits. This offline
+    check proves composition, not publication or PR membership; the release PR
+    audit must establish those separately.
+    """
+    manifest = _load_manifest(manifest_path)
+    if manifest["composition_strategy"] != "merge" or manifest["source_patches"]:
+        raise CompositionError(
+            "Review-tree verification requires merges without source patches"
+        )
+    if not manifest.get("base_commit") or not manifest.get("expected_tree"):
+        raise CompositionError(
+            "Review-tree verification requires base_commit and expected_tree"
+        )
+    tip = manifest["base_commit"]
+    env = os.environ.copy()
+    env.update(
+        {
+            "GIT_AUTHOR_NAME": "Release Composer",
+            "GIT_AUTHOR_EMAIL": "release-composer@local",
+            "GIT_COMMITTER_NAME": "Release Composer",
+            "GIT_COMMITTER_EMAIL": "release-composer@local",
+            "GIT_AUTHOR_DATE": "2000-01-01T00:00:00+00:00",
+            "GIT_COMMITTER_DATE": "2000-01-01T00:00:00+00:00",
+        }
+    )
+    resolved = []
+    _run(["git", "cat-file", "-e", f"{tip}^{{commit}}"], cwd=repository)
+    for entry in manifest["pull_requests"]:
+        head = entry["head"]
+        _run(["git", "cat-file", "-e", f"{head}^{{commit}}"], cwd=repository)
+        merged = _run(
+            ["git", "merge-tree", "--write-tree", tip, head],
+            cwd=repository,
+            check=False,
+        )
+        if merged.returncode:
+            raise CompositionError(
+                f"PR #{entry['number']} conflicts with its declared predecessors. "
+                "Publish the resolution in a review head before composing.\n"
+                + merged.stdout
+                + merged.stderr
+            )
+        tree = merged.stdout.splitlines()[0]
+        tip = _run(
+            [
+                "git",
+                "commit-tree",
+                tree,
+                "-p",
+                tip,
+                "-p",
+                head,
+                "-m",
+                f"Compose reviewed source: PR #{entry['number']}",
+            ],
+            cwd=repository,
+            env=env,
+        ).stdout.strip()
+        resolved.append({"number": entry["number"], "head": head, "tree": tree})
+    tree = _run(["git", "rev-parse", f"{tip}^{{tree}}"], cwd=repository).stdout.strip()
+    if tree != manifest["expected_tree"]:
+        detail = _run(
+            ["git", "diff", "--stat", manifest["expected_tree"], tree],
+            cwd=repository,
+        ).stdout
+        raise CompositionError(
+            f"Composed tree {tree} differs from expected tree "
+            f"{manifest['expected_tree']}.\n{detail}"
+        )
+    return {
+        "base_commit": manifest["base_commit"],
+        "review_units": resolved,
+        "result_commit": tip,
+        "result_tree": tree,
+        "matches_expected_tree": True,
+    }
+
+
 def compose(manifest_path: Path, output_dir: Path) -> dict[str, Any]:
     manifest_path = manifest_path.resolve()
     output_dir = output_dir.resolve()
@@ -163,7 +256,7 @@ def compose(manifest_path: Path, output_dir: Path) -> dict[str, Any]:
     composition_strategy = str(manifest["composition_strategy"])
     composition_ref = manifest.get("composition_ref")
     composition_commit = manifest.get("composition_commit")
-    base_sha = _remote_sha(repository, base_ref)
+    base_sha = manifest.get("base_commit") or _remote_sha(repository, base_ref)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     patch_path = output_dir / "integration.patch"
@@ -173,7 +266,7 @@ def compose(manifest_path: Path, output_dir: Path) -> dict[str, Any]:
         checkout = Path(temp) / "checkout"
         _run(["git", "init", "--quiet", str(checkout)])
         _run(["git", "remote", "add", "origin", repository], cwd=checkout)
-        _run(["git", "fetch", "--quiet", "--no-tags", "origin", base_ref], cwd=checkout)
+        _run(["git", "fetch", "--quiet", "--no-tags", "origin", base_sha], cwd=checkout)
         _run(["git", "checkout", "--quiet", "--detach", base_sha], cwd=checkout)
 
         merge_env = os.environ.copy()
@@ -382,8 +475,18 @@ def compose(manifest_path: Path, output_dir: Path) -> dict[str, Any]:
                 }
             )
 
-        _run(["git", "diff", "--check", base_sha], cwd=checkout)
+        # Unified-diff blobs encode empty context lines as a literal space.
+        # Preserve that syntax; whitespace checks still cover source files.
+        _run(
+            ["git", "diff", "--check", base_sha, "--", ".", ":(exclude)*.patch"],
+            cwd=checkout,
+        )
         result_tree = _run(["git", "write-tree"], cwd=checkout).stdout.strip()
+        if manifest.get("expected_tree") not in (None, result_tree):
+            raise CompositionError(
+                f"Composed tree {result_tree} differs from expected tree "
+                f"{manifest['expected_tree']}"
+            )
         patch = subprocess.run(
             ["git", "diff", "--binary", "--full-index", base_sha],
             cwd=checkout,
@@ -432,10 +535,20 @@ def compose(manifest_path: Path, output_dir: Path) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("manifest", type=Path)
-    parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument(
+        "--verify-in",
+        type=Path,
+        help="Verify pinned review trees in an existing Git object database without checkout edits",
+    )
     args = parser.parse_args()
     try:
-        lock = compose(args.manifest, args.output_dir)
+        if args.verify_in is not None:
+            lock = verify_review_tree(args.manifest, args.verify_in)
+        else:
+            if args.output_dir is None:
+                parser.error("--output-dir is required unless --verify-in is used")
+            lock = compose(args.manifest, args.output_dir)
     except CompositionError as exc:
         parser.error(str(exc))
     print(json.dumps(lock, sort_keys=True))

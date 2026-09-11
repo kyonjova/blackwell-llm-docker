@@ -17,6 +17,12 @@ authenticated. Replacing any native dependency requires serving qualification.
 
 ## Build inputs
 
+For a pinned branch-plus-PR reconstruction, use the
+[public review composition contract](review-composition.md). It verifies all
+three component trees from public review heads without private resolution
+patches. Its composition is distinct from the published R34 source references
+below; do not mix revisions from the two descriptions.
+
 Provide clean, complete Git checkouts as `vllm-source`, `b12x-source` and
 `lmcache-source`. Use the release's published source refs and revisions, not
 moving branch heads when reproducing a measured image. The image's
