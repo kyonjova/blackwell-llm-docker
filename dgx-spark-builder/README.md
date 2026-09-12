@@ -1,11 +1,26 @@
 # dgx-spark-builder — generic vLLM/B12X image builder for DGX Spark
 
 Builds aarch64/sm_121 (Grace + GB10) serving images of the
-local-inference-lab vLLM stack from source, by retargeting the upstream
-x86/sm_120 build system and patching the handful of things that break on
-arm64. Model choice is a *profile* (`build.env`), not a fork of the script.
+local-inference-lab vLLM stack from source, by retargeting upstream's
+x86/sm_120 build systems in place and patching the handful of things that
+break on arm64. Model and release choice is a *profile* (`build-*.env`),
+not a fork of a script.
 
-**Currently set to build: local-inference-lab/vllm Branch: dev/jovian-judgement**
+Two flavors, two wrappers, one profile format:
+
+| flavor | wrapper | upstream build system it retargets | CUDA / torch / NCCL | when |
+|---|---|---|---|---|
+| **cu132** | `build-spark-cu132.sh` | `Dockerfile.vllm-b12x-cu132` + `build-vllm-b12x-cu132.sh` (single multi-stage build) | 13.2 / 2.13.0+cu132 wheels / 2.30.4 | every release through R35; the measured baseline |
+| **cu133** | `build-spark-cu133.sh` | the community image lineage: `Dockerfile.kimi-k3-cu133-torch213-base` → `Dockerfile.flashinfer-cu133-torch213-wheels` → `Dockerfile.deepseek-infernal-invocation-cu133-torch213` | 13.3 / 2.13.0 from source / 2.31.2 | upstream's qualification baseline since ~R20; first aarch64 build 2026-09-11 (R35) |
+
+The images differ in toolchain only: same source pins, same launchers, same
+serving env except the loader block (NCCL/compat paths). Keep both flavors
+buildable; the cu132 one is what every benchmark in the deployment README
+was measured on until the cu133 A/B lands.
+
+**Currently set to build: local-inference-lab/vllm Branch: dev/jovian-judgement
+(canonical head profiles) or the voipmonitor `integration/*` release branches
+(`build-jj-r##.env`).**
 
 ## Layout and usage
 
@@ -14,21 +29,35 @@ This directory lives inside a checkout of
 
 ```
 blackwell-llm-docker/
-├── Dockerfile.vllm-b12x-cu132      # upstream build system (untouched)
-├── build-vllm-b12x-cu132.sh        # upstream build driver (untouched)
+├── Dockerfile.vllm-b12x-cu132                          # cu132 upstream build system (untouched)
+├── build-vllm-b12x-cu132.sh                            # cu132 upstream driver (untouched)
+├── Dockerfile.kimi-k3-cu133-torch213-base              # cu133 foundation (untouched)
+├── Dockerfile.flashinfer-cu133-torch213-wheels         # cu133 FlashInfer wheels (untouched)
+├── Dockerfile.deepseek-infernal-invocation-cu133-torch213   # cu133 JJ overlay (untouched; name is a fossil)
+├── tests/deepseek-infernal-cu133-pip-check.allowlist   # cu133 final gate (untouched)
+├── patches/                                            # VLLM_PATCH_FILE / B12X_PATCH_FILE inputs
 └── dgx-spark-builder/
-    ├── build-spark-cu132.sh        # this wrapper
-    ├── build.env                   # full build manifest (the profile)
-    └── BUILD-README.md
+    ├── build-spark-cu132.sh        # cu132 wrapper
+    ├── build-spark-cu133.sh        # cu133 wrapper (three phases)
+    ├── probe-image.sh              # post-build image probe (flavor-aware)
+    ├── build-example.env           # annotated cu132 profile template
+    ├── build-jj-r##.env            # cu132 release profiles (voipmonitor integration branches)
+    ├── build-jj-r##-cu133.env      # cu133 release profiles
+    └── README.md
 ```
 
 ```
 cd blackwell-llm-docker/dgx-spark-builder
-./build-spark-cu132.sh --dry-run            # validate rewrites, no build, any host
-./build-spark-cu132.sh                      # build with ./build.env (hours first run)
-./build-spark-cu132.sh other-model.env      # build a different profile
-./build-spark-cu132.sh build.env -- --build-arg CUBLAS_CUDA13_VERSION=x
-./build-spark-cu132.sh --log build-<image-name>.env   # keep a transcript
+# cu132
+./build-spark-cu132.sh --dry-run build-jj-r35.env     # validate rewrites, no build, any host
+./build-spark-cu132.sh --log build-jj-r35.env         # build (hours cold), keep a transcript
+./build-spark-cu132.sh build-jj-r35.env -- --build-arg CUBLAS_CUDA13_VERSION=x
+# cu133
+./build-spark-cu133.sh --dry-run build-jj-r35-cu133.env
+./build-spark-cu133.sh --log build-jj-r35-cu133.env   # all three phases; skips phases whose image exists
+./build-spark-cu133.sh --phase foundation build-jj-r35-cu133.env   # one phase
+# after either
+./probe-image.sh <image> build-jj-r35[-cu133].env
 ```
 
 The script auto-locates the repo root (its parent directory). With exactly
@@ -44,6 +73,92 @@ retargets the Dockerfile in place (with automatic restore) and delegates to
 the upstream driver, so upstream improvements flow in with a `git pull` and
 the diff we maintain stays six small patches instead of a divergent build
 system.
+
+## The cu133 flavor: three phases
+
+Upstream's community images are two-layer overlays on a *runtime
+foundation*; the cu133 wrapper reproduces that on aarch64 with three docker
+builds, each tagged, each skipped when its image already exists:
+
+| phase | Dockerfile | builds | output image | cold time on a Spark |
+|---|---|---|---|---|
+| 1 `foundation` | `Dockerfile.kimi-k3-cu133-torch213-base` | `FROM nvcr.io/nvidia/pytorch:26.07-py3` (multi-arch NGC container): patched NCCL 2.31.2 (`nccl-canonical` `canonical/cu133-nccl2312-amd-turin`), **torch 2.13.0 from source** at `TORCH_CUDA_ARCH_LIST=12.1a`, torchvision, xgrammar; runs upstream's `verify_kimi_k3_cu133_base.py` contract | `local/vllm:cu133-torch213-nccl2312-sm121-foundation` (~26 GB) | hours; **built once** and reused across releases until a foundation pin changes |
+| 2 `flashinfer` | `Dockerfile.flashinfer-cu133-torch213-wheels` | FlashInfer python + JIT-cache wheels compiled against the foundation (`flashinfer_jit_cache-0.6.18+cu133-…-manylinux_2_28_aarch64.whl`) | `local/vllm:flashinfer-wheels-<sha7>-cu133-torch213-sm121` (~270 MB) | ~30 min; rebuilt only when `FLASHINFER_*` pins change |
+| 3 `overlay` | `Dockerfile.deepseek-infernal-invocation-cu133-torch213` | vLLM, B12X, LMCache, exllamav3, InstantTensor, nccl4py, launchers; upstream's runtime contract + pip-check allowlist gate | `local/vllm:<IMAGE_TAG>` (~31 GB) | ~2-3 h cold; minutes when only the final gate reruns |
+
+**Expected outcome per phase.** Phase 1 ends with
+`Kimi-K3 CUDA base contract: PASS torch=2.13.0 torchvision=0.28.0 cuda=13.3
+nccl=23102 …`. Phase 2 ends with `Successfully installed
+flashinfer-jit-cache-0.6.18+cu133 flashinfer-python-0.6.18+cu133`. Phase 3
+ends with `DeepSeek Infernal Invocation CUDA 13.3 runtime contract: PASS …
+vllm=<VLLM_PACKAGE_VERSION> b12x=… flashinfer=… lmcache=…`, a matched
+pip-check allowlist, the wrapper's own in-image asserts (aarch64, torch
+2.13.0, CUDA 13.3, `b12x` importable, required launchers), telemetry, and a
+build manifest. `PS1: unbound variable` from NGC's `bash.bashrc` in phase 1
+is noise.
+
+**The overlay's source contract.** For each of vLLM, B12X and LMCache the
+overlay clones the repo, checks out the pin, optionally applies a patch
+file, then compares `git write-tree` against `*_INTEGRATION_TREE`. For a
+plain pin that is the commit's tree hash, which the wrapper resolves from
+the GitHub API (`GH_TOKEN` avoids rate limits) unless the profile supplies
+it — rtx6kpro's source locks publish it as `<component>.tree`, and the
+`build-jj-r##-cu133.env` profiles carry those values. The overlay builds
+LMCache unconditionally, so `LMCACHE_COMMIT` is required even though
+LMCache is ignored at serve time on unified memory. The checkout paths are
+`/opt/infernal-invocation/{vllm,b12x,lmcache}` — "Infernal Invocation" was
+the previous release codename and the Dockerfile kept its paths; the sources
+are whatever the profile pins.
+
+**`RUNTIME_FOUNDATION`.** `0` (default) means `BASE_IMAGE` is the raw
+foundation and the overlay builds the venv, DeepGEMM, exllamav3,
+InstantTensor and nccl4py itself. `1` means `BASE_IMAGE` is a *previous JJ
+runtime image built by this wrapper*: the overlay verifies those components
+are present and rebuilds only vLLM, B12X and LMCache. That is upstream's
+fast-release path; after the first full cu133 build, the next release is
+`RUNTIME_FOUNDATION=1 BASE_IMAGE=<previous image>` and a fraction of the
+time. The wrapper prints the exact invocation after every successful build.
+
+**Patches the cu133 wrapper applies** (all `on | off | auto`, shape-guarded,
+restored on exit like the cu132 ones):
+
+1. `PATCH_GPU_ARCH` — `12.0a`/`120a`/`12.0f`/`12.0` → sm_121 in all three
+   Dockerfiles.
+2. `PATCH_NCCL_GENCODE` — the foundation compiles NCCL with explicit
+   `-gencode arch=compute_120,code=sm_120` (nvcc flags, not the `ARCH_LIST`
+   envs); rewritten to sm_121. A foundation built before this patch existed
+   (the 2026-09-11 one) runs NCCL via PTX JIT on GB10 — works, one-time JIT
+   at first init; rebuild the foundation for native SASS when convenient.
+3. `PATCH_MAX_JOBS` — `MAX_JOBS=48/128` literals, **and** the overlay's vLLM
+   extension stage which uses `cmake --build --parallel 48` with
+   `NVCC_THREADS=4`: 48 × 4 nvcc threads on the Marlin MoE kernels exhausted
+   121 GiB on a Spark. Bound to `MAX_JOBS` (20) and `NVCC_THREADS` (1).
+4. `PATCH_EXLLAMAV3_AVX` — the same x86 GCC-builtin/AVX stub as cu132,
+   anchored on the overlay's exllamav3 build line (`exllamav3/exllamav3_ext/`).
+5. pip-check allowlist — the final gate diffs `pip check` against
+   `tests/deepseek-infernal-cu133-pip-check.allowlist`, whose seven known
+   LMCache complaints carry upstream's LMCache version string; the wrapper
+   rewrites that token to `LMCACHE_BUILD_VERSION` so only a *new* complaint
+   can fail the gate.
+
+Not needed on cu133, unlike cu132: no x86 filesystem paths, no cuBLAS
+overlay, no cusparselt wheel-tag repair, no torch wheel index (torch is
+compiled). No `PATCH_HOST_ARCH`, `PATCH_PCIE_ENV`, `PATCH_PIPCHECK_WHEELTAG`
+or `PATCH_VLLM_REQ_MARKERS` equivalents exist for this flavor.
+
+**Interrupted runs.** An OOM kill or SIGKILL skips the restore trap and
+leaves the Dockerfiles and allowlist patched, with `.pre-spark.<pid>`
+backups beside them. The wrapper refuses to start on that state and prints
+the `git checkout -- …` to run; Ctrl-C restores normally.
+
+**What the cu133 image changes at serve time.** NCCL is
+`/opt/local-inference/nccl/lib/libnccl.so.2.31.2`; the forward-compat
+`libcuda` is `/usr/local/cuda/compat/lib.real/libcuda.so.1`; there is no
+cuBLAS overlay. The rank env template carries a cu133 loader block for
+`LD_PRELOAD` / `VLLM_NCCL_SO_PATH` / `NCCL_*_PATH`; `probe-image.sh` prints
+the exact paths it finds. `vllm._C` is absent on **both** flavors (this
+lineage ships the ops in `vllm._C_stable_libtorch`; the upstream build
+asserts only that and `cumem_allocator`).
 
 ## The manifest (`build.env`)
 
@@ -246,6 +361,43 @@ Neither file belongs in the upstream checkout's history, and left untracked
 they make every later `git status` read dirty. Both are covered by
 `dgx-spark-builder/.gitignore`.
 
+## `probe-image.sh`: prove the image before spending a boot
+
+```
+./probe-image.sh <image> [build-profile.env]
+```
+
+Runs a series of `docker run --rm` checks against a built image and exits
+non-zero on any FAIL. What it checks, in order:
+
+- **Source identity** — the image's `local-inference.vllm.commit` /
+  `local-inference.b12x.commit` labels against `VLLM_PIN` / `B12X_PIN` from
+  the profile (both flavors' build systems stamp these labels).
+- **RoCEnante composition** — `vllm.distributed.device_communicators.
+  b12x_roce_all_reduce` importable, the three `VLLM_ROCE_*` envs registered,
+  the `B12X_ROCENANTE` hook in `cuda_communicator.py`, `b12x.comm.roce`
+  importable with its lazy API, a C compiler present (the RoCE proxy is
+  compiled at first boot), `_roce_proxy.c` shipped.
+- **KDA prefill backends** — the optional in-tree FlashKDA extension
+  (`vllm._flashkda_C`) actually compiled for sm_121 (the build silently skips
+  it on failure, and `--kda-prefill-backend flashkda` would then fall back to
+  Triton), and `b12x.sequence.kda_prefill` importable.
+- **Generic contract, flavor-aware** — the probe detects cu133 by
+  `/opt/local-inference/nccl/lib` and asserts the matching CUDA version
+  (13.2 or 13.3), aarch64, torch 2.13.0, `b12x` + humming importable, the
+  vLLM `_C_stable_libtorch` + `cumem_allocator` extensions, the GLM-5.3
+  launcher, and the flavor's NCCL and compat-shim paths (cu132: the
+  `/opt/libnccl-local-inference.so.2.30.4` + `/usr/local/cuda/compat/
+  libcuda.so.1` pair and the cuBLAS overlay symlink; cu133: the NCCL 2.31.2
+  path and the NGC forward-compat `libcuda`, printed so the rank env can be
+  filled in).
+
+It cannot exercise a GPU kernel or a two-node collective; it proves the
+image is the one the profile describes and that nothing the launcher's
+`LD_PRELOAD` / `--verify` depends on is missing. Run it on the build node,
+then again on the second node after `docker save | docker load` (same image
+ID ⇒ identical output).
+
 ## Docker storage: what fills up, and how to reclaim it
 
 Three separate stores, different reclaim commands, very different costs.
@@ -341,11 +493,18 @@ compile cost anyway.
 
 ## Profiles
 
-`build-example.env` is an annotated template: copy it, set the naming block
-and the two source pins, and delete the rest of the guidance.
-`build-glm53-r##.env` in this directory is the qualified **GLM-5.3-Flash** manifest.
-`build-glm53-r##.env` pins `dev/jovian-judgement` and `b12x`
-master HEAD from the canonical repositories.
+`build-example.env` is an annotated cu132 template: copy it, set the naming
+block and the two source pins, and delete the rest of the guidance.
+`build-jj-r##.env` is a cu132 release profile pinning a voipmonitor
+`integration/*` branch pair (the reviewed release composition);
+`build-jj-r##-cu133.env` is the same release for the cu133 wrapper and adds
+the foundation pins, `FLASHINFER_VERSION`, `LMCACHE_*`, the three
+`*_INTEGRATION_TREE` hashes from rtx6kpro's source lock, and `RUNTIME_FOUNDATION`.
+Head profiles (`build-glm53-head-<date>.env`) pin canonical
+`dev/jovian-judgement` and `b12x` master directly.
+
+Images are named for the shared runtime (`jovian-judgement-r##[-cu133]`),
+not for a model: every JJ image carries the GLM, Qwen and DeepSeek launchers.
 
 For another model on the same branch, copy it, change `PROFILE_NAME`,
 `VLLM_REQUIRED_LAUNCHERS`, and (if needed) the pins — nothing in the script

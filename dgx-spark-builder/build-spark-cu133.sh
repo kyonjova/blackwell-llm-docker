@@ -73,7 +73,7 @@ if [[ -z "${ENV_FILE}" ]]; then
   _default_env="${SCRIPT_DIR}/build.env"
   [[ -f "${_default_env}" ]] && ENV_FILE="${_default_env}"
 fi
-ALLOWED_KEYS=" ALLOW_FOREIGN_ARCH LOGGING PATCH_NCCL_GENCODE RUNTIME_FOUNDATION BASE_IMAGE LMCACHE_BUILD_VERSION NCCL4PY_VERSION VLLM_PRS VLLM_UPSTREAM_BASE VLLM_MERGE_HEADS VLLM_INTEGRATION_LOCK_SHA256 B12X_PRS B12X_UPSTREAM_BASE B12X_MERGE_HEADS B12X_INTEGRATION_LOCK_SHA256 LMCACHE_PRS LMCACHE_UPSTREAM_BASE LMCACHE_MERGE_HEADS LMCACHE_INTEGRATION_LOCK_SHA256 B12X_COMMIT B12X_INTEGRATION_TREE B12X_PATCH_FILE B12X_PATCH_SHA256 B12X_PIN B12X_REF B12X_REPO CUTLASS_DSL_VERSION DEEPGEMM_COMMIT DEEPGEMM_REPO DOCKER_COMMIT EXLLAMAV3_COMMIT EXLLAMAV3_REPO FLASHINFER_COMMIT FLASHINFER_REF FLASHINFER_REPO FLASHINFER_VERSION FLASHINFER_WHEEL_IMAGE FOUNDATION_IMAGE GH_TOKEN IMAGE IMAGE_REPO IMAGE_TAG INSTANTTENSOR_COMMIT INSTANTTENSOR_LIBAIO_COMMIT INSTANTTENSOR_LIBAIO_REPO INSTANTTENSOR_LIBAIO_TREE INSTANTTENSOR_REPO INSTANTTENSOR_VERSION LMCACHE_COMMIT LMCACHE_INTEGRATION_TREE LMCACHE_PATCH_FILE LMCACHE_PATCH_SHA256 LMCACHE_REF LMCACHE_REPO MAX_JOBS NCCL_COMMIT NCCL_REF NCCL_REPO NCCL_VERSION NVCC_THREADS NVIDIA_PYTORCH_IMAGE PATCH_EXLLAMAV3_AVX PATCH_GPU_ARCH PATCH_MAX_JOBS PIN_PREFLIGHT PROFILE_NAME PYTORCH_COMMIT PYTORCH_REF PYTORCH_REPO PYTORCH_VERSION RELEASE_DATE TORCHVISION_COMMIT TORCHVISION_REF TORCHVISION_REPO TORCHVISION_VERSION TRITON_KERNELS_COMMIT TRITON_KERNELS_REPO VLLM_COMMIT VLLM_INTEGRATION_TREE VLLM_PACKAGE_VERSION VLLM_PATCH_FILE VLLM_PATCH_SHA256 VLLM_PIN VLLM_REF VLLM_REPO VLLM_REQUIRED_LAUNCHERS XGRAMMAR_COMMIT XGRAMMAR_REF XGRAMMAR_REPO XGRAMMAR_VERSION "
+ALLOWED_KEYS=" ALLOW_FOREIGN_ARCH LOGGING PATCH_NCCL_GENCODE PATCH_VLLM_FA_LAYERS RUNTIME_FOUNDATION BASE_IMAGE LMCACHE_BUILD_VERSION NCCL4PY_VERSION VLLM_PRS VLLM_UPSTREAM_BASE VLLM_MERGE_HEADS VLLM_INTEGRATION_LOCK_SHA256 B12X_PRS B12X_UPSTREAM_BASE B12X_MERGE_HEADS B12X_INTEGRATION_LOCK_SHA256 LMCACHE_PRS LMCACHE_UPSTREAM_BASE LMCACHE_MERGE_HEADS LMCACHE_INTEGRATION_LOCK_SHA256 B12X_COMMIT B12X_INTEGRATION_TREE B12X_PATCH_FILE B12X_PATCH_SHA256 B12X_PIN B12X_REF B12X_REPO CUTLASS_DSL_VERSION DEEPGEMM_COMMIT DEEPGEMM_REPO DOCKER_COMMIT EXLLAMAV3_COMMIT EXLLAMAV3_REPO FLASHINFER_COMMIT FLASHINFER_REF FLASHINFER_REPO FLASHINFER_VERSION FLASHINFER_WHEEL_IMAGE FOUNDATION_IMAGE GH_TOKEN IMAGE IMAGE_REPO IMAGE_TAG INSTANTTENSOR_COMMIT INSTANTTENSOR_LIBAIO_COMMIT INSTANTTENSOR_LIBAIO_REPO INSTANTTENSOR_LIBAIO_TREE INSTANTTENSOR_REPO INSTANTTENSOR_VERSION LMCACHE_COMMIT LMCACHE_INTEGRATION_TREE LMCACHE_PATCH_FILE LMCACHE_PATCH_SHA256 LMCACHE_REF LMCACHE_REPO MAX_JOBS NCCL_COMMIT NCCL_REF NCCL_REPO NCCL_VERSION NVCC_THREADS NVIDIA_PYTORCH_IMAGE PATCH_EXLLAMAV3_AVX PATCH_GPU_ARCH PATCH_MAX_JOBS PIN_PREFLIGHT PROFILE_NAME PYTORCH_COMMIT PYTORCH_REF PYTORCH_REPO PYTORCH_VERSION RELEASE_DATE TORCHVISION_COMMIT TORCHVISION_REF TORCHVISION_REPO TORCHVISION_VERSION TRITON_KERNELS_COMMIT TRITON_KERNELS_REPO VLLM_COMMIT VLLM_INTEGRATION_TREE VLLM_PACKAGE_VERSION VLLM_PATCH_FILE VLLM_PATCH_SHA256 VLLM_PIN VLLM_REF VLLM_REPO VLLM_REQUIRED_LAUNCHERS XGRAMMAR_COMMIT XGRAMMAR_REF XGRAMMAR_REPO XGRAMMAR_VERSION "
 if [[ -n "${ENV_FILE}" ]]; then
   [[ -f "${ENV_FILE}" ]] || die "env file not found: ${ENV_FILE}"
   grep -qU $'\r' "${ENV_FILE}" && die "env file has CRLF line endings"
@@ -185,7 +185,7 @@ export BASE_IMAGE="${BASE_IMAGE:-${FOUNDATION_IMAGE}}"
 export VLLM_PACKAGE_VERSION="${VLLM_PACKAGE_VERSION:-0.26.1rc0+${PROFILE_NAME//-/.}.cu133.sm121.${stamp}}"
 
 # --------------------------------------------------------------- patch toggles
-for t in PATCH_GPU_ARCH PATCH_MAX_JOBS PATCH_EXLLAMAV3_AVX PATCH_NCCL_GENCODE; do
+for t in PATCH_GPU_ARCH PATCH_MAX_JOBS PATCH_EXLLAMAV3_AVX PATCH_NCCL_GENCODE PATCH_VLLM_FA_LAYERS; do
   v="${!t:-auto}"; case "${v}" in on|off|auto) ;; *) die "${t} must be on, off, or auto: ${v}" ;; esac
   printf -v "${t}" '%s' "${v}"; export "${t}"
 done
@@ -269,6 +269,30 @@ allow_ver="$(grep -oE '^lmcache [^ ]+' "${A_PIP}" | sort -u | sed 's/^lmcache //
 [[ "$(printf '%s\n' "${allow_ver}" | wc -l)" == 1 && -n "${allow_ver}" ]] || die "${A_PIP}: expected exactly one lmcache version token, found: ${allow_ver}"
 sed -i "s|^lmcache ${allow_ver} |lmcache ${LMCACHE_BUILD_VERSION} |" "${A_PIP}"
 note "pip-check allowlist: lmcache ${allow_ver} -> ${LMCACHE_BUILD_VERSION} ($(grep -c "^lmcache ${LMCACHE_BUILD_VERSION} " "${A_PIP}") lines)"
+# vllm_flash_attn python package: the overlay installs only the FA `cute`
+# helpers and the compiled .so files into the source tree that PYTHONPATH
+# serves at runtime; the pure-python `vllm_flash_attn/layers/` package
+# (rotary embedding used by vision encoders) stays behind in CMake's
+# _deps checkout. GLM-5.3 vision profiling then fails with
+# "No module named 'vllm.vllm_flash_attn.layers'" (2026-09-12). Copy every
+# python file of the FA package alongside the cute helpers, before the .so
+# harvest. Injected (not sed-rewritten) because the anchor line must survive.
+python3 - "${D_OVER}" "${PATCH_VLLM_FA_LAYERS}" <<'PYEOF'
+import pathlib, sys
+path, tog = pathlib.Path(sys.argv[1]), sys.argv[2]
+text = path.read_text()
+anchor = "    find /tmp/vllm-extensions -name '*.abi3.so' > /tmp/vllm-extension-list; \\\n"
+inject = ('    fa_src="$(find /tmp/vllm-extensions/_deps -maxdepth 1 -type d -name vllm-flash-attn-src | head -1)"; \\\n'
+          '    test -n "${fa_src}" && test -d "${fa_src}/vllm_flash_attn"; \\\n'
+          '    (cd "${fa_src}/vllm_flash_attn" && find . -name "*.py" -exec install -D -m 0644 "{}" "/opt/infernal-invocation/vllm/vllm/vllm_flash_attn/{}" \\;); \\\n'
+          '    test -f /opt/infernal-invocation/vllm/vllm/vllm_flash_attn/layers/__init__.py; \\\n')
+cnt = text.count(anchor)
+if tog == "off": print("PATCH_VLLM_FA_LAYERS=off: skipped", file=sys.stderr)
+elif cnt == 0 and tog == "auto": print("PATCH_VLLM_FA_LAYERS(auto): extension-list anchor absent; skipping", file=sys.stderr)
+else:
+    assert cnt == 1, f"extension-list anchor found {cnt} times"
+    path.write_text(text.replace(anchor, inject + anchor)); print("injected vllm_flash_attn python package copy (overlay)", file=sys.stderr)
+PYEOF
 # MAX_JOBS: upstream builds on 48-128 core hosts; a Spark has 20 Grace cores.
 for f in "${D_FOUND}" "${D_FI}" "${D_OVER}"; do
   apply_sed_patch PATCH_MAX_JOBS "${PATCH_MAX_JOBS}" "${f}" \
