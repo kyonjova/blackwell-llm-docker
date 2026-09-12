@@ -161,10 +161,19 @@ for t in PATCH_GPU_ARCH PATCH_MAX_JOBS PATCH_EXLLAMAV3_AVX PATCH_NCCL_GENCODE; d
 done
 
 # ------------------------------------------------------------ dockerfile prep
+# Refuse to run on Dockerfiles left patched by a killed run (OOM/SIGKILL
+# skips the restore trap): leftover backups or an injected marker mean the
+# checkout is dirty and patching again would double-inject.
+for f in "${D_FOUND}" "${D_FI}" "${D_OVER}"; do
+  ls "${f}".pre-spark.* >/dev/null 2>&1 && die "leftover backup(s) for ${f} from an interrupted run; restore with: git checkout -- ${f} && rm -f ${f}.pre-spark.*"
+  grep -q "exllamav3: CPU all-reduce is x86-only" "${f}" && die "${f} is already patched (interrupted run); restore with: git checkout -- ${f}"
+  grep -qE "12\.1a|=121a\b|12\.1f" "${f}" && die "${f} already carries sm_121 rewrites (interrupted run); restore with: git checkout -- ${f}"
+done
 backups=()
 for f in "${D_FOUND}" "${D_FI}" "${D_OVER}"; do cp -a "${f}" "${f}.pre-spark.$$"; backups+=("${f}"); done
 restore() { local f; for f in "${backups[@]}"; do mv -f "${f}.pre-spark.$$" "${f}"; done; }
 trap restore EXIT
+trap "exit 130" INT TERM
 
 apply_sed_patch() {  # name toggle file before_pattern min_expected sed-expr...
   local name="$1" toggle="$2" file="$3" before="$4" min="$5"; shift 5
@@ -229,7 +238,7 @@ STUB_AVX512 = ["#include <cstdio>", "#include <cstdlib>", '#include "all_reduce_
   "void bf16_add_inplace_avx512(uint16_t*, const uint16_t*, size_t) " + C_ABORT,
   "void perform_cpu_reduce_avx512(PGContext*, size_t, uint32_t, uint8_t*, size_t) " + C_ABORT]
 def printf_cmd(lines, dest): return "printf '%s\\n' " + " ".join("'" + l + "'" for l in lines) + " > " + dest
-EXT = "exllamav3_ext"
+EXT = "exllamav3/exllamav3_ext"
 cmds = [
   "sed -i 's/avx2_supported = __builtin_cpu_supports(\"avx2\");/avx2_supported = false;/' " + EXT + "/avx2_target.cpp",
   "sed -i 's/avx512_supported = __builtin_cpu_supports(\"avx512f\") && __builtin_cpu_supports(\"avx512bw\");/avx512_supported = false;/' " + EXT + "/avx512_target.cpp",
