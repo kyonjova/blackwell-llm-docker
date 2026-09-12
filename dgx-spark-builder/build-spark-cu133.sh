@@ -133,6 +133,7 @@ export DEEPGEMM_COMMIT="${DEEPGEMM_COMMIT:-a6b593d2826719dcf4892609af7b84ee23aaf
 export TRITON_KERNELS_REPO="${TRITON_KERNELS_REPO:-}"; export TRITON_KERNELS_COMMIT="${TRITON_KERNELS_COMMIT:-}"
 export VLLM_REQUIRED_LAUNCHERS="${VLLM_REQUIRED_LAUNCHERS:-}"
 export MAX_JOBS="${MAX_JOBS:-20}"
+export NVCC_THREADS="${NVCC_THREADS:-1}"    # nvcc threads per compile job; 1 on a 20-core/121 GiB Spark (upstream: 4 x 48 jobs)
 export RELEASE_DATE="${RELEASE_DATE:-$(date +%Y%m%d)}"
 export DOCKER_COMMIT="${DOCKER_COMMIT:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"
 stamp="$(date +%Y%m%d)"
@@ -205,6 +206,13 @@ for f in "${D_FOUND}" "${D_FI}" "${D_OVER}"; do
     'MAX_JOBS=(48|128)\b' 1 \
     "s/MAX_JOBS=48\b/MAX_JOBS=${MAX_JOBS}/g" "s/MAX_JOBS=128\b/MAX_JOBS=${MAX_JOBS}/g"
 done
+# The overlay's vLLM extension stage does not use MAX_JOBS: it runs
+# `cmake --build --parallel 48` with NVCC_THREADS=4 (ENV and -D). 48 x 4 nvcc
+# threads on Marlin MoE kernels exhausted 121 GiB on a Spark (OOM at object
+# ~120/408 on 2026-09-11). Bound both to the profile values.
+apply_sed_patch PATCH_MAX_JOBS "${PATCH_MAX_JOBS}" "${D_OVER}" \
+  '\-\-parallel 48\b|NVCC_THREADS=4\b' 2 \
+  "s/--parallel 48\b/--parallel ${MAX_JOBS}/g" "s/NVCC_THREADS=4\b/NVCC_THREADS=${NVCC_THREADS}/g"
 # exllamav3 aarch64 stub (x86 GCC builtins + AVX all-reduce files), same fix as
 # the cu132 wrapper, anchored on the overlay's exllamav3 build line.
 python3 - "${D_OVER}" "${PATCH_EXLLAMAV3_AVX}" "${MAX_JOBS}" <<'PYEOF'
