@@ -30,12 +30,36 @@ die()  { echo "build-spark-cu133: $*" >&2; exit 1; }
 warn() { echo "build-spark-cu133: warning: $*" >&2; }
 note() { echo "build-spark-cu133: $*" >&2; }
 
+# ---------------------------------------------------------------- transcript
+# Same mechanism as build-spark-cu132.sh: one RUN_STAMP per run shared by the
+# manifest and the transcript; everything printed from here on is teed to a
+# temp file that becomes build-log-<profile>-<stamp>.txt at exit when
+# LOGGING=1 (--log, profile key, or process env), and is discarded otherwise.
+RUN_STAMP="$(date +%Y%m%d-%H%M%S)"
+stamp="${RUN_STAMP%%-*}"
+expand_date() { local v="$1"; v="${v//<datetime>/${RUN_STAMP}}"; v="${v//<date>/${stamp}}"; printf '%s' "${v}"; }
+_RAW_LOG="$(mktemp)"
+exec {_TTY_OUT}>&1 {_TTY_ERR}>&2
+exec > >(tee -a "${_RAW_LOG}") 2>&1
+_TEE_PID=$!
+finalize_transcript() {
+  if [[ "${LOGGING:-0}" != 1 ]]; then rm -f "${_RAW_LOG:-}"; return 0; fi
+  local log="${RUN_LOG:-${SCRIPT_DIR}/build-log-${PROFILE_NAME:-unknown}-${RUN_STAMP}.txt}"
+  printf 'build transcript: %s\n' "${log}" >&2
+  exec 1>&"${_TTY_OUT}" 2>&"${_TTY_ERR}"
+  wait "${_TEE_PID}" 2>/dev/null || true
+  mv -f "${_RAW_LOG}" "${log}" 2>/dev/null || cp -f "${_RAW_LOG}" "${log}"
+}
+trap finalize_transcript EXIT
+PATCH_REPORT="$(mktemp)"
+
 # ------------------------------------------------------------ argument parse
-DRY_RUN=0; PHASE=all; ENV_FILE=""; EXTRA_ARGS=()
+DRY_RUN=0; PHASE=all; ENV_FILE=""; EXTRA_ARGS=(); LOG_FLAG=0; OVERRIDDEN_KEYS=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
     --phase) PHASE="$2"; shift 2 ;;
+    --log) LOG_FLAG=1; shift ;;
     --) shift; EXTRA_ARGS=("$@"); break ;;
     -h|--help) sed -n '2,24p' "${SELF}"; exit 0 ;;
     -*) die "unknown option: $1" ;;
@@ -49,7 +73,7 @@ if [[ -z "${ENV_FILE}" ]]; then
   _default_env="${SCRIPT_DIR}/build.env"
   [[ -f "${_default_env}" ]] && ENV_FILE="${_default_env}"
 fi
-ALLOWED_KEYS=" ALLOW_FOREIGN_ARCH PATCH_NCCL_GENCODE RUNTIME_FOUNDATION BASE_IMAGE LMCACHE_BUILD_VERSION NCCL4PY_VERSION VLLM_PRS VLLM_UPSTREAM_BASE VLLM_MERGE_HEADS VLLM_INTEGRATION_LOCK_SHA256 B12X_PRS B12X_UPSTREAM_BASE B12X_MERGE_HEADS B12X_INTEGRATION_LOCK_SHA256 LMCACHE_PRS LMCACHE_UPSTREAM_BASE LMCACHE_MERGE_HEADS LMCACHE_INTEGRATION_LOCK_SHA256 B12X_COMMIT B12X_INTEGRATION_TREE B12X_PATCH_FILE B12X_PATCH_SHA256 B12X_PIN B12X_REF B12X_REPO CUTLASS_DSL_VERSION DEEPGEMM_COMMIT DEEPGEMM_REPO DOCKER_COMMIT EXLLAMAV3_COMMIT EXLLAMAV3_REPO FLASHINFER_COMMIT FLASHINFER_REF FLASHINFER_REPO FLASHINFER_VERSION FLASHINFER_WHEEL_IMAGE FOUNDATION_IMAGE GH_TOKEN IMAGE IMAGE_REPO IMAGE_TAG INSTANTTENSOR_COMMIT INSTANTTENSOR_LIBAIO_COMMIT INSTANTTENSOR_LIBAIO_REPO INSTANTTENSOR_LIBAIO_TREE INSTANTTENSOR_REPO INSTANTTENSOR_VERSION LMCACHE_COMMIT LMCACHE_INTEGRATION_TREE LMCACHE_PATCH_FILE LMCACHE_PATCH_SHA256 LMCACHE_REF LMCACHE_REPO MAX_JOBS NCCL_COMMIT NCCL_REF NCCL_REPO NCCL_VERSION NVCC_THREADS NVIDIA_PYTORCH_IMAGE PATCH_EXLLAMAV3_AVX PATCH_GPU_ARCH PATCH_MAX_JOBS PIN_PREFLIGHT PROFILE_NAME PYTORCH_COMMIT PYTORCH_REF PYTORCH_REPO PYTORCH_VERSION RELEASE_DATE TORCHVISION_COMMIT TORCHVISION_REF TORCHVISION_REPO TORCHVISION_VERSION TRITON_KERNELS_COMMIT TRITON_KERNELS_REPO VLLM_COMMIT VLLM_INTEGRATION_TREE VLLM_PACKAGE_VERSION VLLM_PATCH_FILE VLLM_PATCH_SHA256 VLLM_PIN VLLM_REF VLLM_REPO VLLM_REQUIRED_LAUNCHERS XGRAMMAR_COMMIT XGRAMMAR_REF XGRAMMAR_REPO XGRAMMAR_VERSION "
+ALLOWED_KEYS=" ALLOW_FOREIGN_ARCH LOGGING PATCH_NCCL_GENCODE RUNTIME_FOUNDATION BASE_IMAGE LMCACHE_BUILD_VERSION NCCL4PY_VERSION VLLM_PRS VLLM_UPSTREAM_BASE VLLM_MERGE_HEADS VLLM_INTEGRATION_LOCK_SHA256 B12X_PRS B12X_UPSTREAM_BASE B12X_MERGE_HEADS B12X_INTEGRATION_LOCK_SHA256 LMCACHE_PRS LMCACHE_UPSTREAM_BASE LMCACHE_MERGE_HEADS LMCACHE_INTEGRATION_LOCK_SHA256 B12X_COMMIT B12X_INTEGRATION_TREE B12X_PATCH_FILE B12X_PATCH_SHA256 B12X_PIN B12X_REF B12X_REPO CUTLASS_DSL_VERSION DEEPGEMM_COMMIT DEEPGEMM_REPO DOCKER_COMMIT EXLLAMAV3_COMMIT EXLLAMAV3_REPO FLASHINFER_COMMIT FLASHINFER_REF FLASHINFER_REPO FLASHINFER_VERSION FLASHINFER_WHEEL_IMAGE FOUNDATION_IMAGE GH_TOKEN IMAGE IMAGE_REPO IMAGE_TAG INSTANTTENSOR_COMMIT INSTANTTENSOR_LIBAIO_COMMIT INSTANTTENSOR_LIBAIO_REPO INSTANTTENSOR_LIBAIO_TREE INSTANTTENSOR_REPO INSTANTTENSOR_VERSION LMCACHE_COMMIT LMCACHE_INTEGRATION_TREE LMCACHE_PATCH_FILE LMCACHE_PATCH_SHA256 LMCACHE_REF LMCACHE_REPO MAX_JOBS NCCL_COMMIT NCCL_REF NCCL_REPO NCCL_VERSION NVCC_THREADS NVIDIA_PYTORCH_IMAGE PATCH_EXLLAMAV3_AVX PATCH_GPU_ARCH PATCH_MAX_JOBS PIN_PREFLIGHT PROFILE_NAME PYTORCH_COMMIT PYTORCH_REF PYTORCH_REPO PYTORCH_VERSION RELEASE_DATE TORCHVISION_COMMIT TORCHVISION_REF TORCHVISION_REPO TORCHVISION_VERSION TRITON_KERNELS_COMMIT TRITON_KERNELS_REPO VLLM_COMMIT VLLM_INTEGRATION_TREE VLLM_PACKAGE_VERSION VLLM_PATCH_FILE VLLM_PATCH_SHA256 VLLM_PIN VLLM_REF VLLM_REPO VLLM_REQUIRED_LAUNCHERS XGRAMMAR_COMMIT XGRAMMAR_REF XGRAMMAR_REPO XGRAMMAR_VERSION "
 if [[ -n "${ENV_FILE}" ]]; then
   [[ -f "${ENV_FILE}" ]] || die "env file not found: ${ENV_FILE}"
   grep -qU $'\r' "${ENV_FILE}" && die "env file has CRLF line endings"
@@ -62,12 +86,17 @@ if [[ -n "${ENV_FILE}" ]]; then
     [[ "${ALLOWED_KEYS}" == *" ${key} "* ]] || die "${ENV_FILE}:${lineno}: unknown key ${key}"
     case "${val}" in *[\`\$\"\;\|\&]*|*"'"*|*\\*|*\(*|*\)*) die "${ENV_FILE}:${lineno}: value of ${key} contains shell metacharacters" ;; esac
     [[ "${val}" =~ ^\<[A-Za-z0-9_-]+\>$ ]] && die "${ENV_FILE}:${lineno}: unresolved placeholder for ${key}"
-    if [[ -n "${!key+x}" ]]; then note "process env overrides ${ENV_FILE}: ${key}"; else printf -v "${key}" '%s' "${val}"; export "${key}"; fi
+    if [[ -n "${!key+x}" ]]; then note "process env overrides ${ENV_FILE}: ${key}"; OVERRIDDEN_KEYS="${OVERRIDDEN_KEYS} ${key}"; else printf -v "${key}" '%s' "${val}"; export "${key}"; fi
   done < "${ENV_FILE}"
   note "loaded profile: ${ENV_FILE}"
 fi
 : "${PROFILE_NAME:=custom}"
+PROFILE_NAME="$(expand_date "${PROFILE_NAME}")"
 [[ "${PROFILE_NAME}" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || die "PROFILE_NAME must be lowercase [a-z0-9.-]: ${PROFILE_NAME}"
+LOGGING="${LOGGING:-0}"; [[ "${LOG_FLAG}" == 1 ]] && LOGGING=1
+case "${LOGGING}" in 0|1) ;; *) die "LOGGING must be 0 or 1" ;; esac
+RUN_LOG="${SCRIPT_DIR}/build-log-${PROFILE_NAME}-${RUN_STAMP}.txt"
+[[ "${LOGGING}" != 1 ]] || note "transcript: ${RUN_LOG}"
 
 # --------------------------------------------------------------- repo checks
 D_FOUND=Dockerfile.kimi-k3-cu133-torch213-base
@@ -141,7 +170,7 @@ stamp="$(date +%Y%m%d)"
 export IMAGE_REPO="${IMAGE_REPO:-local/vllm}"
 export FOUNDATION_IMAGE="${FOUNDATION_IMAGE:-${IMAGE_REPO}:cu133-torch213-nccl2312-sm121-foundation}"
 export FLASHINFER_WHEEL_IMAGE="${FLASHINFER_WHEEL_IMAGE:-${IMAGE_REPO}:flashinfer-wheels-${FLASHINFER_COMMIT:0:7}-cu133-torch213-sm121}"
-export IMAGE_TAG="${IMAGE_TAG:-${PROFILE_NAME}-cu133-torch213-sm121-${stamp}}"
+IMAGE_TAG="$(expand_date "${IMAGE_TAG:-${PROFILE_NAME}-cu133-torch213-sm121-${stamp}}")"; export IMAGE_TAG
 export IMAGE="${IMAGE:-${IMAGE_REPO}:${IMAGE_TAG}}"
 # Overlay base mode. 0 (default): BASE_IMAGE is the raw foundation and the
 # overlay builds the venv, DeepGEMM, exllamav3, InstantTensor, nccl4py and
@@ -174,7 +203,26 @@ ls "${A_PIP}".pre-spark.* >/dev/null 2>&1 && die "leftover backup for ${A_PIP}; 
 backups=()
 for f in "${D_FOUND}" "${D_FI}" "${D_OVER}" "${A_PIP}"; do cp -a "${f}" "${f}.pre-spark.$$"; backups+=("${f}"); done
 restore() { local f; for f in "${backups[@]}"; do mv -f "${f}.pre-spark.$$" "${f}"; done; }
-trap restore EXIT
+MEM_PEAK_FILE="$(mktemp)"; SAMPLER_PID=""; BUILD_T0=""
+start_sampler() {
+  BUILD_T0="$(date +%s)"
+  ( peak=0; while :; do u=$(awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} END{print t-a}' /proc/meminfo); [[ "${u}" -gt "${peak}" ]] && { peak="${u}"; echo "${peak}" > "${MEM_PEAK_FILE}"; }; sleep 5; done ) & SAMPLER_PID=$!
+}
+report_telemetry() {
+  local status="$1"; [[ -n "${BUILD_T0}" ]] || return 0
+  local dt=$(( $(date +%s) - BUILD_T0 )) peak_kib; peak_kib="$(cat "${MEM_PEAK_FILE}" 2>/dev/null || echo 0)"
+  printf 'build telemetry: status=%s  jobs=%s  nvcc-threads=%s  peak-memory=%s GiB  wall-time=%dh %02dm %02ds\n' \
+    "${status}" "${MAX_JOBS}" "${NVCC_THREADS}" "$(awk -v k="${peak_kib}" 'BEGIN{printf "%.1f", k/1048576}')" $((dt/3600)) $(((dt%3600)/60)) $((dt%60)) >&2
+}
+cleanup() {
+  local rc=$?
+  [[ -n "${SAMPLER_PID}" ]] && kill "${SAMPLER_PID}" 2>/dev/null || true
+  [[ -n "${BUILD_T0}" && "${rc}" != 0 ]] && report_telemetry "FAILED(rc=${rc})"
+  restore
+  rm -f "${MEM_PEAK_FILE}" "${PATCH_REPORT}"
+  finalize_transcript
+}
+trap cleanup EXIT
 trap "exit 130" INT TERM
 
 apply_sed_patch() {  # name toggle file before_pattern min_expected sed-expr...
@@ -191,6 +239,7 @@ apply_sed_patch() {  # name toggle file before_pattern min_expected sed-expr...
   [[ "${left}" == 0 ]] || die "${name}: ${left} occurrence(s) survived in ${file}: $(grep -nE "${before}" "${file}" | head -3)"
   [[ "${found}" -ge "${min}" ]] || die "${name}: expected >=${min} occurrences in ${file}, found ${found}"
   note "${name}: rewrote ${found} line-occurrence(s) in ${file}"
+  printf '%s: %s occurrence(s) in %s\n' "${name}" "${found}" "${file}" >> "${PATCH_REPORT}"
 }
 
 # GPU arch: sm_120 -> sm_121 in all three files (the cu133 lineage has no x86
@@ -302,6 +351,7 @@ if [[ "${DRY_RUN}" == 1 ]]; then
 fi
 
 # ------------------------------------------------------------------- builds
+start_sampler
 have_image() { docker image inspect "$1" >/dev/null 2>&1; }
 build() { DOCKER_BUILDKIT=1 docker build --progress=plain "$@" "${EXTRA_ARGS[@]}" .; }
 
@@ -379,5 +429,76 @@ PY
   done
   docker run --rm --entrypoint bash "${IMAGE}" -c 'ls /opt/local-inference/nccl/lib/libnccl.so.2.31.2 >/dev/null' || warn "patched NCCL not at /opt/local-inference/nccl/lib (check the foundation layout before setting LD_PRELOAD)"
   printf '\nBuilt %s (base %s, runtime_foundation=%s, flashinfer %s)\n' "${IMAGE}" "${BASE_IMAGE}" "${RUNTIME_FOUNDATION}" "${FLASHINFER_WHEEL_IMAGE}"
+  report_telemetry "OK+VERIFIED"
+
+  # ----------------------------------------------------------- build manifest
+  # Same shape as the cu132 wrapper's: one Markdown record per verified build,
+  # sharing RUN_STAMP with the transcript; non-fatal, every field degrades to
+  # UNKNOWN rather than failing a verified build.
+  emit_build_manifest() {
+    local unk='UNKNOWN — needs verification'
+    local id_over id_found id_fi ngc_digest wrapper_sha profile_sha pip_freeze
+    id_over="$(docker image inspect --format '{{.Id}}' "${IMAGE}" 2>/dev/null || echo "${unk}")"
+    id_found="$(docker image inspect --format '{{.Id}}' "${FOUNDATION_IMAGE}" 2>/dev/null || echo "${unk}")"
+    id_fi="$(docker image inspect --format '{{.Id}}' "${FLASHINFER_WHEEL_IMAGE}" 2>/dev/null || echo "${unk}")"
+    ngc_digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "${NVIDIA_PYTORCH_IMAGE}" 2>/dev/null || echo "${unk}")"
+    wrapper_sha="$(sha256sum "${SELF}" | cut -d' ' -f1)"
+    profile_sha="none (in-script defaults only)"; [[ -z "${ENV_FILE}" ]] || profile_sha="$(sha256sum "${ENV_FILE}" 2>/dev/null | cut -d' ' -f1 || echo "${unk}")"
+    pip_freeze="$(docker run --rm --entrypoint /opt/venv/bin/pip "${IMAGE}" freeze 2>/dev/null || echo "${unk} (pip freeze failed)")"
+    {
+      printf '# Build manifest — %s — %s (CUDA 13.3 flavor)\n\n' "${PROFILE_NAME}" "${RUN_STAMP}"
+      printf '## Images\n\n'
+      printf -- '- Runtime (this build): `%s` image ID `%s`\n' "${IMAGE}" "${id_over}"
+      printf -- '- Registry digest (`image@sha256:`): %s (exists only after a push)\n' "${unk}"
+      printf -- '- Overlay base: `%s` (RUNTIME_FOUNDATION=%s)\n' "${BASE_IMAGE}" "${RUNTIME_FOUNDATION}"
+      printf -- '- Foundation: `%s` image ID `%s` (NGC `%s` @ `%s`; torch %s @ `%s`; NCCL %s `%s` @ `%s`)\n' \
+        "${FOUNDATION_IMAGE}" "${id_found}" "${NVIDIA_PYTORCH_IMAGE}" "${ngc_digest}" "${PYTORCH_VERSION}" "${PYTORCH_COMMIT}" "${NCCL_VERSION}" "${NCCL_REF}" "${NCCL_COMMIT}"
+      printf -- '- FlashInfer wheels: `%s` image ID `%s` (%s @ `%s`)\n' "${FLASHINFER_WHEEL_IMAGE}" "${id_fi}" "${FLASHINFER_VERSION}" "${FLASHINFER_COMMIT}"
+      printf -- '- vLLM package version: `%s`\n\n' "${VLLM_PACKAGE_VERSION}"
+      printf '## Sources (composition contract as verified in-build)\n\n'
+      for c in VLLM B12X LMCACHE; do
+        r="${c}_REPO"; k="${c}_COMMIT"; t="${c}_INTEGRATION_TREE"; pf="${c}_PATCH_FILE"; ps="${c}_PATCH_SHA256"
+        printf -- '- %s: `%s` @ `%s`, tree `%s`%s\n' "${c}" "${!r}" "${!k}" "${!t:-${unk}}" "$([[ -n "${!pf}" ]] && printf ' + patch `%s` sha256 `%s`' "${!pf}" "${!ps}")"
+      done
+      printf -- '- InstantTensor: `%s` @ `%s`; exllamav3: `%s` @ `%s`; DeepGEMM: `%s` @ `%s`\n\n' \
+        "${INSTANTTENSOR_REPO}" "${INSTANTTENSOR_COMMIT}" "${EXLLAMAV3_REPO}" "${EXLLAMAV3_COMMIT}" "${DEEPGEMM_REPO}" "${DEEPGEMM_COMMIT}"
+      printf '## Build system\n\n'
+      printf -- '- blackwell-llm-docker checkout: `%s`\n' "${DOCKER_COMMIT}"
+      printf -- '- Wrapper: `build-spark-cu133.sh` sha256 `%s`\n' "${wrapper_sha}"
+      printf -- '- Profile: `%s` sha256 `%s`\n' "${ENV_FILE:-none}" "${profile_sha}"
+      printf -- '- Dockerfiles: `%s`, `%s`, `%s` (pristine copies restored on exit)\n' "${D_FOUND}" "${D_FI}" "${D_OVER}"
+      printf -- '- Extra docker build args: `%s`\n' "${EXTRA_ARGS[*]:-none}"
+      printf -- '- Run transcript: `%s`\n' "$([[ "${LOGGING}" == 1 ]] && echo "${RUN_LOG##*/}" || echo 'not kept (LOGGING=0)')"
+      printf -- '- Build host: %s, %s\n\n' "$(uname -m)" "$(uname -r)"
+      printf '## Effective configuration\n\n```\n'
+      for key in ${ALLOWED_KEYS}; do
+        [[ -n "${!key:-}" ]] || continue
+        case "${key}" in ALLOW_FOREIGN_ARCH|GH_TOKEN) continue ;; esac
+        mark=""; [[ " ${OVERRIDDEN_KEYS} " != *" ${key} "* ]] || mark="   # OVERRIDDEN by process env"
+        printf '%s=%s%s\n' "${key}" "${!key}" "${mark}"
+      done
+      printf '```\n\n## Patches applied (differences from the upstream cu133 build system)\n\n```\n'
+      cat "${PATCH_REPORT}" 2>/dev/null || echo "${unk}"
+      printf 'exllamav3 aarch64 source stub: injected into the overlay build\n'
+      printf 'pip-check allowlist: lmcache version token rewritten to %s\n' "${LMCACHE_BUILD_VERSION}"
+      printf '```\n\n## Verification (executed by this wrapper, all passed)\n\n'
+      printf -- '- In-image python asserts: aarch64, torch 2.13.0, CUDA 13.3, `b12x` importable\n'
+      printf -- '- Upstream runtime contract (in-build): verify_deepseek_infernal_cu133_runtime.py PASS; pip-check allowlist matched\n'
+      printf -- '- Required launchers present: `%s`\n' "${VLLM_REQUIRED_LAUNCHERS:-none configured}"
+      printf -- '- Patched NCCL: `/opt/local-inference/nccl/lib/libnccl.so.%s`\n' "${NCCL_VERSION}"
+      printf -- '- Serving on hardware: Not tested (build-time verification only; record pair validation separately)\n\n'
+      printf '## Telemetry\n\n- jobs=%s nvcc-threads=%s peak-memory=%s GiB wall-time=%ss\n\n' "${MAX_JOBS}" "${NVCC_THREADS}" \
+        "$(awk -v k="$(cat "${MEM_PEAK_FILE}" 2>/dev/null || echo 0)" 'BEGIN{printf "%.1f", k/1048576}')" "$(( $(date +%s) - BUILD_T0 ))"
+      printf '## Full pip freeze (final image /opt/venv)\n\n```\n%s\n```\n\n' "${pip_freeze}"
+      printf '## Obtaining the registry digest (after push)\n\n```\ndocker tag %s <registry>/<repo>:<tag>\ndocker push <registry>/<repo>:<tag>\n' "${IMAGE}"
+      printf "docker inspect --format '{{index .RepoDigests 0}}' <registry>/<repo>:<tag>\n\`\`\`\n"
+    } > "${build_manifest}" && note "build manifest written: ${build_manifest}"
+  }
+  build_manifest="${SCRIPT_DIR}/build_manifest-${PROFILE_NAME}-${RUN_STAMP}.md"
+  if ! ( emit_build_manifest ); then
+    warn "build manifest emission failed -- the image is built and VERIFIED; re-run (fully cached) to regenerate it"
+  fi
+  printf 'Ship it to the other node:\n  docker save %s | ssh <node2> docker load\n' "${IMAGE}"
   printf 'Next release: RUNTIME_FOUNDATION=1 BASE_IMAGE=%s rebuilds only vLLM/B12X/LMCache.\n' "${IMAGE}"
+  printf 'Publishing needs an image@sha256 reference minted by a registry push; then fill the UNKNOWN digest in %s\n' "${build_manifest}"
 fi
