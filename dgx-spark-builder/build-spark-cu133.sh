@@ -275,19 +275,29 @@ note "pip-check allowlist: lmcache ${allow_ver} -> ${LMCACHE_BUILD_VERSION} ($(g
 # (rotary embedding used by vision encoders) stays behind in CMake's
 # _deps checkout. GLM-5.3 vision profiling then fails with
 # "No module named 'vllm.vllm_flash_attn.layers'" (2026-09-12). Copy every
-# ONLY the `layers/` subpackage alongside the cute helpers, no-clobber (the
-# FA package's own __init__.py must never replace vLLM's wrapper
-# vllm/vllm_flash_attn/__init__.py -- copying it broke fa_utils' imports on
-# the first attempt). Injected because the anchor line must survive.
+# the python tree the way vLLM itself does: its cmake install rule for the
+# _vllm_fa2_C component copies vllm_flash_attn/**/*.py (excluding __init__.py
+# and flash_attn_interface.py, which vLLM's own tree owns) into the prefix.
+# Install that component next to the cutedsl one, then copy every
+# subdirectory (layers/, ops/, cute/...) into the served tree no-clobber.
+# Earlier attempts: copying all .py clobbered vLLM's __init__.py; copying
+# layers/ alone failed on layers/rotary -> ops.triton.rotary; a _deps scan
+# produced layers/ but not ops/ (unexplained).
+# Injected because the anchor line must survive. The stage asserts the two
+# files that failed at runtime; the runtime import itself is checked by
+# probe-image.sh on the finished image (the .so files land after this point,
+# so importing the package here would fail for the wrong reason).
 python3 - "${D_OVER}" "${PATCH_VLLM_FA_LAYERS}" <<'PYEOF'
 import pathlib, sys
 path, tog = pathlib.Path(sys.argv[1]), sys.argv[2]
 text = path.read_text()
 anchor = "    find /tmp/vllm-extensions -name '*.abi3.so' > /tmp/vllm-extension-list; \\\n"
-inject = ('    fa_src="$(find /tmp/vllm-extensions/_deps -maxdepth 1 -type d -name vllm-flash-attn-src | head -1)"; \\\n'
-          '    test -n "${fa_src}" && test -d "${fa_src}/vllm_flash_attn/layers"; \\\n'
-          '    cp -an "${fa_src}/vllm_flash_attn/layers" /opt/infernal-invocation/vllm/vllm/vllm_flash_attn/; \\\n'
-          '    test -f /opt/infernal-invocation/vllm/vllm/vllm_flash_attn/layers/__init__.py; \\\n')
+inject = ('    cmake --install /tmp/vllm-extensions --prefix /tmp/vllm-flash-attn-python --component _vllm_fa2_C; \\\n'
+          '    ls -la /tmp/vllm-flash-attn-python/vllm/vllm_flash_attn/; \\\n'
+          '    for d in /tmp/vllm-flash-attn-python/vllm/vllm_flash_attn/*/; do test -d "${d}" && cp -an "${d%/}" /opt/infernal-invocation/vllm/vllm/vllm_flash_attn/; done; \\\n'
+          '    ls -la /opt/infernal-invocation/vllm/vllm/vllm_flash_attn/; \\\n'
+          '    test -f /opt/infernal-invocation/vllm/vllm/vllm_flash_attn/layers/rotary.py; \\\n'
+          '    test -f /opt/infernal-invocation/vllm/vllm/vllm_flash_attn/ops/triton/rotary.py; \\\n')
 cnt = text.count(anchor)
 if tog == "off": print("PATCH_VLLM_FA_LAYERS=off: skipped", file=sys.stderr)
 elif cnt == 0 and tog == "auto": print("PATCH_VLLM_FA_LAYERS(auto): extension-list anchor absent; skipping", file=sys.stderr)
