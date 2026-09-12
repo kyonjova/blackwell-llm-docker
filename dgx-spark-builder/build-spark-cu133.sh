@@ -73,6 +73,7 @@ fi
 D_FOUND=Dockerfile.kimi-k3-cu133-torch213-base
 D_FI=Dockerfile.flashinfer-cu133-torch213-wheels
 D_OVER=Dockerfile.deepseek-infernal-invocation-cu133-torch213
+A_PIP=tests/deepseek-infernal-cu133-pip-check.allowlist
 if [[ ! -f "${D_OVER}" ]]; then
   for cand in "${SCRIPT_DIR}/.." "${SCRIPT_DIR}"; do
     [[ -f "${cand}/${D_OVER}" ]] && { cd "${cand}"; note "building from repo root: $(pwd)"; break; }
@@ -169,8 +170,9 @@ for f in "${D_FOUND}" "${D_FI}" "${D_OVER}"; do
   grep -q "exllamav3: CPU all-reduce is x86-only" "${f}" && die "${f} is already patched (interrupted run); restore with: git checkout -- ${f}"
   grep -qE "12\.1a|=121a\b|12\.1f" "${f}" && die "${f} already carries sm_121 rewrites (interrupted run); restore with: git checkout -- ${f}"
 done
+ls "${A_PIP}".pre-spark.* >/dev/null 2>&1 && die "leftover backup for ${A_PIP}; restore with: git checkout -- ${A_PIP} && rm -f ${A_PIP}.pre-spark.*"
 backups=()
-for f in "${D_FOUND}" "${D_FI}" "${D_OVER}"; do cp -a "${f}" "${f}.pre-spark.$$"; backups+=("${f}"); done
+for f in "${D_FOUND}" "${D_FI}" "${D_OVER}" "${A_PIP}"; do cp -a "${f}" "${f}.pre-spark.$$"; backups+=("${f}"); done
 restore() { local f; for f in "${backups[@]}"; do mv -f "${f}.pre-spark.$$" "${f}"; done; }
 trap restore EXIT
 trap "exit 130" INT TERM
@@ -209,6 +211,15 @@ apply_sed_patch PATCH_NCCL_GENCODE "${PATCH_NCCL_GENCODE}" "${D_FOUND}" \
   'arch=compute_120,code=sm_120|arch=compute_120,code=compute_120' 1 \
   's/arch=compute_120,code=sm_120/arch=compute_121,code=sm_121/g' \
   's/arch=compute_120,code=compute_120/arch=compute_121,code=compute_121/g'
+# pip-check allowlist: the final gate diffs `pip check` against an allowlist
+# whose seven known LMCache complaints carry upstream's LMCache build version
+# string. Ours differs (LMCACHE_BUILD_VERSION), so rewrite the version token;
+# the set of complaints itself must still match exactly.
+[[ -f "${A_PIP}" ]] || die "missing ${A_PIP}"
+allow_ver="$(grep -oE '^lmcache [^ ]+' "${A_PIP}" | sort -u | sed 's/^lmcache //')"
+[[ "$(printf '%s\n' "${allow_ver}" | wc -l)" == 1 && -n "${allow_ver}" ]] || die "${A_PIP}: expected exactly one lmcache version token, found: ${allow_ver}"
+sed -i "s|^lmcache ${allow_ver} |lmcache ${LMCACHE_BUILD_VERSION} |" "${A_PIP}"
+note "pip-check allowlist: lmcache ${allow_ver} -> ${LMCACHE_BUILD_VERSION} ($(grep -c "^lmcache ${LMCACHE_BUILD_VERSION} " "${A_PIP}") lines)"
 # MAX_JOBS: upstream builds on 48-128 core hosts; a Spark has 20 Grace cores.
 for f in "${D_FOUND}" "${D_FI}" "${D_OVER}"; do
   apply_sed_patch PATCH_MAX_JOBS "${PATCH_MAX_JOBS}" "${f}" \
