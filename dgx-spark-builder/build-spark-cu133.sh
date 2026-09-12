@@ -275,16 +275,18 @@ note "pip-check allowlist: lmcache ${allow_ver} -> ${LMCACHE_BUILD_VERSION} ($(g
 # (rotary embedding used by vision encoders) stays behind in CMake's
 # _deps checkout. GLM-5.3 vision profiling then fails with
 # "No module named 'vllm.vllm_flash_attn.layers'" (2026-09-12). Copy every
-# python file of the FA package alongside the cute helpers, before the .so
-# harvest. Injected (not sed-rewritten) because the anchor line must survive.
+# ONLY the `layers/` subpackage alongside the cute helpers, no-clobber (the
+# FA package's own __init__.py must never replace vLLM's wrapper
+# vllm/vllm_flash_attn/__init__.py -- copying it broke fa_utils' imports on
+# the first attempt). Injected because the anchor line must survive.
 python3 - "${D_OVER}" "${PATCH_VLLM_FA_LAYERS}" <<'PYEOF'
 import pathlib, sys
 path, tog = pathlib.Path(sys.argv[1]), sys.argv[2]
 text = path.read_text()
 anchor = "    find /tmp/vllm-extensions -name '*.abi3.so' > /tmp/vllm-extension-list; \\\n"
 inject = ('    fa_src="$(find /tmp/vllm-extensions/_deps -maxdepth 1 -type d -name vllm-flash-attn-src | head -1)"; \\\n'
-          '    test -n "${fa_src}" && test -d "${fa_src}/vllm_flash_attn"; \\\n'
-          '    (cd "${fa_src}/vllm_flash_attn" && find . -name "*.py" -exec install -D -m 0644 "{}" "/opt/infernal-invocation/vllm/vllm/vllm_flash_attn/{}" \\;); \\\n'
+          '    test -n "${fa_src}" && test -d "${fa_src}/vllm_flash_attn/layers"; \\\n'
+          '    cp -an "${fa_src}/vllm_flash_attn/layers" /opt/infernal-invocation/vllm/vllm/vllm_flash_attn/; \\\n'
           '    test -f /opt/infernal-invocation/vllm/vllm/vllm_flash_attn/layers/__init__.py; \\\n')
 cnt = text.count(anchor)
 if tog == "off": print("PATCH_VLLM_FA_LAYERS=off: skipped", file=sys.stderr)
