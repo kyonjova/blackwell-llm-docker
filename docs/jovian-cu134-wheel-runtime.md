@@ -30,6 +30,9 @@ Triton, Triton Kernels, and FlashAttention. The NGC image changes
 `torch/lib/libtorch_global_deps.so` after installation. The builder verifies the
 original `RECORD` identity, changes only its runpath from `/usr/local/lib` to
 `$ORIGIN`, and records both hashes in the provenance manifest.
+Wheel timestamps use the immutable source image creation epoch
+`2026-08-21T06:45:47Z`; unchanged package payloads therefore retain identical
+wheel bytes when the publisher implementation changes.
 
 The NVIDIA PyTorch binary links to HPC-X and MKL libraries installed outside
 Python's package tree. `local-inference-torch-native-support` places the

@@ -17,7 +17,7 @@ value() {
 source_image=$(value source.image)
 source_commit=$(git -C "${repo_root}" rev-parse HEAD)
 source_tree=$(git -C "${repo_root}" rev-parse 'HEAD^{tree}')
-source_date_epoch=$(git -C "${repo_root}" show -s --format=%ct HEAD)
+source_date_epoch=$(value source.date-epoch)
 test -z "$(git -C "${repo_root}" status --porcelain)"
 repository=${GITHUB_REPOSITORY:-local-inference-lab/blackwell-llm-docker}
 release_tag=${FOUNDATION_RELEASE_TAG:-"jovian-cu134-foundation-beta-${source_commit}"}

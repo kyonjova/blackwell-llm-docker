@@ -32,8 +32,7 @@ RUN mkdir -p /tmp/repack-validation \
       /artifacts/wheels/triton-*.whl \
       /artifacts/wheels/triton_kernels-*.whl \
       /artifacts/wheels/flash_attn-*.whl \
- && python -m pip install --no-deps --target /tmp/repack-validation \
-      --upgrade /artifacts/wheels/local_inference_torch_native_support-*.whl \
+      /artifacts/wheels/local_inference_torch_native_support-*.whl \
  && python - <<'PY'
 import importlib
 import importlib.metadata
