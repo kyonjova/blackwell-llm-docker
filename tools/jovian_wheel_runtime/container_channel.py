@@ -12,6 +12,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import posixpath
 import re
 import subprocess
 import tarfile
@@ -221,7 +222,7 @@ def resolve(config_path: Path, output: Path) -> dict:
 
 
 def safe_extract(tar_path: Path, destination: Path) -> None:
-    """Reject links, special files and traversal before unpacking trusted assets."""
+    """Allow internal library links but reject special files and escaping paths."""
     with tarfile.open(tar_path) as archive:
         members = archive.getmembers()
         for member in members:
@@ -229,9 +230,24 @@ def safe_extract(tar_path: Path, destination: Path) -> None:
             if (
                 path.is_absolute()
                 or ".." in path.parts
-                or not (member.isfile() or member.isdir())
+                or not (
+                    member.isfile()
+                    or member.isdir()
+                    or member.issym()
+                    or member.islnk()
+                )
             ):
                 raise ValueError(f"unsafe component archive member: {member.name}")
+            if member.issym() or member.islnk():
+                target = PurePosixPath(member.linkname)
+                parent = str(path.parent) if member.issym() else "."
+                resolved = posixpath.normpath(posixpath.join(parent, str(target)))
+                if (
+                    target.is_absolute()
+                    or resolved == ".."
+                    or resolved.startswith("../")
+                ):
+                    raise ValueError(f"unsafe component archive link: {member.name}")
         archive.extractall(destination, members=members, filter="data")
 
 

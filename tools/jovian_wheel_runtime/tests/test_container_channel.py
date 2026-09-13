@@ -50,6 +50,20 @@ def test_archive_rejects_links(tmp_path):
         channel.safe_extract(archive, tmp_path / "out")
 
 
+def test_archive_accepts_internal_native_library_symlink(tmp_path):
+    archive = tmp_path / "native.tar"
+    with tarfile.open(archive, "w") as stream:
+        library = tarfile.TarInfo("native/lib/libnccl.so.2")
+        library.size = 1
+        stream.addfile(library, io.BytesIO(b"x"))
+        link = tarfile.TarInfo("native/lib/libnccl.so")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "libnccl.so.2"
+        stream.addfile(link)
+    channel.safe_extract(archive, tmp_path / "out")
+    assert (tmp_path / "out/native/lib/libnccl.so").read_bytes() == b"x"
+
+
 def test_comparison_detects_renamed_sources_and_truncation():
     assert channel.has_source_changes(
         {"files": [{"filename": "docs/x", "previous_filename": "src/x"}]}, ["src/"]
