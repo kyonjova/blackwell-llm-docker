@@ -7,6 +7,7 @@ import argparse
 import importlib.metadata
 import os
 import sys
+from pathlib import Path
 
 
 EXPECTED_VERSIONS = {
@@ -51,6 +52,11 @@ def main() -> int:
         raise RuntimeError(f"PyTorch reports CUDA {torch.version.cuda!r}, expected '13.4'")
     if not torch.compiled_with_cxx11_abi():
         raise RuntimeError("PyTorch and application wheels require the C++11 ABI")
+    cuda_home = Path(os.environ.get("CUDA_HOME", ""))
+    if not (cuda_home / "include" / "cuda.h").is_file():
+        raise RuntimeError("CUDA_HOME must expose the wheel-packaged cuda.h")
+    if not (cuda_home / "bin" / "nvcc").is_file():
+        raise RuntimeError("CUDA_HOME must expose the wheel-packaged nvcc")
     nccl_path = os.environ.get("VLLM_NCCL_SO_PATH")
     if not nccl_path or not os.path.isfile(nccl_path):
         raise RuntimeError("VLLM_NCCL_SO_PATH must identify the packaged NCCL library")

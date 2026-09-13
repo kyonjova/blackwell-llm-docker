@@ -37,10 +37,11 @@ test "${actual_uv_sha256}" = "${expected_uv_sha256}" \
   --no-index --find-links "${bundle_dir}/wheels" --no-deps --require-hashes \
   -r "${bundle_dir}/requirements-local.txt"
 "${uv_path}" pip check --python "${venv_path}/bin/python"
+install -m 0755 "${bundle_dir}/qwen38_runtime_entrypoint.sh" \
+  "${venv_path}/bin/qwen38-runtime"
 
 if [[ ${native_verify} == required ]]; then
-  nccl_so=$("${venv_path}/bin/local-inference-nccl-path")
-  env LD_PRELOAD="${nccl_so}" VLLM_NCCL_SO_PATH="${nccl_so}" \
+  "${venv_path}/bin/qwen38-runtime" \
     "${venv_path}/bin/python" "${bundle_dir}/verify_qwen38_runtime.py"
 fi
 printf 'qwen38_runtime=%s status=installed native_verification=%s gpu_qualification=required\n' \

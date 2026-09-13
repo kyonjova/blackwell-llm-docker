@@ -36,7 +36,7 @@ LABEL org.opencontainers.image.title="LIL Qwen3.8 CUDA 13.4 wheel runtime" \
       org.opencontainers.image.revision="${RUNTIME_SOURCE_COMMIT}"
 COPY --from=install /opt/local-inference/venvs/qwen38-cu134 \
   /opt/local-inference/venvs/qwen38-cu134
-COPY tools/jovian_wheel_runtime/qwen38_runtime_entrypoint.sh \
+COPY --from=install /opt/local-inference/venvs/qwen38-cu134/bin/qwen38-runtime \
   /usr/local/bin/qwen38-runtime
 COPY tools/jovian_wheel_runtime/verify_qwen38_runtime.py \
   /usr/local/libexec/verify_qwen38_runtime.py

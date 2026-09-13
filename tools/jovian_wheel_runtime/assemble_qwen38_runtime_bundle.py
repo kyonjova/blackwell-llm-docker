@@ -191,7 +191,11 @@ def main() -> int:
     shutil.copyfile(foundation_bundle / "foundation.lock", output / "foundation.lock")
     shutil.copyfile(qwen_lock, output / "qwen38-runtime.lock")
     tool_dir = Path(__file__).resolve().parent
-    for name in ("install_qwen38_runtime.sh", "verify_qwen38_runtime.py"):
+    for name in (
+        "install_qwen38_runtime.sh",
+        "qwen38_runtime_entrypoint.sh",
+        "verify_qwen38_runtime.py",
+    ):
         shutil.copyfile(tool_dir / name, output / name)
         (output / name).chmod(0o755)
 
