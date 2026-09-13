@@ -33,7 +33,9 @@ jobs:
       - name: Build and verify the foundation wheels
         env:
           BUILDX_BUILDER: lil-wheel-cu134-sm120
-        run: tools/jovian_wheel_runtime/build_foundation_bundle.sh
+        run: >-
+          tools/jovian_wheel_runtime/run_serialized_build.sh
+          tools/jovian_wheel_runtime/build_foundation_bundle.sh
 
       - name: Publish or verify the immutable beta release
         env:

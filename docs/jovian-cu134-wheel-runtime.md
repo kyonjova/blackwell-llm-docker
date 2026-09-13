@@ -108,9 +108,10 @@ without sharing state with the production Docker daemon. The BuildKit garbage
 collector reserves 100 GB for reusable build state, permits at most 1 TB, and
 starts reclaiming space when the host has less than 500 GB free.
 
-One organization-scoped runner can serve the `flashinfer`, `vllm`, `b12x`,
-`LMCache`, `nccl-canonical`, and `blackwell-llm-docker` repositories. The
-build-controller GitHub credential lacks the
-organization runner-administration permission required to create that runner.
-Repository-scoped listeners can use the same resource-limited BuildKit worker
-until an organization runner token is available.
+Repository-scoped listeners serve the `flashinfer`, `vllm`, `b12x`, `LMCache`,
+`nccl-canonical`, and `blackwell-llm-docker` repositories. Every listener uses
+the same resource-limited BuildKit worker and persistent cache. A host-wide
+file lock serializes compiler jobs across repositories, so repository events
+cannot start multiple memory-intensive compiles concurrently. The listeners
+remain separate because the build-controller GitHub credential cannot create
+an organization-scoped runner.
