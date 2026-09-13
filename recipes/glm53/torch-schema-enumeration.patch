@@ -1,0 +1,12 @@
+--- a/torch/_library/utils.py
++++ b/torch/_library/utils.py
+@@ -202,8 +202,7 @@
+ def fill_defaults(schema, args, kwargs):
+     new_args = []
+     new_kwargs = {}
+-    for i in range(len(schema.arguments)):
+-        info = schema.arguments[i]
++    for i, info in enumerate(schema.arguments):
+         if info.kwarg_only:
+             if info.name in kwargs:
+                 new_kwargs[info.name] = kwargs[info.name]

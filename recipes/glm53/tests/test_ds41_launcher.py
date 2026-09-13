@@ -93,3 +93,28 @@ def test_sampling_defaults_are_explicit(tmp_path):
         "temperature": 1.0,
         "top_p": 0.95,
     }
+
+
+def test_operational_environment_and_nondefault_kernel_overrides_survive(tmp_path):
+    overrides = {
+        "VLLM_LOGGING_LEVEL": "DEBUG",
+        "VLLM_WORKER_MULTIPROC_METHOD": "forkserver",
+        "VLLM_USE_BREAKABLE_CUDAGRAPH": "1",
+        "VLLM_ENABLE_PCIE_ALLREDUCE": "0",
+        "B12X_POLICY_MODE": "heuristic-only",
+        "B12X_PCIE_ONESHOT_THREADS": "256",
+        "VLLM_DISABLED_KERNELS": "SomeOtherKernel",
+    }
+    result = launch(tmp_path, overrides)
+    assert result.returncode == 0, result.stderr
+    env = json.loads(result.stdout)["env"]
+    for name, value in overrides.items():
+        assert env[name] == value
+
+
+def test_prefill_capture_is_opt_in_without_disabling_decode_graphs(tmp_path):
+    result = launch(tmp_path)
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["env"]["VLLM_USE_BREAKABLE_CUDAGRAPH"] == "0"
+    assert '{"cudagraph_mode":"FULL_AND_PIECEWISE"}' in payload["args"]
