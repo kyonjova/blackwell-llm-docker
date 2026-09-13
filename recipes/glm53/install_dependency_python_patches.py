@@ -61,7 +61,7 @@ def parse_args() -> argparse.Namespace:
         "--manifest",
         type=Path,
         default=Path(__file__).with_name("dependency-python-patches.json"),
-        help="patch manifest; patch paths are resolved relative to this file",
+        help="patch manifest; patch paths are resolved relative to the manifest file",
     )
     parser.add_argument(
         "--root",

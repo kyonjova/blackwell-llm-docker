@@ -53,7 +53,9 @@ def dependency_errors(
             if dependency is None:
                 errors.append(f"{package_name} requires {requirement}, but it is not installed")
                 continue
-            if requirement.specifier and Version(dependency.version) not in requirement.specifier:
+            if requirement.specifier and not requirement.specifier.contains(
+                Version(dependency.version), prereleases=True
+            ):
                 errors.append(
                     f"{package_name} requires {requirement}, but {dependency_name} "
                     f"{dependency.version} is selected"

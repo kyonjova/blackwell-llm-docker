@@ -29,6 +29,7 @@ if [[ ! ${runner_id} =~ ^[a-z0-9-]+$ ]]; then
   exit 1
 fi
 id "${runner_user}" >/dev/null
+getent group "${runner_user}" >/dev/null
 test -S /run/lil-flashinfer-docker/docker.sock
 
 cache_dir=/var/cache/lil-wheel-runner

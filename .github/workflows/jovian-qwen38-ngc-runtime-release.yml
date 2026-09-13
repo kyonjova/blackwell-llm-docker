@@ -40,7 +40,8 @@ jobs:
   build-container:
     if: github.repository == 'local-inference-lab/blackwell-llm-docker'
     runs-on: [self-hosted, linux, x64, lil-wheel-builder]
-    timeout-minutes: 180
+    # Six hours of shared-worker queueing plus three hours for assembly/publication.
+    timeout-minutes: 540
     steps:
       - name: Check out the exact container contract
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

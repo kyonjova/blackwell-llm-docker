@@ -22,7 +22,7 @@ def write_foundation_lock(path: Path) -> None:
     path.write_text(
         "\n".join(
             (
-                "source.image=nvcr.io/nvidia/pytorch@sha256:abc",
+                "source.image=nvcr.io/nvidia/pytorch@sha256:" + "a" * 64,
                 "python.version=3.12",
                 "cuda.version=13.4.1",
                 "pytorch.version=2.14.0a0+nv26.8",
@@ -45,7 +45,7 @@ def test_ngc_foundation_manifest_describes_installed_packages(
     manifest = ASSEMBLER.ngc_foundation_manifest(lock)
 
     assert manifest["source"] == {
-        "image": "nvcr.io/nvidia/pytorch@sha256:abc"
+        "image": "nvcr.io/nvidia/pytorch@sha256:" + "a" * 64
     }
     assert manifest["runtime"] == {"python": "3.12", "cuda": "13.4.1"}
     packages = {
@@ -70,6 +70,29 @@ def test_read_lock_rejects_duplicate_keys(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="duplicate foundation lock key"):
         ASSEMBLER.read_lock(lock)
+
+
+@pytest.mark.parametrize("image", ["nvcr.io/nvidia/pytorch:26.08", "nvcr.io/nvidia/pytorch@sha256:abc"])
+def test_rejects_mutable_or_incomplete_foundation_identity(image: str) -> None:
+    with pytest.raises(ValueError, match="immutable"):
+        ASSEMBLER.require_digest_image(image)
+
+
+def test_component_cannot_replace_foundation_package() -> None:
+    seen = {"torch", "triton-kernels"}
+    with pytest.raises(ValueError, match="duplicate runtime package"):
+        ASSEMBLER.register_package("Triton_Kernels", seen)
+
+
+def test_component_requires_checksum_coverage_for_every_wheel(tmp_path: Path) -> None:
+    (tmp_path / "wheels").mkdir()
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}")
+    (tmp_path / "SHA256SUMS").write_text(f"{ASSEMBLER.sha256(manifest)}  manifest.json\n")
+    ASSEMBLER.verify_checksums(tmp_path)
+    (tmp_path / "wheels/unlisted.whl").write_bytes(b"undeclared wheel")
+    with pytest.raises(ValueError, match="unchecked component assets"):
+        ASSEMBLER.verify_checksums(tmp_path)
 
 
 def test_application_requirements_omit_ngc_foundation() -> None:

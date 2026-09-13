@@ -24,6 +24,14 @@ def test_accepts_visible_system_dependency() -> None:
     assert dependency_errors(selected) == []
 
 
+def test_accepts_ngc_prerelease_with_compatible_lower_bound() -> None:
+    selected = distributions(
+        vllm=("1.0", ["torch>=2.9"]),
+        torch=("2.14.0a0+4fdf77b940.nv26.8.63802676", None),
+    )
+    assert dependency_errors(selected) == []
+
+
 def test_rejects_missing_dependency() -> None:
     selected = distributions(vllm=("1.0", ["torch==2.14"]))
     assert dependency_errors(selected) == [

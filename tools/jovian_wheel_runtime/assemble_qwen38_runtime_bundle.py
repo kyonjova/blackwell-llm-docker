@@ -47,6 +47,7 @@ def verify_checksums(bundle: Path) -> None:
     checksum_file = bundle / "SHA256SUMS"
     if not checksum_file.is_file():
         raise ValueError(f"component bundle has no SHA256SUMS: {bundle}")
+    declared: set[str] = set()
     for line in checksum_file.read_text().splitlines():
         expected, separator, relative = line.partition("  ")
         if not separator:
@@ -62,6 +63,14 @@ def verify_checksums(bundle: Path) -> None:
         candidate = bundle.joinpath(*path.parts)
         if not candidate.is_file() or sha256(candidate) != expected:
             raise ValueError(f"checksum mismatch: {candidate}")
+        if relative in declared:
+            raise ValueError(f"duplicate checksum entry: {relative}")
+        declared.add(relative)
+    consumed = {"manifest.json"} | {
+        str(path.relative_to(bundle)) for path in (bundle / "wheels").glob("*.whl")
+    }
+    if not consumed <= declared:
+        raise ValueError(f"unchecked component assets: {sorted(consumed - declared)}")
 
 
 def wheel_metadata(path: Path) -> tuple[str, str]:
@@ -79,6 +88,18 @@ def wheel_metadata(path: Path) -> tuple[str, str]:
 
 def normalized_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def require_digest_image(image: str) -> None:
+    if re.fullmatch(r"[^\s@]+/[^\s@]+@sha256:[0-9a-f]{64}", image) is None:
+        raise ValueError("foundation image must include an immutable SHA-256 digest")
+
+
+def register_package(name: str, seen: set[str]) -> None:
+    key = normalized_name(name)
+    if key in seen:
+        raise ValueError(f"duplicate runtime package: {name}")
+    seen.add(key)
 
 
 def register_wheel_payload(
@@ -163,6 +184,7 @@ def ngc_foundation_manifest(path: Path) -> dict[str, object]:
     missing = sorted(required - values.keys())
     if missing:
         raise ValueError(f"foundation lock is missing keys: {', '.join(missing)}")
+    require_digest_image(values["source.image"])
     return {
         "schema": EXPECTED_SCHEMAS["foundation"],
         "status": "implemented",
@@ -208,6 +230,7 @@ def validate_compatibility(manifests: dict[str, dict[str, object]]) -> None:
     if not isinstance(source, dict) or not isinstance(source.get("image"), str):
         raise ValueError("foundation manifest must identify its immutable source image")
     builder_image = source["image"]
+    require_digest_image(builder_image)
 
     for role, manifest in manifests.items():
         if role in {"foundation", "nccl"}:
@@ -300,7 +323,7 @@ def main() -> int:
             for package in foundation_packages
             if isinstance(package, dict)
         )
-    seen_packages: set[str] = set()
+    seen_packages = {normalized_name(package["name"]) for package in packages}
     seen_files: set[str] = set()
     installed_files: dict[str, str] = {}
     entry_point_owners: dict[tuple[str, str], str] = {}
@@ -314,10 +337,9 @@ def main() -> int:
                 register_wheel_payload(wheel, role, installed_files, entry_point_owners)
             )
             name, version = wheel_metadata(wheel)
-            package_key = normalized_name(name)
-            if package_key in seen_packages or wheel.name in seen_files:
-                raise ValueError(f"duplicate package or wheel filename: {wheel}")
-            seen_packages.add(package_key)
+            register_package(name, seen_packages)
+            if wheel.name in seen_files:
+                raise ValueError(f"duplicate wheel filename: {wheel}")
             seen_files.add(wheel.name)
             destination = wheel_dir / wheel.name
             shutil.copyfile(wheel, destination)
