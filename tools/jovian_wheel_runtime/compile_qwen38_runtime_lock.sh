@@ -4,6 +4,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 uv_binary=${UV_BIN:-uv}
+export UV_NO_CONFIG=1
 
 if ! uv_path=$(command -v "${uv_binary}"); then
   printf 'uv is required; set UV_BIN to its absolute path.\n' >&2

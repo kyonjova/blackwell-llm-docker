@@ -5,6 +5,7 @@ set -euo pipefail
 bundle_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 venv_path=${1:?Pass a destination venv path that does not exist}
 uv_binary=${UV_BIN:-uv}
+export UV_NO_CONFIG=1
 
 test ! -e "${venv_path}"
 uv_path=$(command -v "${uv_binary}")
