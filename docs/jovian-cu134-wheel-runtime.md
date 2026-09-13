@@ -12,8 +12,8 @@ The runtime has three independently versioned parts:
 
 - the Python and CUDA foundation published by `blackwell-llm-docker`;
 - the NCCL 2.31.2 build published by `nccl-canonical`;
-- application wheels for FlashInfer, B12X, vLLM, LMCache, XGrammar, and
-  InstantTensor.
+- application wheels for FlashInfer, B12X, vLLM, LMCache, InstantTensor,
+  XGrammar 0.2.5, and NVIDIA ModelOpt 0.46.1.
 
 ## Python and CUDA foundation
 
@@ -109,9 +109,9 @@ collector reserves 100 GB for reusable build state, permits at most 1 TB, and
 starts reclaiming space when the host has less than 500 GB free.
 
 Repository-scoped listeners serve the `flashinfer`, `vllm`, `b12x`, `LMCache`,
-`nccl-canonical`, and `blackwell-llm-docker` repositories. Every listener uses
-the same resource-limited BuildKit worker and persistent cache. A host-wide
-file lock serializes compiler jobs across repositories, so repository events
-cannot start multiple memory-intensive compiles concurrently. The listeners
-remain separate because the build-controller GitHub credential cannot create
-an organization-scoped runner.
+`InstantTensor`, `nccl-canonical`, and `blackwell-llm-docker` repositories.
+Every listener uses the same resource-limited BuildKit worker and persistent
+cache. A host-wide file lock serializes compiler jobs across repositories, so
+repository events cannot start multiple memory-intensive compiles concurrently.
+The listeners remain separate because the build-controller GitHub credential
+cannot create an organization-scoped runner.
