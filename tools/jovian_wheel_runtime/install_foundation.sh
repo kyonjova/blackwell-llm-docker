@@ -17,14 +17,20 @@ expected_uv_version=$(awk -F= \
 expected_uv_sha256=$(awk -F= \
   '$1 == "uv.sha256" {print $2; found=1} END {exit !found}' \
   "${bundle_dir}/foundation.lock")
+expected_container_uv_sha256=$(awk -F= \
+  '$1 == "uv.container-sha256" {print $2; found=1} END {exit !found}' \
+  "${bundle_dir}/foundation.lock")
 test "$("${uv_path}" --version | awk '{print $2}')" = "${expected_uv_version}"
-test "$(sha256sum "${uv_path}" | awk '{print $1}')" = "${expected_uv_sha256}"
+actual_uv_sha256=$(sha256sum "${uv_path}" | awk '{print $1}')
+test "${actual_uv_sha256}" = "${expected_uv_sha256}" \
+  || test "${actual_uv_sha256}" = "${expected_container_uv_sha256}"
 
 (cd "${bundle_dir}" && sha256sum --check SHA256SUMS)
 "${uv_path}" venv --python 3.12 "${venv_path}"
 "${uv_path}" pip install \
   --python "${venv_path}/bin/python" \
   --require-hashes \
+  --no-deps \
   -r "${bundle_dir}/foundation-runtime.lock"
 "${uv_path}" pip install \
   --python "${venv_path}/bin/python" \

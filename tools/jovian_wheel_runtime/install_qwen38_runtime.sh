@@ -11,15 +11,19 @@ test ! -e "${venv_path}"
 uv_path=$(command -v "${uv_binary}")
 expected_uv_version=$(awk -F= '$1 == "uv.version" {print $2}' "${bundle_dir}/foundation.lock")
 expected_uv_sha256=$(awk -F= '$1 == "uv.sha256" {print $2}' "${bundle_dir}/foundation.lock")
+expected_container_uv_sha256=$(awk -F= \
+  '$1 == "uv.container-sha256" {print $2}' "${bundle_dir}/foundation.lock")
 test "$("${uv_path}" --version | awk '{print $2}')" = "${expected_uv_version}"
-test "$(sha256sum "${uv_path}" | awk '{print $1}')" = "${expected_uv_sha256}"
+actual_uv_sha256=$(sha256sum "${uv_path}" | awk '{print $1}')
+test "${actual_uv_sha256}" = "${expected_uv_sha256}" \
+  || test "${actual_uv_sha256}" = "${expected_container_uv_sha256}"
 (cd "${bundle_dir}" && sha256sum --check SHA256SUMS)
 
 "${uv_path}" venv --python 3.12 "${venv_path}"
 "${uv_path}" pip install --python "${venv_path}/bin/python" \
-  --require-hashes -r "${bundle_dir}/foundation-runtime.lock"
+  --require-hashes --no-deps -r "${bundle_dir}/foundation-runtime.lock"
 "${uv_path}" pip install --python "${venv_path}/bin/python" \
-  --require-hashes -r "${bundle_dir}/qwen38-runtime.lock"
+  --require-hashes --no-deps -r "${bundle_dir}/qwen38-runtime.lock"
 "${uv_path}" pip install --python "${venv_path}/bin/python" \
   --no-index --find-links "${bundle_dir}/wheels" --no-deps --require-hashes \
   -r "${bundle_dir}/requirements-local.txt"

@@ -29,3 +29,4 @@ host.driver.cuda134.features=615
 buildx.builder=lil-wheel-cu134-sm120
 uv.version=0.11.30
 uv.sha256=9a4299a0c3bcc01012acbcdae7b5655e5087e0e5d87459306736a1420a902b81
+uv.container-sha256=d802a8d29eb5f80819a68317a93b926fcb67d5d27963c5f3f088f1d14a91a2cf
