@@ -1774,6 +1774,9 @@ nvidia-ml-py==13.610.43 \
     --hash=sha256:65437eb73d68d0c62c931ca4d45038472faff03bd0b8729abba4b899f70d60f2 \
     --hash=sha256:f13c72698edef492f985cc225f14faafe68ae065a2e407f45bdf6f4b9b43fde8
     # via -r tools/jovian_wheel_runtime/qwen38-runtime.in
+nvidia-modelopt==0.46.1 \
+    --hash=sha256:908e1a3fdaad265950c9091adafda8879971fc1e70e3f8b2b07005caed972bfa
+    # via -r tools/jovian_wheel_runtime/qwen38-runtime.in
 nvtx==0.2.15 \
     --hash=sha256:02bca69ee55e0be41eabf908de9dbcdd18e702c7f49f9aa63fd396ce684ff5d5 \
     --hash=sha256:10749686633f880ad53dcdbb2179fad41b45dcf5b7631d4a1070a577577bd386 \

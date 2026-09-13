@@ -14,7 +14,7 @@ RUN mkdir -p /artifacts/wheels \
       --allow-modified-record-entry \
       torch/lib/libtorch_global_deps.so=6991f14618ba04c4caa7d59bb5c520e930cfd6d40282e98eb83e2af169045894 \
       --rewrite-torch-runpaths \
-      torch torchvision triton triton-kernels flash-attn nvidia-modelopt \
+      torch torchvision triton triton-kernels flash-attn \
       > /artifacts/repack-provenance.json \
  && python /opt/local-inference/build_torch_native_support.py \
       --contract /opt/local-inference/torch_native_support.json \
@@ -31,7 +31,6 @@ RUN mkdir -p /tmp/repack-validation \
       /artifacts/wheels/triton-*.whl \
       /artifacts/wheels/triton_kernels-*.whl \
       /artifacts/wheels/flash_attn-*.whl \
-      /artifacts/wheels/nvidia_modelopt-*.whl \
       /artifacts/wheels/local_inference_torch_native_support-*.whl \
  && python - <<'PY'
 import importlib
@@ -61,7 +60,6 @@ for module in (
     "triton",
     "triton_kernels",
     "flash_attn",
-    "modelopt",
 ):
     imported = importlib.import_module(module)
     imported_path = Path(imported.__file__).resolve()

@@ -1,9 +1,10 @@
 # Complete external Python dependency closure for Qwen3.8 Flash Next serving.
 #
 # Versions define the external dependency closure for the CUDA 13.4.1 Qwen3.8
-# serving runtime. Foundation, application, ModelOpt, InstantTensor, and NCCL
-# wheel assets are supplied by their own immutable bundles and therefore do not
-# appear in this list. CUDA Python 13.3.1 is intentional: NVIDIA PyTorch 26.08
+# serving runtime. Foundation, custom application, InstantTensor, and NCCL wheel
+# assets are supplied by their own immutable bundles and therefore do not
+# appear in this list. NVIDIA ModelOpt is an official pure-Python PyPI wheel.
+# CUDA Python 13.3.1 is intentional: NVIDIA PyTorch 26.08
 # ships that binding release with the CUDA 13.4.1 toolkit.
 aiofile==3.11.1
 aiofiles==25.1.0
@@ -91,6 +92,7 @@ nvidia-cutlass-dsl-libs-core==4.6.2
 nvidia-cutlass-dsl-libs-cu12==4.6.2
 nvidia-cutlass-dsl-libs-cu13==4.6.2
 nvidia-ml-py==13.610.43
+nvidia-modelopt==0.46.1
 nvtx==0.2.15
 omegaconf==2.3.1
 openai==3.3.1

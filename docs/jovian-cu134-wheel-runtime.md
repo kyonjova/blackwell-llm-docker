@@ -26,9 +26,7 @@ build used to compile the application wheels.
 NVIDIA does not publish that PyTorch build through a public Python package
 index. The foundation builder verifies every hashed installed file against the
 package `RECORD` and produces deterministic wheels for PyTorch, TorchVision,
-Triton, Triton Kernels, FlashAttention, and NVIDIA ModelOpt 0.45.0. ModelOpt is
-the pure-Python distribution supplied and tested with NVIDIA PyTorch 26.08. The
-NGC image changes
+Triton, Triton Kernels, and FlashAttention. The NGC image changes
 `torch/lib/libtorch_global_deps.so` after installation. The builder verifies
 that installed mutation by hash, then replaces host-specific Torch library
 runpaths with paths relative to the venv. Those paths resolve CUDA, cuDNN,
