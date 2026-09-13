@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import importlib.metadata
 import importlib.util
+import json
 import os
 import sys
 from pathlib import Path
@@ -38,6 +39,36 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def verify_b12x_package() -> None:
+    """Verify the imported package against bytes from the selected B12X wheel."""
+    manifest = json.loads(
+        (Path(sys.prefix) / "share/lil-runtime/manifest.json").read_text()
+    )
+    contract = manifest["b12x_package"]
+    runtime_site = Path(sys.prefix) / "lib/python3.12/site-packages"
+    import b12x
+
+    expected_init = (runtime_site / "b12x/__init__.py").resolve()
+    if Path(b12x.__file__).resolve() != expected_init:
+        raise RuntimeError(f"B12X import was redirected to {b12x.__file__}")
+    if "b12x/__init__.py" not in contract["files"]:
+        raise RuntimeError("B12X payload contract is incomplete")
+    for relative, expected in contract["files"].items():
+        target = (runtime_site / relative).resolve()
+        if not target.is_relative_to(runtime_site / "b12x"):
+            raise RuntimeError(f"B12X payload escapes its package: {relative}")
+        if not target.is_file() or sha256(target) != expected:
+            raise RuntimeError(f"B12X wheel payload mismatch: {relative}")
+    flashinfer = importlib.metadata.distribution("flashinfer-python")
+    for path in flashinfer.files or ():
+        if str(path).startswith(("b12x/", "flashinfer/b12x/")):
+            raise RuntimeError("FlashInfer distribution claims B12X package files")
+    for entry in flashinfer.entry_points:
+        if entry.value.startswith(("b12x.", "flashinfer.b12x.")):
+            raise RuntimeError(f"FlashInfer distribution claims B12X plugin {entry.name}")
+    print(f"b12x_source={contract['source']['commit']} payload=PASS")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -63,7 +94,7 @@ def main() -> int:
         if actual != expected:
             raise RuntimeError(f"{package} version {actual!r} does not match {expected!r}")
 
-    import b12x  # noqa: F401
+    verify_b12x_package()
     import flashinfer  # noqa: F401
     import flashinfer_jit_cache  # noqa: F401
     import lmcache  # noqa: F401

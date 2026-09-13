@@ -150,6 +150,14 @@ the immutable NGC image without copying or repackaging the PyTorch foundation
 as wheels. The assembler rejects incompatible Python, CUDA, PyTorch,
 builder-image, manifest-schema, or SHA-256 contracts.
 
+B12X is an independent component built from a resolved `master` commit.
+FlashInfer wheels must exclude their B12X migration snapshot, legacy import
+shim, and B12X plugin entry points. The assembler rejects competing owners of
+installed files or entry points before image construction. It records every
+B12X package file hash in the runtime manifest. The installed verifier checks
+those hashes and the actual `b12x` import location, so an installed package
+version alone cannot conceal a redirected or overwritten implementation.
+
 The alternative `--foundation-bundle` input includes a repackaged Python and
 CUDA foundation for direct-host research. It is not required to build the NGC
 container.

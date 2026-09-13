@@ -195,6 +195,9 @@ def main() -> int:
             env=environment,
         )
     destination = venv / "bin/qwen38-ngc-runtime"
+    manifest_destination = venv / "share/lil-runtime/manifest.json"
+    manifest_destination.parent.mkdir(parents=True)
+    shutil.copyfile(bundle / "manifest.json", manifest_destination)
     shutil.copyfile(args.entrypoint, destination)
     destination.chmod(0o755)
     verifier = venv / "libexec/verify_qwen38_runtime.py"

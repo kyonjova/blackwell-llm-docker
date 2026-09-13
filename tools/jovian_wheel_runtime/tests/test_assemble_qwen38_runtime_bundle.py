@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -84,3 +86,43 @@ def test_application_requirements_omit_ngc_foundation() -> None:
     assert ASSEMBLER.application_requirements(packages) == (
         f"vllm==0.1.dev1 --hash=sha256:{'1' * 64}\n"
     )
+
+
+def make_wheel(path: Path, payload: dict[str, bytes]) -> Path:
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, content in payload.items():
+            archive.writestr(name, content)
+    return path
+
+
+def test_standalone_b12x_payload_is_bound_to_exact_wheel_bytes(tmp_path: Path) -> None:
+    wheel = make_wheel(tmp_path / "b12x.whl", {"b12x/__init__.py": b"native package"})
+    hashes = ASSEMBLER.register_wheel_payload(wheel, "b12x", {}, {})
+    assert hashes == {"b12x/__init__.py": hashlib.sha256(b"native package").hexdigest()}
+
+
+@pytest.mark.parametrize("path", ["b12x/__init__.py", "flashinfer/b12x/__init__.py"])
+def test_flashinfer_cannot_supply_a_b12x_snapshot(tmp_path: Path, path: str) -> None:
+    wheel = make_wheel(tmp_path / "flashinfer.whl", {path: b"redirected package"})
+    with pytest.raises(ValueError, match="B12X"):
+        ASSEMBLER.register_wheel_payload(wheel, "flashinfer", {}, {})
+
+
+def test_data_scheme_cannot_overwrite_another_wheel(tmp_path: Path) -> None:
+    native = make_wheel(tmp_path / "native.whl", {"shared/module.py": b"a"})
+    alias = make_wheel(
+        tmp_path / "alias.whl", {"alias.data/purelib/shared/module.py": b"b"}
+    )
+    owners = {}
+    ASSEMBLER.register_wheel_payload(native, "native", owners, {})
+    with pytest.raises(ValueError, match="ownership collision"):
+        ASSEMBLER.register_wheel_payload(alias, "alias", owners, {})
+
+
+def test_flashinfer_cannot_register_a_b12x_plugin(tmp_path: Path) -> None:
+    wheel = make_wheel(tmp_path / "flashinfer.whl", {
+        "flashinfer.dist-info/entry_points.txt":
+            b"[vllm.general_plugins]\nb12x_loader = flashinfer.b12x.loader:register\n"
+    })
+    with pytest.raises(ValueError, match="B12X entry point"):
+        ASSEMBLER.register_wheel_payload(wheel, "flashinfer", {}, {})

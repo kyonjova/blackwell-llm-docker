@@ -37,6 +37,8 @@ test "${actual_uv_sha256}" = "${expected_uv_sha256}" \
   --no-index --find-links "${bundle_dir}/wheels" --no-deps --require-hashes \
   -r "${bundle_dir}/requirements-local.txt"
 "${uv_path}" pip check --python "${venv_path}/bin/python"
+install -D -m 0644 "${bundle_dir}/manifest.json" \
+  "${venv_path}/share/lil-runtime/manifest.json"
 install -m 0755 "${bundle_dir}/qwen38_runtime_entrypoint.sh" \
   "${venv_path}/bin/qwen38-runtime"
 

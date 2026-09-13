@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import configparser
 import email.parser
 import hashlib
 import json
@@ -78,6 +79,54 @@ def wheel_metadata(path: Path) -> tuple[str, str]:
 
 def normalized_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def register_wheel_payload(
+    wheel: Path,
+    role: str,
+    files: dict[str, str],
+    entry_points: dict[tuple[str, str], str],
+) -> dict[str, str]:
+    """Reject competing package owners and retain B12X's exact runtime bytes."""
+    b12x_hashes: dict[str, str] = {}
+    with zipfile.ZipFile(wheel) as archive:
+        for name in archive.namelist():
+            if name.endswith("/"):
+                continue
+            parts = PurePosixPath(name).parts
+            if not parts or name.startswith("/") or ".." in parts:
+                raise ValueError(f"unsafe wheel member: {wheel.name}:{name}")
+            installed = name
+            if parts[0].endswith(".data") and len(parts) >= 3:
+                scheme, *payload = parts[1:]
+                installed = "/".join(payload)
+                if scheme not in {"purelib", "platlib"}:
+                    installed = f"@{scheme}/{installed}"
+            if installed in files:
+                raise ValueError(
+                    f"wheel file ownership collision: {installed} in "
+                    f"{files[installed]} and {wheel.name}"
+                )
+            files[installed] = wheel.name
+            if installed.startswith("flashinfer/b12x/"):
+                raise ValueError("runtime requires standalone B12X; FlashInfer embeds B12X")
+            if installed.startswith("b12x/"):
+                if role != "b12x":
+                    raise ValueError(f"{role} wheel claims the B12X import namespace")
+                b12x_hashes[installed] = hashlib.sha256(archive.read(name)).hexdigest()
+            if name.endswith(".dist-info/entry_points.txt"):
+                parser = configparser.ConfigParser(interpolation=None)
+                parser.optionxform = str
+                parser.read_string(archive.read(name).decode())
+                for group in parser.sections():
+                    for command, target in parser.items(group):
+                        key = (group, command)
+                        if key in entry_points:
+                            raise ValueError(f"wheel entry point ownership collision: {key}")
+                        if target.startswith(("b12x.", "flashinfer.b12x.")) and role != "b12x":
+                            raise ValueError(f"{role} wheel claims a B12X entry point: {key}")
+                        entry_points[key] = wheel.name
+    return b12x_hashes
 
 
 def runtime_value(manifest: dict[str, object], key: str) -> str | None:
@@ -253,11 +302,17 @@ def main() -> int:
         )
     seen_packages: set[str] = set()
     seen_files: set[str] = set()
+    installed_files: dict[str, str] = {}
+    entry_point_owners: dict[tuple[str, str], str] = {}
+    b12x_files: dict[str, str] = {}
     for role, bundle in bundles.items():
         wheels = sorted((bundle / "wheels").glob("*.whl"))
         if not wheels:
             raise ValueError(f"component bundle contains no wheels: {bundle}")
         for wheel in wheels:
+            b12x_files.update(
+                register_wheel_payload(wheel, role, installed_files, entry_point_owners)
+            )
             name, version = wheel_metadata(wheel)
             package_key = normalized_name(name)
             if package_key in seen_packages or wheel.name in seen_files:
@@ -276,6 +331,8 @@ def main() -> int:
                 }
             )
 
+    if "b12x/__init__.py" not in b12x_files:
+        raise ValueError("B12X component does not provide its import package")
     packages.sort(key=lambda item: normalized_name(item["name"]))
     requirements = output / "requirements-local.txt"
     requirements.write_text(application_requirements(packages))
@@ -320,6 +377,10 @@ def main() -> int:
         "runtime": {"python": "3.12", "cuda": "13.4.1"},
         "components": component_records,
         "packages": packages,
+        "b12x_package": {
+            "source": manifests["b12x"]["source"],
+            "files": b12x_files,
+        },
     }
     (output / "manifest.json").write_text(
         json.dumps(complete_manifest, indent=2, sort_keys=True) + "\n"
