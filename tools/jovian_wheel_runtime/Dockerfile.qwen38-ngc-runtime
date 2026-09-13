@@ -1,0 +1,35 @@
+# syntax=docker/dockerfile:1.7
+
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.11.30@sha256:173b74e36e4bddd0546771a7041cae9f65b3ad28964eb22a2853bca944b2c67a
+ARG SOURCE_IMAGE=nvcr.io/nvidia/pytorch@sha256:33ef5fc15e8937602d64022209cdb2777b32dadf742f41332023d946041b3c14
+
+FROM ${UV_IMAGE} AS uv
+
+FROM ${SOURCE_IMAGE} AS runtime
+ARG SOURCE_IMAGE
+ARG RUNTIME_SOURCE_COMMIT
+LABEL org.opencontainers.image.title="LIL Qwen3.8 CUDA 13.4 NGC runtime" \
+      org.opencontainers.image.description="Qwen3.8 Flash Next runtime over a patched, immutable NVIDIA PyTorch foundation" \
+      org.opencontainers.image.source="https://github.com/local-inference-lab/blackwell-llm-docker" \
+      org.opencontainers.image.revision="${RUNTIME_SOURCE_COMMIT}" \
+      org.opencontainers.image.base.name="${SOURCE_IMAGE}"
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv,ro \
+    --mount=type=bind,source=.,target=/source,ro \
+    --mount=type=bind,from=qwen-runtime-bundle,source=/,target=/runtime-bundle,ro \
+    --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    python /source/recipes/glm53/install_dependency_python_patches.py \
+      --manifest /source/tools/jovian_wheel_runtime/ngc-python-patches.json \
+ && python /source/tools/jovian_wheel_runtime/install_qwen38_ngc_runtime.py \
+      --bundle /runtime-bundle \
+      --venv /opt/venv \
+      --uv /usr/local/bin/uv \
+      --source-image "${SOURCE_IMAGE}" \
+      --entrypoint /source/tools/jovian_wheel_runtime/qwen38_ngc_runtime_entrypoint.sh \
+      --verifier /source/tools/jovian_wheel_runtime/verify_qwen38_runtime.py \
+ && /opt/venv/bin/qwen38-ngc-runtime /opt/venv/bin/python \
+      /opt/venv/libexec/verify_qwen38_runtime.py \
+      --foundation ngc
+ENV PATH=/opt/venv/bin:${PATH} \
+    VIRTUAL_ENV=/opt/venv
+ENTRYPOINT ["/opt/venv/bin/qwen38-ngc-runtime"]
+CMD ["python", "-m", "vllm.entrypoints.cli.main", "--help"]
