@@ -1,0 +1,95 @@
+{
+  "schema": "local-inference-torch-native-support/v1",
+  "package": {
+    "name": "local-inference-torch-native-support",
+    "version": "26.8.63802676",
+    "torch_version": "2.14.0a0+4fdf77b940.nv26.8.63802676"
+  },
+  "scope": "ELF loader dependencies required by the NVIDIA PyTorch 26.08 wheel for NCCL-based inference",
+  "libraries": [
+    {
+      "soname": "libucp.so.0",
+      "source": "/opt/hpcx/ucx/lib/libucp.so.0",
+      "sha256": "6da8bf0e77691dec54e55a17a83640bd0114aab47bd0acbee78e91bce6198560"
+    },
+    {
+      "soname": "libucs.so.0",
+      "source": "/opt/hpcx/ucx/lib/libucs.so.0",
+      "sha256": "020f13109dc33862acfd2d88e759a83ee8594c30d8eef898eb798247cf221669"
+    },
+    {
+      "soname": "libucm.so.0",
+      "source": "/opt/hpcx/ucx/lib/libucm.so.0",
+      "sha256": "5693064fac0c018d86ab04105064a812e281522ecb442473fb93cae87751956a"
+    },
+    {
+      "soname": "libuct.so.0",
+      "source": "/opt/hpcx/ucx/lib/libuct.so.0",
+      "sha256": "eff4c582ee88454c782c53753fc93027c07849bae42590ade4e3a06329a4468b"
+    },
+    {
+      "soname": "libucc.so.1",
+      "source": "/opt/hpcx/ucc/lib/libucc.so.1",
+      "sha256": "9ba48085825f8ad71950ffc14a78ecadab047fb3043c9a6ad841f84b31ccf476"
+    },
+    {
+      "soname": "libmpi.so.40",
+      "source": "/opt/hpcx/ompi/lib/libmpi.so.40",
+      "sha256": "8e40c81db0ed59b5eda995a058047f1258dcf18417d9e8c292091e1ba5d8be26"
+    },
+    {
+      "soname": "libopen-pal.so.80",
+      "source": "/opt/hpcx/ompi/lib/libopen-pal.so.80",
+      "sha256": "fc07b27c1d9a0db5f41c038c32eb6ef979d0c2cc18a681cdf00930e474922309"
+    },
+    {
+      "soname": "libevent_core-2.1.so.7",
+      "source": "/opt/hpcx/ompi/lib/libevent_core-2.1.so.7",
+      "sha256": "31208938975210cf12385f43955d08f1d61588fc19e5f5489f244e59784fa2f4"
+    },
+    {
+      "soname": "libevent_pthreads-2.1.so.7",
+      "source": "/opt/hpcx/ompi/lib/libevent_pthreads-2.1.so.7",
+      "sha256": "47f9ecb0d479fdade548b9dc9ed1ecc87d41c1c7d9cb1c23df1b668d606fec03"
+    },
+    {
+      "soname": "libhwloc.so.15",
+      "source": "/opt/hpcx/ompi/lib/libhwloc.so.15",
+      "sha256": "8cec3a70443a97b23e99908f7f24e2ba0546a05bbfea89c8834f5b65e1e21a53"
+    },
+    {
+      "soname": "libpmix.so.2",
+      "source": "/opt/hpcx/ompi/lib/libpmix.so.2",
+      "sha256": "d9d9b855a8647eae307ca7fa2e99890d794b12a7c038700117d77faa3bc7179e"
+    },
+    {
+      "soname": "libmkl_intel_lp64.so.1",
+      "source": "/usr/local/lib/libmkl_intel_lp64.so.1",
+      "sha256": "2def4cfcab5ae5998f70645cbd84addda342dd6918b2fdff31e8e11458f4783f"
+    },
+    {
+      "soname": "libmkl_gnu_thread.so.1",
+      "source": "/usr/local/lib/libmkl_gnu_thread.so.1",
+      "sha256": "1e4eb39b1dbe63fc8de2e5503aa46f672163a06bea5f3570bcb5a8cdab25914d"
+    },
+    {
+      "soname": "libmkl_core.so.1",
+      "source": "/usr/local/lib/libmkl_core.so.1",
+      "sha256": "134e3da89c8e77789b6081c6a7c1a1b4d2e1fb9f6633a2ef05a7568d69fb542c"
+    }
+  ],
+  "licenses": [
+    {
+      "name": "HPC-X-VERSION.txt",
+      "source": "/opt/hpcx/VERSION"
+    },
+    {
+      "name": "HPC-X-README.txt",
+      "source": "/opt/hpcx/README.txt"
+    },
+    {
+      "name": "MKL-LICENSE.txt",
+      "source": "/usr/local/lib/python3.12/dist-packages/mkl-2021.1.1.dist-info/LICENSE.txt"
+    }
+  ]
+}

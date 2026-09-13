@@ -1,0 +1,26 @@
+[Unit]
+Description=Repository-scoped GitHub Actions runner for CUDA 13.4 wheels (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=github-flashinfer
+Group=github-flashinfer
+WorkingDirectory=/opt/actions-runner-%i
+Environment=HOME=/var/lib/github-flashinfer
+Environment=DOCKER_HOST=unix:///run/lil-flashinfer-docker/docker.sock
+ExecStartPre=/usr/bin/test -S /run/lil-flashinfer-docker/docker.sock
+ExecStart=/opt/actions-runner-%i/run.sh
+Restart=always
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=5min
+TasksMax=4096
+CPUQuota=200%
+MemoryHigh=3G
+MemoryMax=4G
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

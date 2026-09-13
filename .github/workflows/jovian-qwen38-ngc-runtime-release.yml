@@ -1,0 +1,172 @@
+name: Qwen3.8 CUDA 13.4 NGC container
+
+on:
+  workflow_dispatch:
+    inputs:
+      nccl_release:
+        description: Exact nccl-canonical CUDA 13.4 release tag
+        required: true
+        type: string
+      flashinfer_release:
+        description: Exact FlashInfer CUDA 13.4 SM120 release tag
+        required: true
+        type: string
+      b12x_release:
+        description: Exact B12X CUDA 13.4 release tag
+        required: true
+        type: string
+      vllm_release:
+        description: Exact Jovian Judgement vLLM CUDA 13.4 release tag
+        required: true
+        type: string
+      lmcache_release:
+        description: Exact LMCache CUDA 13.4 release tag
+        required: true
+        type: string
+      instanttensor_release:
+        description: Exact InstantTensor CUDA 13.4 release tag
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: qwen38-jovian-cu134-container
+  cancel-in-progress: false
+
+jobs:
+  build-container:
+    if: github.repository == 'local-inference-lab/blackwell-llm-docker'
+    runs-on: [self-hosted, linux, x64, lil-wheel-builder]
+    # Six hours of shared-worker queueing plus three hours for assembly/publication.
+    timeout-minutes: 540
+    steps:
+      - name: Check out the exact container contract
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download and verify component bundles
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NCCL_RELEASE: ${{ inputs.nccl_release }}
+          FLASHINFER_RELEASE: ${{ inputs.flashinfer_release }}
+          B12X_RELEASE: ${{ inputs.b12x_release }}
+          VLLM_RELEASE: ${{ inputs.vllm_release }}
+          LMCACHE_RELEASE: ${{ inputs.lmcache_release }}
+          INSTANTTENSOR_RELEASE: ${{ inputs.instanttensor_release }}
+        run: |
+          set -euo pipefail
+          downloads="${RUNNER_TEMP}/qwen38-component-downloads"
+          bundles="${RUNNER_TEMP}/qwen38-component-bundles"
+          mkdir -p "${downloads}" "${bundles}"
+          components=(
+            "nccl|local-inference-lab/nccl-canonical|${NCCL_RELEASE}"
+            "flashinfer|local-inference-lab/flashinfer|${FLASHINFER_RELEASE}"
+            "b12x|local-inference-lab/b12x|${B12X_RELEASE}"
+            "vllm|local-inference-lab/vllm|${VLLM_RELEASE}"
+            "lmcache|local-inference-lab/LMCache|${LMCACHE_RELEASE}"
+            "instanttensor|local-inference-lab/InstantTensor|${INSTANTTENSOR_RELEASE}"
+          )
+          for component in "${components[@]}"; do
+            IFS='|' read -r role repository release_tag <<<"${component}"
+            download="${downloads}/${role}"
+            bundle="${bundles}/${role}"
+            mkdir -p "${download}" "${bundle}"
+            gh release download "${release_tag}" \
+              --repo "${repository}" \
+              --pattern '*.tar.zst' \
+              --pattern '*.tar.zst.sha256' \
+              --dir "${download}"
+            archive=$(find "${download}" -maxdepth 1 -name '*.tar.zst' -print)
+            checksum=$(find "${download}" -maxdepth 1 -name '*.tar.zst.sha256' -print)
+            test "$(wc -l <<<"${archive}")" -eq 1
+            test "$(wc -l <<<"${checksum}")" -eq 1
+            (cd "${download}" && sha256sum --check "$(basename "${checksum}")")
+            tar --zstd -xf "${archive}" -C "${bundle}"
+          done
+
+      - name: Assemble the source-locked application bundle
+        run: |
+          set -euo pipefail
+          python3 tools/jovian_wheel_runtime/assemble_qwen38_runtime_bundle.py \
+            --output "${RUNNER_TEMP}/qwen38-runtime-bundle" \
+            --qwen-lock tools/jovian_wheel_runtime/qwen38-runtime.lock \
+            --ngc-foundation-lock tools/jovian_wheel_runtime/foundation.lock \
+            --nccl-bundle "${RUNNER_TEMP}/qwen38-component-bundles/nccl" \
+            --flashinfer-bundle "${RUNNER_TEMP}/qwen38-component-bundles/flashinfer" \
+            --b12x-bundle "${RUNNER_TEMP}/qwen38-component-bundles/b12x" \
+            --vllm-bundle "${RUNNER_TEMP}/qwen38-component-bundles/vllm" \
+            --lmcache-bundle "${RUNNER_TEMP}/qwen38-component-bundles/lmcache" \
+            --instanttensor-bundle "${RUNNER_TEMP}/qwen38-component-bundles/instanttensor"
+
+      - name: Build and verify the NGC container
+        env:
+          BUILDX_BUILDER: lil-wheel-cu134-sm120
+        run: |
+          set -euo pipefail
+          bundle="${RUNNER_TEMP}/qwen38-runtime-bundle"
+          bundle_sha=$(sha256sum "${bundle}/manifest.json" | awk '{print $1}')
+          image="ghcr.io/local-inference-lab/qwen38-jovian-cu134:${GITHUB_SHA}-${bundle_sha:0:12}"
+          tools/jovian_wheel_runtime/run_serialized_build.sh \
+            tools/jovian_wheel_runtime/build_qwen38_ngc_runtime_image.sh \
+            "${bundle}" "${image}"
+          source_image=$(awk -F= '$1 == "source.image" {sub(/^[^=]*=/, ""); print}' \
+            tools/jovian_wheel_runtime/foundation.lock)
+          base_layers=$(docker image inspect "${source_image}" --format '{{json .RootFS.Layers}}')
+          image_layers=$(docker image inspect "${image}" --format '{{json .RootFS.Layers}}')
+          jq -en --argjson base "${base_layers}" --argjson image "${image_layers}" \
+            '($base | length) == 67 and ($image | length) == 68 and
+             $image[0:($base | length)] == $base' >/dev/null
+          printf '%s\n' "${image}" > "${RUNNER_TEMP}/qwen38-container-image.txt"
+
+      - name: Push the immutable image and publish its receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bundle="${RUNNER_TEMP}/qwen38-runtime-bundle"
+          image=$(cat "${RUNNER_TEMP}/qwen38-container-image.txt")
+          printf '%s' "${GH_TOKEN}" | docker login ghcr.io \
+            --username "${GITHUB_ACTOR}" --password-stdin
+          docker push "${image}"
+          digest=$(docker image inspect "${image}" --format '{{index .RepoDigests 0}}')
+          bundle_sha=$(sha256sum "${bundle}/manifest.json" | awk '{print $1}')
+          release_tag="qwen38-jovian-cu134-beta-${GITHUB_SHA}-${bundle_sha:0:12}"
+          jq -n \
+            --arg schema local-inference-qwen38-container-release/v1 \
+            --arg status gpu-qualification-required \
+            --arg image "${image}" \
+            --arg digest "${digest}" \
+            --arg source_commit "${GITHUB_SHA}" \
+            --arg bundle_sha256 "${bundle_sha}" \
+            --arg nccl_release "${{ inputs.nccl_release }}" \
+            --arg flashinfer_release "${{ inputs.flashinfer_release }}" \
+            --arg b12x_release "${{ inputs.b12x_release }}" \
+            --arg vllm_release "${{ inputs.vllm_release }}" \
+            --arg lmcache_release "${{ inputs.lmcache_release }}" \
+            --arg instanttensor_release "${{ inputs.instanttensor_release }}" \
+            '{schema: $schema, status: $status, image: $image, digest: $digest,
+              source_commit: $source_commit, bundle_manifest_sha256: $bundle_sha256,
+              components: {nccl: $nccl_release, flashinfer: $flashinfer_release,
+                b12x: $b12x_release, vllm: $vllm_release,
+                lmcache: $lmcache_release, instanttensor: $instanttensor_release},
+              layers: {foundation: 67, application: 1, total: 68}}' \
+            > container-release.json
+          if gh release view "${release_tag}" >/dev/null 2>&1; then
+            mkdir existing-release
+            gh release download "${release_tag}" \
+              --pattern container-release.json --dir existing-release
+            cmp container-release.json existing-release/container-release.json
+            exit 0
+          fi
+          gh release create "${release_tag}" \
+            --target "${GITHUB_SHA}" \
+            --prerelease \
+            --title "Qwen3.8 Jovian CUDA 13.4 container ${bundle_sha:0:12}" \
+            --notes "GPU qualification is required before stable promotion." \
+            container-release.json "${bundle}/manifest.json" \
+            "${bundle}/SHA256SUMS"

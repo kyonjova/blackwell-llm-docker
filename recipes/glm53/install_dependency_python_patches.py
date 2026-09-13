@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import subprocess
@@ -54,5 +55,23 @@ def install(manifest: Path, root: Path = Path("/")) -> None:
                 cached.unlink()
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=Path(__file__).with_name("dependency-python-patches.json"),
+        help="patch manifest; patch paths are resolved relative to the manifest file",
+    )
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=Path("/"),
+        help="filesystem root containing the dependency files",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    install(Path(__file__).with_name("dependency-python-patches.json"))
+    arguments = parse_args()
+    install(arguments.manifest, arguments.root)
