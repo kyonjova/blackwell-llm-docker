@@ -33,7 +33,7 @@ if ! mkdir "${output_dir}"; then
 fi
 mkdir -p "${output_dir}/bundle/wheels"
 
-builder=${BUILDX_BUILDER:-default}
+builder=${BUILDX_BUILDER:-$(value buildx.builder)}
 docker buildx build \
   --builder "${builder}" \
   --file "${tool_dir}/Dockerfile" \
