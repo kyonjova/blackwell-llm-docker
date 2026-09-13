@@ -5,7 +5,16 @@ set -euo pipefail
 bundle_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 venv_path=${1:?Pass a destination venv path that does not exist}
 uv_binary=${UV_BIN:-uv}
+native_verify=${QWEN38_NATIVE_VERIFY:-required}
 export UV_NO_CONFIG=1
+
+case "${native_verify}" in
+  required|deferred) ;;
+  *)
+    printf 'QWEN38_NATIVE_VERIFY must be required or deferred.\n' >&2
+    exit 2
+    ;;
+esac
 
 test ! -e "${venv_path}"
 uv_path=$(command -v "${uv_binary}")
@@ -29,8 +38,10 @@ test "${actual_uv_sha256}" = "${expected_uv_sha256}" \
   -r "${bundle_dir}/requirements-local.txt"
 "${uv_path}" pip check --python "${venv_path}/bin/python"
 
-nccl_so=$("${venv_path}/bin/local-inference-nccl-path")
-env LD_PRELOAD="${nccl_so}" VLLM_NCCL_SO_PATH="${nccl_so}" \
-  "${venv_path}/bin/python" "${bundle_dir}/verify_qwen38_runtime.py"
-printf 'qwen38_runtime=%s status=installed gpu_qualification=required\n' \
-  "$(realpath "${venv_path}")"
+if [[ ${native_verify} == required ]]; then
+  nccl_so=$("${venv_path}/bin/local-inference-nccl-path")
+  env LD_PRELOAD="${nccl_so}" VLLM_NCCL_SO_PATH="${nccl_so}" \
+    "${venv_path}/bin/python" "${bundle_dir}/verify_qwen38_runtime.py"
+fi
+printf 'qwen38_runtime=%s status=installed native_verification=%s gpu_qualification=required\n' \
+  "$(realpath "${venv_path}")" "${native_verify}"

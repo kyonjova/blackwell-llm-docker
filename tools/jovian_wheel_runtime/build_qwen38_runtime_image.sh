@@ -29,3 +29,8 @@ docker buildx build \
 
 docker image inspect "${image}" \
   --format 'image={{.Id}} layers={{len .RootFS.Layers}} size={{.Size}}'
+
+if [[ -n ${RUNTIME_GPU:-} ]]; then
+  docker run --rm --gpus "device=${RUNTIME_GPU}" \
+    "${image}" python /usr/local/libexec/verify_qwen38_runtime.py --require-gpu
+fi

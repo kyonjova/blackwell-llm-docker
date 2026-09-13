@@ -23,7 +23,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 FROM runtime-base AS install
 COPY --from=uv /uv /usr/local/bin/uv
 COPY --from=qwen-runtime-bundle / /opt/local-inference/qwen38-runtime/
-RUN UV_BIN=/usr/local/bin/uv \
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    QWEN38_NATIVE_VERIFY=deferred UV_BIN=/usr/local/bin/uv \
     /opt/local-inference/qwen38-runtime/install_qwen38_runtime.sh \
       /opt/local-inference/venvs/qwen38-cu134
 
@@ -37,6 +38,8 @@ COPY --from=install /opt/local-inference/venvs/qwen38-cu134 \
   /opt/local-inference/venvs/qwen38-cu134
 COPY tools/jovian_wheel_runtime/qwen38_runtime_entrypoint.sh \
   /usr/local/bin/qwen38-runtime
+COPY tools/jovian_wheel_runtime/verify_qwen38_runtime.py \
+  /usr/local/libexec/verify_qwen38_runtime.py
 ENV PATH=/opt/local-inference/venvs/qwen38-cu134/bin:${PATH} \
     VIRTUAL_ENV=/opt/local-inference/venvs/qwen38-cu134
 ENTRYPOINT ["/usr/local/bin/qwen38-runtime"]
