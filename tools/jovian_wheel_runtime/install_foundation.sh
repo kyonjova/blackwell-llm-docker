@@ -38,7 +38,10 @@ import ctypes
 import importlib.metadata
 import torch
 
-assert torch.__version__ == "2.14.0a0+4fdf77b940.nv26.8.63802676"
+assert importlib.metadata.version("torch") == (
+    "2.14.0a0+4fdf77b940.nv26.8.63802676"
+)
+assert torch.__version__ == "2.14.0a0+4fdf77b940.nv26.08"
 assert torch.version.cuda == "13.4"
 assert torch._C._GLIBCXX_USE_CXX11_ABI
 ctypes.CDLL("libmpi.so.40")

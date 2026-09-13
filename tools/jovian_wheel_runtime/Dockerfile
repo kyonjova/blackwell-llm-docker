@@ -50,10 +50,16 @@ installed = {
 }
 for package in manifest["packages"]:
     name = package["name"].lower().replace("_", "-")
-    assert installed[name] == package["version"]
+    assert name in installed, (name, installed)
+    assert installed[name] == package["version"], (
+        name,
+        installed[name],
+        package["version"],
+    )
 for module in ("torch", "torchvision", "triton", "triton_kernels", "flash_attn"):
     imported = importlib.import_module(module)
-    assert Path(imported.__file__).resolve().is_relative_to(root)
+    imported_path = Path(imported.__file__).resolve()
+    assert imported_path.is_relative_to(root), (module, imported_path, root)
 print("Installed-distribution wheel repack: PASS")
 PY
 
