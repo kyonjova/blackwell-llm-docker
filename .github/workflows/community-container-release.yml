@@ -1,0 +1,85 @@
+name: Community wheel-built Docker beta
+
+on:
+  schedule:
+    - cron: '3-58/5 * * * *'
+  push:
+    branches: [main, ci/jovian-cu134-wheel-runtime-20260913]
+    paths:
+      - .github/workflows/community-container-release.yml
+      - tools/jovian_wheel_runtime/**
+      - recipes/glm53/torch-schema-enumeration.patch
+      - recipes/glm53/install_dependency_python_patches.py
+  repository_dispatch:
+    types: [component-wheel-published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: community-wheel-built-container
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    if: github.repository == 'local-inference-lab/blackwell-llm-docker'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      build: ${{ steps.resolve.outputs.build }}
+      assembly: ${{ steps.resolve.outputs.assembly }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Resolve complete wheels and skip published assemblies
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          assembly="${RUNNER_TEMP}/community-assembly.json"
+          python3 tools/jovian_wheel_runtime/container_channel.py resolve \
+            --config tools/jovian_wheel_runtime/community-channel.json --output "${assembly}"
+          if [[ ! -f "${assembly}" ]]; then
+            echo 'build=false' >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          release_tag=$(jq -r .release_tag "${assembly}")
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            --jq '.[].tag_name' > "${RUNNER_TEMP}/published-tags.txt"
+          if grep -Fxq "${release_tag}" "${RUNNER_TEMP}/published-tags.txt"; then
+            echo 'build=false' >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          echo 'build=true' >> "${GITHUB_OUTPUT}"
+          printf 'assembly=%s\n' "$(base64 -w0 "${assembly}")" >> "${GITHUB_OUTPUT}"
+
+  build:
+    needs: resolve
+    if: needs.resolve.outputs.build == 'true'
+    runs-on: [self-hosted, linux, x64, lil-wheel-builder]
+    timeout-minutes: 540
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Build, validate and publish the resolved beta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSEMBLY_BASE64: ${{ needs.resolve.outputs.assembly }}
+          QUALIFICATION_GPU: ${{ vars.LIL_RUNTIME_QUALIFICATION_GPU }}
+        run: |
+          set -euo pipefail
+          test -n "${QUALIFICATION_GPU}"
+          assembly="${RUNNER_TEMP}/community-assembly.json"
+          printf '%s' "${ASSEMBLY_BASE64}" | base64 -d > "${assembly}"
+          python3 tools/jovian_wheel_runtime/publish_container_channel.py \
+            --assembly "${assembly}" \
+            --output "${RUNNER_TEMP}/community-build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --gpu "${QUALIFICATION_GPU}"
