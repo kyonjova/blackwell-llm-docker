@@ -68,3 +68,19 @@ def test_read_lock_rejects_duplicate_keys(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="duplicate foundation lock key"):
         ASSEMBLER.read_lock(lock)
+
+
+def test_application_requirements_omit_ngc_foundation() -> None:
+    packages = [
+        {"component": "foundation", "name": "torch", "version": "2.14"},
+        {
+            "component": "vllm",
+            "name": "vllm",
+            "version": "0.1.dev1",
+            "sha256": "1" * 64,
+        },
+    ]
+
+    assert ASSEMBLER.application_requirements(packages) == (
+        f"vllm==0.1.dev1 --hash=sha256:{'1' * 64}\n"
+    )

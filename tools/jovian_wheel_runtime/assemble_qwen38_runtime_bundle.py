@@ -31,6 +31,7 @@ NGC_FOUNDATION_PACKAGES = {
     "triton-kernels": "triton-kernels.version",
     "flash-attn": "flash-attn.version",
 }
+FOUNDATION_COMPONENT = "foundation"
 
 
 def sha256(path: Path) -> str:
@@ -126,6 +127,14 @@ def ngc_foundation_manifest(path: Path) -> dict[str, object]:
             for name, key in NGC_FOUNDATION_PACKAGES.items()
         ],
     }
+
+
+def application_requirements(packages: list[dict[str, str]]) -> str:
+    return "".join(
+        f"{item['name']}=={item['version']} --hash=sha256:{item['sha256']}\n"
+        for item in packages
+        if item["component"] != FOUNDATION_COMPONENT
+    )
 
 
 def validate_compatibility(manifests: dict[str, dict[str, object]]) -> None:
@@ -269,12 +278,7 @@ def main() -> int:
 
     packages.sort(key=lambda item: normalized_name(item["name"]))
     requirements = output / "requirements-local.txt"
-    requirements.write_text(
-        "".join(
-            f"{item['name']}=={item['version']} --hash=sha256:{item['sha256']}\n"
-            for item in packages
-        )
-    )
+    requirements.write_text(application_requirements(packages))
     foundation_bundle = bundles.get("foundation")
     if foundation_bundle is not None:
         shutil.copyfile(
