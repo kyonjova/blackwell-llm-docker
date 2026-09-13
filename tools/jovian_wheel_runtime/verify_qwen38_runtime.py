@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.metadata
+import importlib.util
 import os
 import sys
 from pathlib import Path
@@ -50,6 +51,11 @@ def main() -> int:
         default="wheel",
         help="location of the source-locked PyTorch and CUDA foundation",
     )
+    parser.add_argument(
+        "--defer-native-imports",
+        action="store_true",
+        help="verify native extension presence without loading the absent build-time driver",
+    )
     args = parser.parse_args()
 
     for package, expected in EXPECTED_VERSIONS.items():
@@ -61,16 +67,23 @@ def main() -> int:
     import flashinfer  # noqa: F401
     import flashinfer_jit_cache  # noqa: F401
     import lmcache  # noqa: F401
-    import lmcache.cuda_ops  # noqa: F401
     import modelopt  # noqa: F401
     import torch
     import uvloop  # noqa: F401
     import vllm  # noqa: F401
-    # CUDA operators use vLLM's stable LibTorch ABI extensions.  The legacy
-    # vllm._C module is a ROCm/CPU compatibility target and is intentionally
-    # absent from the CUDA wheel.
-    import vllm._C_stable_libtorch  # noqa: F401
-    import vllm._moe_C_stable_libtorch  # noqa: F401
+    native_modules = (
+        "lmcache.cuda_ops",
+        "vllm._C_stable_libtorch",
+        "vllm._moe_C_stable_libtorch",
+    )
+    if args.defer_native_imports:
+        for module in native_modules:
+            specification = importlib.util.find_spec(module)
+            if specification is None or not specification.origin:
+                raise RuntimeError(f"native module is absent: {module}")
+    else:
+        for module in native_modules:
+            __import__(module)
     import xgrammar  # noqa: F401
     from instanttensor import safe_open  # noqa: F401
 
@@ -123,7 +136,12 @@ def main() -> int:
         torch.cuda.synchronize()
         if not torch.isfinite(product).all().item():
             raise RuntimeError("GPU matrix multiplication produced non-finite values")
-    print("qwen38_runtime=PASS" + (" gpu=PASS" if args.require_gpu else ""))
+    status = "qwen38_runtime=PASS"
+    if args.defer_native_imports:
+        status += " native_imports=deferred"
+    if args.require_gpu:
+        status += " gpu=PASS"
+    print(status)
     return 0
 
 

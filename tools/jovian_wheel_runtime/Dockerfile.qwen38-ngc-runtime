@@ -33,7 +33,8 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv,ro \
       /source/tools/jovian_wheel_runtime/verify_installed_requirements.py \
  && /opt/venv/bin/qwen38-ngc-runtime /opt/venv/bin/python \
       /opt/venv/libexec/verify_qwen38_runtime.py \
-      --foundation ngc
+      --foundation ngc \
+      --defer-native-imports
 ENV PATH=/opt/venv/bin:${PATH} \
     VIRTUAL_ENV=/opt/venv
 ENTRYPOINT ["/opt/venv/bin/qwen38-ngc-runtime"]
