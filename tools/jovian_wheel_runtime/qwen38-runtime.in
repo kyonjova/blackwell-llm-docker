@@ -164,6 +164,7 @@ typer==0.27.1
 typing-inspection==0.4.2
 urllib3==2.7.0
 uvicorn==0.52.4
+uvloop==0.22.1
 vcs-versioning==2.3.1
 watchfiles==1.2.0
 xgrammar==0.2.6

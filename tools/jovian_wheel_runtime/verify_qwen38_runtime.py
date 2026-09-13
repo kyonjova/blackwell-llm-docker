@@ -37,6 +37,7 @@ def main() -> int:
     import lmcache.cuda_ops  # noqa: F401
     import modelopt  # noqa: F401
     import torch
+    import uvloop  # noqa: F401
     import vllm  # noqa: F401
     # CUDA operators use vLLM's stable LibTorch ABI extensions.  The legacy
     # vllm._C module is a ROCm/CPU compatibility target and is intentionally
