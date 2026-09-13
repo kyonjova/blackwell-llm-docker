@@ -31,7 +31,7 @@ def write_release(directory: Path, promotion: bool = False) -> None:
     }
     (directory / "manifest.json").write_text(json.dumps(manifest))
     fixed = {
-        "cuda-runtime.lock",
+        "foundation-runtime.lock",
         "foundation.lock",
         "install_foundation.sh",
         "repack-provenance.json",

@@ -58,7 +58,7 @@ jobs:
             --title "Jovian CUDA 13.4 wheel foundation beta ${GITHUB_SHA:0:12}" \
             --notes "Research-only Python foundation for the declared CUDA 13.4 serving ABI." \
             "${output}"/bundle/wheels/*.whl \
-            "${output}"/bundle/cuda-runtime.lock \
+            "${output}"/bundle/foundation-runtime.lock \
             "${output}"/bundle/foundation.lock \
             "${output}"/bundle/install_foundation.sh \
             "${output}"/bundle/manifest.json \

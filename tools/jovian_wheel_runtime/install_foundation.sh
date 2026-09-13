@@ -24,7 +24,7 @@ test "$(sha256sum "${uv_path}" | awk '{print $1}')" = "${expected_uv_sha256}"
 "${uv_path}" pip install \
   --python "${venv_path}/bin/python" \
   --require-hashes \
-  -r "${bundle_dir}/cuda-runtime.lock"
+  -r "${bundle_dir}/foundation-runtime.lock"
 "${uv_path}" pip install \
   --python "${venv_path}/bin/python" \
   --require-hashes \

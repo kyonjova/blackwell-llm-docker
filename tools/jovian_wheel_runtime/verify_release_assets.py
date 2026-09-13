@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 FIXED_CHECKSUMMED_ASSETS = {
-    "cuda-runtime.lock",
+    "foundation-runtime.lock",
     "foundation.lock",
     "install_foundation.sh",
     "manifest.json",

@@ -40,9 +40,11 @@ hash-locked loader closure in `torch/lib`. Its supported purpose is importing
 PyTorch and running NCCL-based inference. MPI and UCC collective execution is
 unsupported.
 
-CUDA userspace and developer components come from the official NVIDIA Python
-wheels listed in `tools/jovian_wheel_runtime/cuda-runtime.lock`. The lock
-includes CUDA Runtime, NVCC, NVRTC, nvJitLink, cuBLAS, cuSPARSE, cuSOLVER,
+Python dependencies declared by the repacked wheels and CUDA userspace and
+developer components come from the packages listed in
+`tools/jovian_wheel_runtime/foundation-runtime.lock`. Versions of the Python
+packages match the immutable NGC source image. The lock includes CUDA Runtime,
+NVCC, NVRTC, nvJitLink, cuBLAS, cuSPARSE, cuSOLVER,
 cuFFT, cuRAND, cuFile, CUPTI, NVTX, cuDNN 9.26, cuSPARSELt, and NVSHMEM. The
 host provides only an NVIDIA driver. CUDA 13.x minor-version compatibility
 requires R580 or newer. CUDA 13.4-specific features require R615 or newer.

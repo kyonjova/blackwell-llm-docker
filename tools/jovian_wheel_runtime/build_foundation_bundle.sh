@@ -164,14 +164,14 @@ jq -n \
     }
   }' > "${output_dir}/bundle/manifest.json"
 
-cp "${lock_path}" "${tool_dir}/cuda-runtime.lock" \
+cp "${lock_path}" "${tool_dir}/foundation-runtime.lock" \
   "${tool_dir}/install_foundation.sh" \
   "${output_dir}/bundle/"
 chmod 0755 "${output_dir}/bundle/install_foundation.sh"
 (
   cd "${output_dir}/bundle"
   find wheels -type f -print0 | sort -z | xargs -0 sha256sum
-  sha256sum cuda-runtime.lock foundation.lock install_foundation.sh \
+  sha256sum foundation-runtime.lock foundation.lock install_foundation.sh \
     manifest.json repack-provenance.json requirements-foundation.txt \
     requirements-github.txt torch-native-support-provenance.json
 ) > "${output_dir}/bundle/SHA256SUMS"
