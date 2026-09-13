@@ -1122,6 +1122,10 @@ grpcio==1.83.1 \
     --hash=sha256:e844cdb25c3c93c7572e0a37137c12305efea493be4eb65801b3ee93f180c186 \
     --hash=sha256:f732feb060ef57c1a040c24cee072ba9fab99bd0a7d2c916ef3f1c4d84b98974
     # via -r tools/jovian_wheel_runtime/qwen38-runtime.in
+grpcio-status==1.83.1 \
+    --hash=sha256:2cd328ee62ef2b3eb957dd3b75db7dadcdbb76488fdc9ab3aba1ebfbbdc324a4 \
+    --hash=sha256:c08c8d553d6ab96effae1d923839de22926f5a316a942f48a48040e047c517af
+    # via -r tools/jovian_wheel_runtime/qwen38-runtime.in
 h11==0.16.0 \
     --hash=sha256:4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1 \
     --hash=sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86
@@ -2437,6 +2441,10 @@ pybase64==1.5.0 \
     --hash=sha256:fb5dc922ce3cb4211caa7e29e6daee98f319e59f297a904acd74f2fdd0674356 \
     --hash=sha256:fbf8e901a9caf045062b7a1a8f7db056c492a5a76a0c612714ed7abb5ad42f7a \
     --hash=sha256:fe57aab650c771802cc7b0eb541a74b6a181cd1870f61c537294ab462fec34e8
+    # via -r tools/jovian_wheel_runtime/qwen38-runtime.in
+pycountry==26.2.16 \
+    --hash=sha256:115c4baf7cceaa30f59a4694d79483c9167dbce7a9de4d3d571c5f3ea77c305a \
+    --hash=sha256:5b6027d453fcd6060112b951dd010f01f168b51b4bf8a1f1fc8c95c8d94a0801
     # via -r tools/jovian_wheel_runtime/qwen38-runtime.in
 pycparser==3.0 \
     --hash=sha256:600f49d217304a5902ac3c37e1281c9fe94e4d0489de643a9504c5cdfdfc6b29 \
