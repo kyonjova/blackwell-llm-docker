@@ -143,11 +143,16 @@ identifier to execute the GPU verifier after the image is loaded.
 
 Status: **implemented**
 
-`assemble_qwen38_runtime_bundle.py` combines seven independently verified
-component bundles: the CUDA foundation, NCCL, FlashInfer, B12X, vLLM, LMCache,
-and InstantTensor. It rejects incompatible Python, CUDA, PyTorch, builder-image,
-manifest-schema, or SHA-256 contracts. The resulting directory contains every
-custom wheel plus two hash-locked public dependency manifests.
+`assemble_qwen38_runtime_bundle.py` combines independently verified NCCL,
+FlashInfer, B12X, vLLM, LMCache, and InstantTensor bundles. For the supported
+container deployment, `--ngc-foundation-lock` binds the application bundle to
+the immutable NGC image without copying or repackaging the PyTorch foundation
+as wheels. The assembler rejects incompatible Python, CUDA, PyTorch,
+builder-image, manifest-schema, or SHA-256 contracts.
+
+The alternative `--foundation-bundle` input includes a repackaged Python and
+CUDA foundation for direct-host research. It is not required to build the NGC
+container.
 
 Direct-host installation of the assembled directory remains research-only. It
 requires repackaging the patched NVIDIA PyTorch foundation and validating every

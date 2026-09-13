@@ -24,6 +24,14 @@ EXPECTED_SCHEMAS = {
     "instanttensor": "local-inference-instanttensor-wheel-release/v1",
 }
 
+NGC_FOUNDATION_PACKAGES = {
+    "torch": "pytorch.version",
+    "torchvision": "torchvision.version",
+    "triton": "triton.version",
+    "triton-kernels": "triton-kernels.version",
+    "flash-attn": "flash-attn.version",
+}
+
 
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -79,6 +87,47 @@ def runtime_value(manifest: dict[str, object], key: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def read_lock(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in path.read_text().splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        key, separator, value = stripped.partition("=")
+        if not separator or not key or not value:
+            raise ValueError(f"invalid foundation lock entry: {line!r}")
+        if key in values:
+            raise ValueError(f"duplicate foundation lock key: {key}")
+        values[key] = value
+    return values
+
+
+def ngc_foundation_manifest(path: Path) -> dict[str, object]:
+    values = read_lock(path)
+    required = {
+        "source.image",
+        "python.version",
+        "cuda.version",
+        *NGC_FOUNDATION_PACKAGES.values(),
+    }
+    missing = sorted(required - values.keys())
+    if missing:
+        raise ValueError(f"foundation lock is missing keys: {', '.join(missing)}")
+    return {
+        "schema": EXPECTED_SCHEMAS["foundation"],
+        "status": "implemented",
+        "source": {"image": values["source.image"]},
+        "runtime": {
+            "python": values["python.version"],
+            "cuda": values["cuda.version"],
+        },
+        "packages": [
+            {"name": name, "version": values[key]}
+            for name, key in NGC_FOUNDATION_PACKAGES.items()
+        ],
+    }
+
+
 def validate_compatibility(manifests: dict[str, dict[str, object]]) -> None:
     foundation = manifests["foundation"]
     foundation_runtime = foundation.get("runtime")
@@ -124,7 +173,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--qwen-lock", required=True, type=Path)
+    foundation = parser.add_mutually_exclusive_group(required=True)
+    foundation.add_argument("--foundation-bundle", type=Path)
+    foundation.add_argument("--ngc-foundation-lock", type=Path)
     for role in EXPECTED_SCHEMAS:
+        if role == "foundation":
+            continue
         parser.add_argument(f"--{role}-bundle", required=True, type=Path)
     return parser.parse_args()
 
@@ -139,10 +193,33 @@ def main() -> int:
         raise ValueError(f"Qwen dependency lock does not exist: {qwen_lock}")
 
     bundles = {
-        role: getattr(args, f"{role}_bundle").resolve() for role in EXPECTED_SCHEMAS
+        role: getattr(args, f"{role}_bundle").resolve()
+        for role in EXPECTED_SCHEMAS
+        if role != "foundation"
     }
     manifests: dict[str, dict[str, object]] = {}
+    foundation_lock: Path | None = None
+    if args.foundation_bundle is not None:
+        foundation_bundle = args.foundation_bundle.resolve()
+        verify_checksums(foundation_bundle)
+        foundation_manifest = json.loads(
+            (foundation_bundle / "manifest.json").read_text()
+        )
+        bundles["foundation"] = foundation_bundle
+    else:
+        foundation_lock = args.ngc_foundation_lock.resolve()
+        if not foundation_lock.is_file():
+            raise ValueError(f"NGC foundation lock does not exist: {foundation_lock}")
+        foundation_manifest = ngc_foundation_manifest(foundation_lock)
+    if foundation_manifest.get("schema") != EXPECTED_SCHEMAS["foundation"]:
+        raise ValueError(
+            "unexpected foundation manifest schema: "
+            f"{foundation_manifest.get('schema')}"
+        )
+    manifests["foundation"] = foundation_manifest
     for role, bundle in bundles.items():
+        if role == "foundation":
+            continue
         verify_checksums(bundle)
         manifest = json.loads((bundle / "manifest.json").read_text())
         if manifest.get("schema") != EXPECTED_SCHEMAS[role]:
@@ -153,6 +230,18 @@ def main() -> int:
     wheel_dir = output / "wheels"
     wheel_dir.mkdir(parents=True)
     packages: list[dict[str, str]] = []
+    if foundation_lock is not None:
+        foundation_packages = foundation_manifest["packages"]
+        assert isinstance(foundation_packages, list)
+        packages.extend(
+            {
+                "component": "foundation",
+                "name": str(package["name"]),
+                "version": str(package["version"]),
+            }
+            for package in foundation_packages
+            if isinstance(package, dict)
+        )
     seen_packages: set[str] = set()
     seen_files: set[str] = set()
     for role, bundle in bundles.items():
@@ -186,9 +275,18 @@ def main() -> int:
             for item in packages
         )
     )
-    foundation_bundle = bundles["foundation"]
-    shutil.copyfile(foundation_bundle / "foundation-runtime.lock", output / "foundation-runtime.lock")
-    shutil.copyfile(foundation_bundle / "foundation.lock", output / "foundation.lock")
+    foundation_bundle = bundles.get("foundation")
+    if foundation_bundle is not None:
+        shutil.copyfile(
+            foundation_bundle / "foundation-runtime.lock",
+            output / "foundation-runtime.lock",
+        )
+        shutil.copyfile(
+            foundation_bundle / "foundation.lock", output / "foundation.lock"
+        )
+    else:
+        assert foundation_lock is not None
+        shutil.copyfile(foundation_lock, output / "foundation.lock")
     shutil.copyfile(qwen_lock, output / "qwen38-runtime.lock")
     tool_dir = Path(__file__).resolve().parent
     for name in (
@@ -201,10 +299,16 @@ def main() -> int:
 
     component_records: dict[str, object] = {}
     for role, manifest in manifests.items():
-        component_records[role] = {
-            "manifest_sha256": sha256(bundles[role] / "manifest.json"),
-            "source": manifest.get("source"),
-        }
+        if role == "foundation" and foundation_lock is not None:
+            component_records[role] = {
+                "contract_sha256": sha256(foundation_lock),
+                "source": manifest.get("source"),
+            }
+        else:
+            component_records[role] = {
+                "manifest_sha256": sha256(bundles[role] / "manifest.json"),
+                "source": manifest.get("source"),
+            }
     complete_manifest = {
         "schema": "local-inference-qwen38-cu134-runtime/v1",
         "status": "research-only",
