@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import importlib.metadata
 import sys
+from collections.abc import Iterable
+from pathlib import Path
 
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
@@ -22,9 +24,20 @@ def selected_distributions() -> dict[str, importlib.metadata.Distribution]:
 
 def dependency_errors(
     selected: dict[str, importlib.metadata.Distribution],
+    roots: Iterable[str] | None = None,
 ) -> list[str]:
     errors: list[str] = []
-    for package_name, distribution in sorted(selected.items()):
+    pending = list(selected if roots is None else roots)
+    checked: set[str] = set()
+    while pending:
+        package_name = canonicalize_name(pending.pop())
+        if package_name in checked:
+            continue
+        checked.add(package_name)
+        distribution = selected.get(package_name)
+        if distribution is None:
+            errors.append(f"runtime root {package_name} is not installed")
+            continue
         for raw_requirement in distribution.requires or ():
             try:
                 requirement = Requirement(raw_requirement)
@@ -45,12 +58,23 @@ def dependency_errors(
                     f"{package_name} requires {requirement}, but {dependency_name} "
                     f"{dependency.version} is selected"
                 )
+                continue
+            pending.append(dependency_name)
     return errors
 
 
 def main() -> int:
     selected = selected_distributions()
-    errors = dependency_errors(selected)
+    runtime_prefix = Path(sys.prefix).resolve()
+    roots = {
+        name
+        for name, distribution in selected.items()
+        if Path(distribution.locate_file("")).resolve().is_relative_to(runtime_prefix)
+    }
+    if not roots:
+        print(f"no distributions are installed under runtime prefix {runtime_prefix}", file=sys.stderr)
+        return 1
+    errors = dependency_errors(selected, roots)
     if errors:
         for error in errors:
             print(error, file=sys.stderr)
@@ -59,7 +83,10 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    print(f"runtime_dependency_closure=PASS distributions={len(selected)}")
+    print(
+        f"runtime_dependency_closure=PASS roots={len(roots)} "
+        f"visible_distributions={len(selected)}"
+    )
     return 0
 
 

@@ -24,6 +24,7 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv,ro \
       --venv /opt/venv \
       --uv /usr/local/bin/uv \
       --source-image "${SOURCE_IMAGE}" \
+      --overlay-lock /source/tools/jovian_wheel_runtime/ngc-runtime-overlay.lock \
       --entrypoint /source/tools/jovian_wheel_runtime/qwen38_ngc_runtime_entrypoint.sh \
       --verifier /source/tools/jovian_wheel_runtime/verify_qwen38_runtime.py \
  && python /source/recipes/glm53/install_dependency_python_patches.py \

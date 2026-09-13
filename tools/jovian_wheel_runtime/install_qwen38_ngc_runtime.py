@@ -119,6 +119,7 @@ def main() -> int:
     parser.add_argument("--venv", required=True, type=Path)
     parser.add_argument("--uv", required=True, type=Path)
     parser.add_argument("--source-image", required=True)
+    parser.add_argument("--overlay-lock", required=True, type=Path)
     parser.add_argument("--entrypoint", required=True, type=Path)
     parser.add_argument("--verifier", required=True, type=Path)
     args = parser.parse_args()
@@ -137,6 +138,20 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="qwen38-ngc-runtime-") as temporary:
         requirements = Path(temporary) / "requirements-application.txt"
         write_application_requirements(manifest, requirements)
+        run(
+            [
+                str(args.uv),
+                "pip",
+                "install",
+                "--python",
+                str(venv / "bin/python"),
+                "--require-hashes",
+                "--no-deps",
+                "-r",
+                str(args.overlay_lock),
+            ],
+            env=environment,
+        )
         run(
             [
                 str(args.uv),

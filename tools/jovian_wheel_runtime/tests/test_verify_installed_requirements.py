@@ -44,3 +44,12 @@ def test_rejects_incompatible_dependency() -> None:
 def test_ignores_unselected_extra() -> None:
     selected = distributions(vllm=("1.0", ['torch==2.14; extra == "compile"']))
     assert dependency_errors(selected) == []
+
+
+def test_ignores_unrelated_system_distribution() -> None:
+    selected = distributions(
+        vllm=("1.0", ["torch==2.14"]),
+        torch=("2.14", None),
+        telemetry=("1.0", ["unavailable>=2"]),
+    )
+    assert dependency_errors(selected, {"vllm"}) == []
