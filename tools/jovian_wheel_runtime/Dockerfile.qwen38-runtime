@@ -24,7 +24,7 @@ FROM runtime-base AS install
 COPY --from=uv /uv /usr/local/bin/uv
 COPY --from=qwen-runtime-bundle / /opt/local-inference/qwen38-runtime/
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    QWEN38_NATIVE_VERIFY=deferred UV_BIN=/usr/local/bin/uv \
+    QWEN38_NATIVE_VERIFY=deferred UV_BIN=/usr/local/bin/uv UV_LINK_MODE=copy \
     /opt/local-inference/qwen38-runtime/install_qwen38_runtime.sh \
       /opt/local-inference/venvs/qwen38-cu134
 
