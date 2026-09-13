@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import quote
 
@@ -37,6 +38,34 @@ def require_idle_gpu(gpu: str) -> None:
     )
     if len(fields) != 2 or any(int(field.strip()) != 0 for field in fields):
         raise RuntimeError(f"qualification GPU is busy; no workload was stopped: {gpu}")
+
+
+def verify_cache_test_report(path: Path) -> dict[str, int]:
+    """Require executed coverage for each declared cache contract test module."""
+    required = {
+        "test_checkpoint_identity",
+        "test_checkpoint_index",
+        "test_checkpoint_storage",
+        "test_fs_native_connector",
+        "test_vllm_semantic_checkpoint_transfer",
+    }
+    cases = list(ET.parse(path).getroot().iter("testcase"))
+    executed = set()
+    skipped = 0
+    for case in cases:
+        if case.find("error") is not None or case.find("failure") is not None:
+            raise ValueError("cache contract tests contain errors or failures")
+        if case.find("skipped") is not None:
+            skipped += 1
+            continue
+        executed.update(
+            part for part in case.get("classname", "").split(".") if part in required
+        )
+    if required - executed:
+        raise ValueError(
+            f"cache contract modules were not executed: {sorted(required - executed)}"
+        )
+    return {"passed": len(cases) - skipped, "skipped": skipped}
 
 
 def main() -> None:
@@ -84,6 +113,8 @@ def main() -> None:
         )
     )
     image = assembly["image"]
+    test_results = args.output / "qualification-results"
+    test_results.mkdir()
     execute(
         [
             str(tools / "run_serialized_build.sh"),
@@ -176,6 +207,8 @@ def main() -> None:
             f"nvidia.com/gpu={args.gpu}",
             "--mount",
             f"type=bind,src={source / 'tests'},dst=/qualification/tests,readonly",
+            "--mount",
+            f"type=bind,src={test_results},dst=/results",
             "-w",
             "/qualification",
             "-e",
@@ -186,13 +219,16 @@ def main() -> None:
             "pytest",
             "--noconftest",
             "-q",
+            "--junitxml=/results/lmcache-contracts.xml",
             "/qualification/tests/v1/multiprocess/test_checkpoint_identity.py",
             "/qualification/tests/v1/multiprocess/test_checkpoint_index.py",
             "/qualification/tests/v1/multiprocess/test_checkpoint_storage.py",
             "/qualification/tests/v1/storage_backend/test_fs_native_connector.py",
             "/qualification/tests/v1/test_vllm_semantic_checkpoint_transfer.py",
-        ]
+        ],
+        timeout=600,
     )
+    cache_results = verify_cache_test_report(test_results / "lmcache-contracts.xml")
     receipt = {
         **assembly,
         "status": "qualified",
@@ -200,6 +236,7 @@ def main() -> None:
         "model-serving performance and full GLM cache E2E remain unqualified.",
         "runtime_manifest_sha256": digest(manifest_path),
         "layers": 68,
+        "cache_contract_tests": cache_results,
     }
     (args.output / "container-release.json").write_text(
         json.dumps(receipt, indent=2) + "\n"
