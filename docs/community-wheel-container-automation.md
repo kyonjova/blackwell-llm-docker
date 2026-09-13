@@ -50,6 +50,9 @@ serializes channel jobs, and the frank2 worker lock serializes native compilatio
 The rootless builder retains its bounded memory/CPU allocation and persistent
 download, object and Docker layer caches. Other component wheels are downloaded,
 not recompiled by the container job.
+`LIL_COMPONENT_ARCHIVE_CACHE` names the persistent release-archive directory.
+Archives are keyed by SHA-256 and verified on every reuse. Unchanged component
+archives require no network transfer; only missing content is downloaded.
 
 The Docker repository runner has a 12 GiB memory throttle threshold and 16 GiB
 hard limit, declared in

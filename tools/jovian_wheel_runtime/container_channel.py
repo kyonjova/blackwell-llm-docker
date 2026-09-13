@@ -291,29 +291,46 @@ def safe_extract(tar_path: Path, destination: Path) -> None:
         archive.extractall(destination, members=members, filter="data")
 
 
+def fetch_archive(component: dict, directory: Path) -> Path:
+    """Cache verified release archives by content digest, with atomic publication."""
+    identity = component["archive_sha256"]
+    if not re.fullmatch(r"[0-9a-f]{64}", identity):
+        raise ValueError("invalid component archive digest")
+    directory.mkdir(parents=True, exist_ok=True)
+    cached = directory / f"{identity}.tar.zst"
+    if cached.exists():
+        if cached.is_symlink() or digest(cached) != identity:
+            raise ValueError(f"cached component archive checksum mismatch: {cached}")
+        return cached
+    with tempfile.TemporaryDirectory(prefix="upload-", dir=directory) as temporary:
+        staged = Path(temporary) / "artifact.tar.zst"
+        with staged.open("wb") as stream:
+            subprocess.run(
+                [
+                    "gh",
+                    "api",
+                    f"repos/{component['repository']}/releases/assets/{int(component['archive_asset_id'])}",
+                    "-H",
+                    "Accept: application/octet-stream",
+                ],
+                stdout=stream,
+                check=True,
+            )
+        if digest(staged) != identity:
+            raise ValueError("locked component archive checksum mismatch")
+        os.replace(staged, cached)
+    return cached
+
+
 def download(assembly: dict, destination: Path) -> None:
     """Fetch the exact locked asset IDs and verify bytes before extraction."""
     destination.mkdir(parents=True, exist_ok=False)
     for role, component in assembly["components"].items():
         with tempfile.TemporaryDirectory(prefix="component-download-") as temporary:
-            compressed = Path(temporary) / component["archive"]
-            with compressed.open("wb") as stream:
-                subprocess.run(
-                    [
-                        "gh",
-                        "api",
-                        (
-                            f"repos/{component['repository']}/releases/assets/"
-                            f"{int(component['archive_asset_id'])}"
-                        ),
-                        "-H",
-                        "Accept: application/octet-stream",
-                    ],
-                    stdout=stream,
-                    check=True,
-                )
-            if digest(compressed) != component["archive_sha256"]:
-                raise ValueError(f"{role}: locked archive checksum mismatch")
+            compressed = fetch_archive(
+                component,
+                Path(os.environ.get("LIL_COMPONENT_ARCHIVE_CACHE", temporary)),
+            )
             tar_path = Path(temporary) / "component.tar"
             with tar_path.open("wb") as stream:
                 subprocess.run(

@@ -72,6 +72,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ASSEMBLY_BASE64: ${{ needs.resolve.outputs.assembly }}
           QUALIFICATION_GPU: ${{ vars.LIL_RUNTIME_QUALIFICATION_GPU }}
+          LIL_COMPONENT_ARCHIVE_CACHE: /var/lib/github-flashinfer/cache/component-release-archives
         run: |
           set -euo pipefail
           test -n "${QUALIFICATION_GPU}"
@@ -100,6 +101,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ASSEMBLY_BASE64: ${{ needs.resolve.outputs.assembly }}
           QUALIFICATION_GPU: ${{ vars.LIL_RUNTIME_QUALIFICATION_GPU }}
+          LIL_COMPONENT_ARCHIVE_CACHE: /var/lib/github-flashinfer/cache/component-release-archives
         run: |
           set -euo pipefail
           test -n "${QUALIFICATION_GPU}"

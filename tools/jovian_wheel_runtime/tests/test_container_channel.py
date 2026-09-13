@@ -217,3 +217,44 @@ def test_published_assembly_requires_complete_matching_receipt(monkeypatch, faul
     assert channel.completed_publication(
         "local-inference-lab/blackwell-llm-docker", assembly
     ) is (fault is None)
+
+
+def test_archive_cache_reuses_verified_bytes_without_network(monkeypatch, tmp_path):
+    data = b"immutable component archive"
+    component = {
+        "repository": "local-inference-lab/LMCache",
+        "archive_asset_id": 1,
+        "archive_sha256": hashlib.sha256(data).hexdigest(),
+    }
+    calls = []
+
+    def fetch(args, *, stdout, check):
+        calls.append(args)
+        stdout.write(data)
+
+    monkeypatch.setattr(channel.subprocess, "run", fetch)
+    archive = channel.fetch_archive(component, tmp_path)
+    assert channel.fetch_archive(component, tmp_path) == archive
+    assert len(calls) == 1
+    archive.write_bytes(b"damaged cache")
+    with pytest.raises(ValueError, match="cached component archive checksum"):
+        channel.fetch_archive(component, tmp_path)
+    assert len(calls) == 1
+
+
+def test_failed_archive_verification_does_not_publish_cache_entry(
+    monkeypatch, tmp_path
+):
+    component = {
+        "repository": "local-inference-lab/LMCache",
+        "archive_asset_id": 1,
+        "archive_sha256": "a" * 64,
+    }
+    monkeypatch.setattr(
+        channel.subprocess,
+        "run",
+        lambda args, *, stdout, check: stdout.write(b"bad archive"),
+    )
+    with pytest.raises(ValueError, match="locked component archive checksum"):
+        channel.fetch_archive(component, tmp_path)
+    assert list(tmp_path.iterdir()) == []
