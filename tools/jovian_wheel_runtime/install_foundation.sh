@@ -46,6 +46,7 @@ for package in (
     "nvidia-cuda-nvcc",
     "nvidia-cublas",
     "nvidia-cudnn-cu13",
+    "nvidia-modelopt",
 ):
     importlib.metadata.version(package)
 torch_distribution = importlib.metadata.distribution("torch")

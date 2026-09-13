@@ -48,7 +48,7 @@ cp "${output_dir}/repacked/repack-provenance.json" \
 cp "${output_dir}/repacked/torch-native-support-provenance.json" \
   "${output_dir}/bundle/torch-native-support-provenance.json"
 
-for name in torch torchvision triton triton-kernels flash-attn; do
+for name in torch torchvision triton triton-kernels flash-attn nvidia-modelopt; do
   actual=$(jq -r --arg name "${name}" \
     '.packages[] | select((.name | ascii_downcase | gsub("_"; "-")) == $name) | .source_record_sha256' \
     "${output_dir}/bundle/repack-provenance.json")
@@ -77,7 +77,7 @@ while IFS= read -r wheel; do
     "${package}" "${url}" "${digest}" >> "${github_requirements}"
   normalized=$(tr '[:upper:]_' '[:lower:]-' <<<"${package}" | tr -d '\n')
   case "${normalized}" in
-    torch|torchvision|triton|triton-kernels|flash-attn)
+    torch|torchvision|triton|triton-kernels|flash-attn|nvidia-modelopt)
       provenance=hash-verified-installed-distribution-repack
       origin_sha=$(value "wheel.${normalized}.installed-record.sha256")
       ;;
@@ -104,8 +104,8 @@ while IFS= read -r wheel; do
     <<<"${packages}")
 done < <(find "${output_dir}/bundle/wheels" -maxdepth 1 -type f \
   -name '*.whl' | sort)
-test "$(jq length <<<"${packages}")" -eq 6
-test "$(sort -u "${requirements}" | wc -l)" -eq 6
+test "$(jq length <<<"${packages}")" -eq 7
+test "$(sort -u "${requirements}" | wc -l)" -eq 7
 
 source_image_id=$(docker image inspect "${source_image}" --format '{{.Id}}')
 jq -n \
