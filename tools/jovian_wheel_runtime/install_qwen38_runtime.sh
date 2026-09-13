@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Install the complete Qwen3.8 CUDA 13.4 runtime into an isolated venv.
+set -euo pipefail
+
+bundle_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+venv_path=${1:?Pass a destination venv path that does not exist}
+uv_binary=${UV_BIN:-uv}
+
+test ! -e "${venv_path}"
+uv_path=$(command -v "${uv_binary}")
+expected_uv_version=$(awk -F= '$1 == "uv.version" {print $2}' "${bundle_dir}/foundation.lock")
+expected_uv_sha256=$(awk -F= '$1 == "uv.sha256" {print $2}' "${bundle_dir}/foundation.lock")
+test "$("${uv_path}" --version | awk '{print $2}')" = "${expected_uv_version}"
+test "$(sha256sum "${uv_path}" | awk '{print $1}')" = "${expected_uv_sha256}"
+(cd "${bundle_dir}" && sha256sum --check SHA256SUMS)
+
+"${uv_path}" venv --python 3.12 "${venv_path}"
+"${uv_path}" pip install --python "${venv_path}/bin/python" \
+  --require-hashes -r "${bundle_dir}/foundation-runtime.lock"
+"${uv_path}" pip install --python "${venv_path}/bin/python" \
+  --require-hashes -r "${bundle_dir}/qwen38-runtime.lock"
+"${uv_path}" pip install --python "${venv_path}/bin/python" \
+  --no-index --find-links "${bundle_dir}/wheels" --no-deps --require-hashes \
+  -r "${bundle_dir}/requirements-local.txt"
+"${uv_path}" pip check --python "${venv_path}/bin/python"
+
+nccl_so=$("${venv_path}/bin/local-inference-nccl-path")
+env LD_PRELOAD="${nccl_so}" VLLM_NCCL_SO_PATH="${nccl_so}" \
+  "${venv_path}/bin/python" "${bundle_dir}/verify_qwen38_runtime.py"
+printf 'qwen38_runtime=%s status=installed gpu_qualification=required\n' \
+  "$(realpath "${venv_path}")"

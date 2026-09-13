@@ -13,7 +13,7 @@ The runtime has three independently versioned parts:
 - the Python and CUDA foundation published by `blackwell-llm-docker`;
 - the NCCL 2.31.2 build published by `nccl-canonical`;
 - application wheels for FlashInfer, B12X, vLLM, LMCache, InstantTensor,
-  XGrammar 0.2.5, and NVIDIA ModelOpt 0.46.1.
+  XGrammar 0.2.6, and NVIDIA ModelOpt 0.46.1.
 
 ## Python and CUDA foundation
 
@@ -97,6 +97,35 @@ NCCL collective through PyTorch, and rejects any CUDA userspace library loaded
 from `/usr/local/cuda` instead of the venv. The standalone compiler smoke uses
 the static CUDA runtime because NVIDIA's pip runtime wheel does not install an
 unversioned `libcudart.so` linker name.
+
+## Qwen3.8 serving environment
+
+Status: **implemented; GPU qualification required**
+
+`assemble_qwen38_runtime_bundle.py` combines seven independently verified
+component bundles: the CUDA foundation, NCCL, FlashInfer, B12X, vLLM, LMCache,
+and InstantTensor. It rejects incompatible Python, CUDA, PyTorch, builder-image,
+manifest-schema, or SHA-256 contracts. The resulting directory contains every
+custom wheel plus two hash-locked public dependency manifests.
+
+Install the assembled directory into an absent destination path:
+
+```bash
+./install_qwen38_runtime.sh /opt/local-inference/venvs/qwen38-cu134
+```
+
+The installer creates an isolated Python 3.12 environment with `uv`, installs
+the exact wheel set, runs `uv pip check`, preloads the packaged NCCL library,
+and imports the serving components. Run the bundled verifier with
+`--require-gpu` before qualifying a release for SM120 serving.
+
+The Qwen3.8 runtime uses B12X and FlashInfer execution paths. TileLang,
+Tokenspeed MLA, Humming, QuACK, TorchCodec, PyNvVideoCodec, and
+fastsafetensors are not mandatory dependencies of its vLLM wheel. This avoids
+installing unused binary backends and avoids the incompatible
+`apache-tvm-ffi` constraints declared by TileLang 0.1.12 and Tokenspeed MLA
+0.1.8. InstantTensor is the qualified model loader. Image input is in scope;
+audio and video decoding are unsupported.
 
 ## Build isolation and caching
 

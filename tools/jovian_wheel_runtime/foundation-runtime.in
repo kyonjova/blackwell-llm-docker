@@ -1,5 +1,6 @@
 # Python and CUDA dependencies required by the repacked NVIDIA PyTorch 26.08
-# foundation wheels. Versions match the immutable NGC source image.
+# foundation wheels. Versions match the immutable NGC source image except
+# setuptools: vLLM requires a version below 81 and ModelOpt requires 80 or newer.
 einops==0.8.2
 filelock==3.32.3
 fsspec==2026.6.0
@@ -9,7 +10,7 @@ mpmath==1.3.0
 networkx==3.6.1
 numpy==2.1.0
 pillow==12.3.0
-setuptools==81.0.0
+setuptools==80.9.0
 sympy==1.14.0
 typing-extensions==4.16.0
 
