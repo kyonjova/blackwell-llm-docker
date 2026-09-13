@@ -37,7 +37,9 @@ def write_release(directory: Path, promotion: bool = False) -> None:
         "repack-provenance.json",
         "requirements-foundation.txt",
         "requirements-github.txt",
+        "smoke_cuda.cu",
         "torch-native-support-provenance.json",
+        "verify_foundation_gpu.sh",
     }
     for name in fixed:
         (directory / name).write_text(name)

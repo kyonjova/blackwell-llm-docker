@@ -166,14 +166,19 @@ jq -n \
 
 cp "${lock_path}" "${tool_dir}/foundation-runtime.lock" \
   "${tool_dir}/install_foundation.sh" \
+  "${tool_dir}/verify_foundation_gpu.sh" \
   "${output_dir}/bundle/"
+mkdir -p "${output_dir}/bundle/tests"
+cp "${tool_dir}/tests/smoke_cuda.cu" "${output_dir}/bundle/tests/"
 chmod 0755 "${output_dir}/bundle/install_foundation.sh"
+chmod 0755 "${output_dir}/bundle/verify_foundation_gpu.sh"
 (
   cd "${output_dir}/bundle"
   find wheels -type f -print0 | sort -z | xargs -0 sha256sum
   sha256sum foundation-runtime.lock foundation.lock install_foundation.sh \
     manifest.json repack-provenance.json requirements-foundation.txt \
-    requirements-github.txt torch-native-support-provenance.json
+    requirements-github.txt tests/smoke_cuda.cu \
+    torch-native-support-provenance.json verify_foundation_gpu.sh
 ) > "${output_dir}/bundle/SHA256SUMS"
 
 archive="${output_dir}/jovian-cu134-foundation.tar.zst"

@@ -65,7 +65,9 @@ jobs:
             "${output}"/bundle/repack-provenance.json \
             "${output}"/bundle/requirements-foundation.txt \
             "${output}"/bundle/requirements-github.txt \
+            "${output}"/bundle/tests/smoke_cuda.cu \
             "${output}"/bundle/torch-native-support-provenance.json \
+            "${output}"/bundle/verify_foundation_gpu.sh \
             "${output}"/bundle/SHA256SUMS \
             "${output}"/jovian-cu134-foundation.tar.zst \
             "${output}"/jovian-cu134-foundation.tar.zst.sha256

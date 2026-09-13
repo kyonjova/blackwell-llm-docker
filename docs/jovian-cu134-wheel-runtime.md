@@ -85,6 +85,19 @@ complete runtime verifier imports PyTorch with that package preloaded, checks
 the CUDA build version and C++ ABI, and rejects manifests whose Python, CUDA,
 PyTorch, or C++ ABI fields differ.
 
+After installing the LIL NCCL wheel, qualify the complete foundation on one
+physical GPU with:
+
+```bash
+./verify_foundation_gpu.sh /opt/local-inference/venvs/jovian-cu134 0
+```
+
+The verifier compiles an SM120 CUDA program with the venv NVCC, executes an
+NCCL collective through PyTorch, and rejects any CUDA userspace library loaded
+from `/usr/local/cuda` instead of the venv. The standalone compiler smoke uses
+the static CUDA runtime because NVIDIA's pip runtime wheel does not install an
+unversioned `libcudart.so` linker name.
+
 ## Build isolation and caching
 
 The `lil-wheel-builder` self-hosted runner on frank2 uses a dedicated rootless

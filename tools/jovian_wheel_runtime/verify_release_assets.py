@@ -17,7 +17,9 @@ FIXED_CHECKSUMMED_ASSETS = {
     "repack-provenance.json",
     "requirements-foundation.txt",
     "requirements-github.txt",
+    "smoke_cuda.cu",
     "torch-native-support-provenance.json",
+    "verify_foundation_gpu.sh",
 }
 
 
