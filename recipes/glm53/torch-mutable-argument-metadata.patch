@@ -1,9 +1,6 @@
 --- a/torch/_library/custom_ops.py
 +++ b/torch/_library/custom_ops.py
-@@ -801,6 +801,15 @@
- 
-     def _register_mutation_version_bump(self, schema: _C.FunctionSchema) -> None:
-         mutated_idxs, mutated_keys = utils.mutated_args_kwargs(schema)
+@@ -803,0 +804,9 @@
 +        # Schema defaults are immutable. Only mutated inputs need materializing
 +        # for version tracking; redispatch retains the original call arguments.
 +        arguments = schema.arguments
@@ -13,13 +10,7 @@
 +            for info in arguments
 +            if info.name in mutated_keys
 +        )
- 
-         is_view = schema._is_view_op()
-         if is_view:
-@@ -812,12 +821,10 @@
-             after_ADInplaceOrView_keyset = _C._after_ADInplaceOrView_keyset
- 
-         def adinplaceorview_impl(keyset, *args, **kwargs):
+@@ -815,6 +824,4 @@
 -            all_args, all_kwargs = utils.fill_defaults(schema, args, kwargs)
 -
 -            for idx in mutated_idxs:
@@ -30,6 +21,3 @@
 +                increment_version(args[idx] if idx < len(args) else default)
 +            for key, default in mutated_kwargs:
 +                increment_version(kwargs[key] if key in kwargs else default)
-             if is_view:
-                 # View ops need the C++ fallback for aliasing tracking
-                 return original_kernel.call_boxed(keyset, *args, **kwargs)
