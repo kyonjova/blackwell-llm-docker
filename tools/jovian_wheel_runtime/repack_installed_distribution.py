@@ -24,6 +24,15 @@ from pathlib import Path, PurePosixPath
 
 
 INSTALLATION_METADATA = {"INSTALLER", "RECORD", "REQUESTED", "direct_url.json"}
+TORCH_LIBRARY_RUNPATH = ":".join(
+    (
+        "$ORIGIN",
+        "$ORIGIN/../../nvidia/cu13/lib",
+        "$ORIGIN/../../nvidia/cudnn/lib",
+        "$ORIGIN/../../nvidia/nvshmem/lib",
+        "$ORIGIN/../../local_inference_nccl/lib",
+    )
+)
 
 
 def parse_allowed_modification(value: str) -> tuple[PurePosixPath, str]:
@@ -76,11 +85,45 @@ def normalize_tree_mtime(root: Path, epoch: int) -> None:
     os.utime(root, (epoch, epoch))
 
 
+def rewrite_torch_library_runpaths(stage: Path) -> list[dict[str, str]]:
+    """Make staged Torch libraries resolve CUDA and NCCL inside the venv."""
+    library_dir = stage / "torch" / "lib"
+    rewritten: list[dict[str, str]] = []
+    for path in sorted(library_dir.iterdir()):
+        if not path.is_file():
+            continue
+        result = subprocess.run(
+            ["patchelf", "--print-rpath", str(path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            continue
+        original = result.stdout.strip()
+        subprocess.run(
+            ["patchelf", "--set-rpath", TORCH_LIBRARY_RUNPATH, str(path)],
+            check=True,
+        )
+        rewritten.append(
+            {
+                "path": str(path.relative_to(stage)),
+                "original_runpath": original,
+                "packaged_runpath": TORCH_LIBRARY_RUNPATH,
+                "packaged_sha256": sha256(path),
+            }
+        )
+    if not rewritten:
+        raise RuntimeError("Torch distribution contained no libraries with a runpath")
+    return rewritten
+
+
 def repack_distribution(
     name: str,
     output_dir: Path,
     epoch: int,
     allowed_modifications: dict[PurePosixPath, str] | None = None,
+    rewrite_torch_runpaths: bool = False,
 ) -> dict[str, object]:
     """Verify and repack one installed distribution into ``output_dir``."""
     distribution = importlib.metadata.distribution(name)
@@ -132,6 +175,9 @@ def repack_distribution(
             shutil.copymode(source, destination)
             copied.append(str(relative))
 
+        runpath_rewrites = (
+            rewrite_torch_library_runpaths(stage) if rewrite_torch_runpaths else []
+        )
         normalize_tree_mtime(stage, epoch)
         before = set(output_dir.glob("*.whl"))
         environment = os.environ.copy()
@@ -162,6 +208,7 @@ def repack_distribution(
         "copied_file_count": len(copied),
         "skipped_installation_file_count": len(skipped),
         "verified_record_modifications": verified_modifications,
+        "runpath_rewrites": runpath_rewrites,
         "wheel": wheel.name,
         "wheel_sha256": sha256(wheel),
     }
@@ -183,6 +230,11 @@ def main() -> None:
             "matches the declared digest"
         ),
     )
+    parser.add_argument(
+        "--rewrite-torch-runpaths",
+        action="store_true",
+        help="replace NGC host paths with venv-relative CUDA and NCCL paths",
+    )
     parser.add_argument("package", nargs="+")
     args = parser.parse_args()
     allowed_modifications = dict(args.allow_modified_record_entry)
@@ -193,6 +245,7 @@ def main() -> None:
             args.output_dir,
             args.source_date_epoch,
             allowed_modifications,
+            rewrite_torch_runpaths=args.rewrite_torch_runpaths and package == "torch",
         )
         for package in args.package
     ]

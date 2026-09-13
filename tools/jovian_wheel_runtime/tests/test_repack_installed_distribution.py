@@ -1,6 +1,7 @@
 from pathlib import Path, PurePosixPath
 
 from tools.jovian_wheel_runtime.repack_installed_distribution import (
+    TORCH_LIBRARY_RUNPATH,
     is_installation_generated,
     normalize_tree_mtime,
     parse_allowed_modification,
@@ -40,3 +41,10 @@ def test_parses_hash_locked_installed_file_modification():
 
     assert path == PurePosixPath("torch/lib/libtorch_global_deps.so")
     assert digest == "a" * 64
+
+
+def test_torch_runpath_uses_only_venv_relative_library_locations():
+    assert "/usr/local" not in TORCH_LIBRARY_RUNPATH
+    assert "/opt/" not in TORCH_LIBRARY_RUNPATH
+    assert "$ORIGIN/../../nvidia/cu13/lib" in TORCH_LIBRARY_RUNPATH
+    assert "$ORIGIN/../../local_inference_nccl/lib" in TORCH_LIBRARY_RUNPATH

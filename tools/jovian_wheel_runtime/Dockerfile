@@ -8,13 +8,12 @@ COPY tools/jovian_wheel_runtime/repack_installed_distribution.py /opt/local-infe
 COPY tools/jovian_wheel_runtime/build_torch_native_support.py /opt/local-inference/
 COPY tools/jovian_wheel_runtime/torch_native_support.json /opt/local-inference/
 RUN mkdir -p /artifacts/wheels \
- && patchelf --set-rpath '$ORIGIN' \
-      /usr/local/lib/python3.12/dist-packages/torch/lib/libtorch_global_deps.so \
  && python /opt/local-inference/repack_installed_distribution.py \
       --output-dir /artifacts/wheels \
       --source-date-epoch "${SOURCE_DATE_EPOCH}" \
       --allow-modified-record-entry \
-      torch/lib/libtorch_global_deps.so=6e8d20aa2bc096a66c9384cc9a9f8d3f122c25d9274fd927484e8a9585f7ed47 \
+      torch/lib/libtorch_global_deps.so=6991f14618ba04c4caa7d59bb5c520e930cfd6d40282e98eb83e2af169045894 \
+      --rewrite-torch-runpaths \
       torch torchvision triton triton-kernels flash-attn \
       > /artifacts/repack-provenance.json \
  && python /opt/local-inference/build_torch_native_support.py \

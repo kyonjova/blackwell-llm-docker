@@ -27,9 +27,11 @@ NVIDIA does not publish that PyTorch build through a public Python package
 index. The foundation builder verifies every hashed installed file against the
 package `RECORD` and produces deterministic wheels for PyTorch, TorchVision,
 Triton, Triton Kernels, and FlashAttention. The NGC image changes
-`torch/lib/libtorch_global_deps.so` after installation. The builder verifies the
-original `RECORD` identity, changes only its runpath from `/usr/local/lib` to
-`$ORIGIN`, and records both hashes in the provenance manifest.
+`torch/lib/libtorch_global_deps.so` after installation. The builder verifies
+that installed mutation by hash, then replaces host-specific Torch library
+runpaths with paths relative to the venv. Those paths resolve CUDA, cuDNN,
+NVSHMEM, and the LIL NCCL package from `site-packages`. The provenance manifest
+records every original and packaged runpath and packaged file hash.
 Wheel timestamps use the immutable source image creation epoch
 `2026-08-21T06:45:47Z`; unchanged package payloads therefore retain identical
 wheel bytes when the publisher implementation changes.
