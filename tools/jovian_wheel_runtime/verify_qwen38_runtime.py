@@ -28,6 +28,9 @@ NGC_PYTHON_HASHES = {
         "a36eea9adcb75546aa5a373809581772234d13392df74a9f4854291e0e9e4221"
     ),
 }
+NGC_VENV_CUTLASS = (
+    "nvidia_cutlass_dsl/dsl_packages/cutlass/base_dsl/jit_executor.py"
+)
 
 
 def sha256(path: Path) -> str:
@@ -94,6 +97,10 @@ def main() -> int:
             target = system_site / relative
             if not target.is_file() or sha256(target) != expected:
                 raise RuntimeError(f"NGC dependency contract mismatch: {target}")
+        venv_cutlass = Path(sys.prefix) / "lib/python3.12/site-packages" / NGC_VENV_CUTLASS
+        expected_cutlass = NGC_PYTHON_HASHES[NGC_VENV_CUTLASS]
+        if not venv_cutlass.is_file() or sha256(venv_cutlass) != expected_cutlass:
+            raise RuntimeError(f"NGC venv dependency contract mismatch: {venv_cutlass}")
     else:
         runtime_site = Path(sys.prefix) / "lib/python3.12/site-packages"
         expected_cuda = (runtime_site / "nvidia/cu13").resolve()

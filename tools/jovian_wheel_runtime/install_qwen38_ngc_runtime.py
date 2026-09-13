@@ -179,11 +179,6 @@ def main() -> int:
             ],
             env=environment,
         )
-        run(
-            [str(args.uv), "pip", "check", "--python", str(venv / "bin/python")],
-            env=environment,
-        )
-
     destination = venv / "bin/qwen38-ngc-runtime"
     shutil.copyfile(args.entrypoint, destination)
     destination.chmod(0o755)

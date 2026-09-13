@@ -26,6 +26,10 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv,ro \
       --source-image "${SOURCE_IMAGE}" \
       --entrypoint /source/tools/jovian_wheel_runtime/qwen38_ngc_runtime_entrypoint.sh \
       --verifier /source/tools/jovian_wheel_runtime/verify_qwen38_runtime.py \
+ && python /source/recipes/glm53/install_dependency_python_patches.py \
+      --manifest /source/tools/jovian_wheel_runtime/ngc-venv-python-patches.json \
+ && /opt/venv/bin/python \
+      /source/tools/jovian_wheel_runtime/verify_installed_requirements.py \
  && /opt/venv/bin/qwen38-ngc-runtime /opt/venv/bin/python \
       /opt/venv/libexec/verify_qwen38_runtime.py \
       --foundation ngc
