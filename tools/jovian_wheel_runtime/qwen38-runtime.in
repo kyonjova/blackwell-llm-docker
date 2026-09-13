@@ -16,6 +16,7 @@ annotated-types==0.8.0
 anthropic==1.0.0
 antlr4-python3-runtime==4.9.3
 anyio==4.14.2
+apache-tvm-ffi==0.1.11
 astor==0.8.1
 attrs==26.1.0
 awscrt==0.36.2

@@ -119,13 +119,14 @@ the exact wheel set, runs `uv pip check`, preloads the packaged NCCL library,
 and imports the serving components. Run the bundled verifier with
 `--require-gpu` before qualifying a release for SM120 serving.
 
-The Qwen3.8 runtime uses B12X and FlashInfer execution paths. TileLang,
-Tokenspeed MLA, Humming, QuACK, TorchCodec, PyNvVideoCodec, and
+The Qwen3.8 runtime uses B12X and FlashInfer execution paths and pins
+`apache-tvm-ffi` 0.1.11, which satisfies B12X, FlashInfer, and XGrammar.
+TileLang, Tokenspeed MLA, Humming, QuACK, TorchCodec, PyNvVideoCodec, and
 fastsafetensors are not mandatory dependencies of its vLLM wheel. This avoids
-installing unused binary backends and avoids the incompatible
-`apache-tvm-ffi` constraints declared by TileLang 0.1.12 and Tokenspeed MLA
-0.1.8. InstantTensor is the qualified model loader. Image input is in scope;
-audio and video decoding are unsupported.
+installing unused binary backends while retaining a TVM FFI release compatible
+with TileLang 0.1.12 and Tokenspeed MLA 0.1.8. InstantTensor is the qualified
+model loader. Image input is in scope; audio and video decoding are
+unsupported.
 
 ## Build isolation and caching
 
