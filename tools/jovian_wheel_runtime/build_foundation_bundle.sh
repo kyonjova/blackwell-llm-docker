@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and verify the immutable CUDA 13.3 Python foundation artifact.
+# Build and verify the immutable CUDA 13.4 Python foundation artifact.
 set -euo pipefail
 
 tool_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,7 +20,7 @@ source_tree=$(git -C "${repo_root}" rev-parse 'HEAD^{tree}')
 source_date_epoch=$(git -C "${repo_root}" show -s --format=%ct HEAD)
 test -z "$(git -C "${repo_root}" status --porcelain)"
 repository=${GITHUB_REPOSITORY:-local-inference-lab/blackwell-llm-docker}
-release_tag=${FOUNDATION_RELEASE_TAG:-"jovian-cu133-foundation-beta-${source_commit}"}
+release_tag=${FOUNDATION_RELEASE_TAG:-"jovian-cu134-foundation-beta-${source_commit}"}
 if ! docker image inspect "${source_image}" >/dev/null 2>&1; then
   docker image pull "${source_image}"
 fi
@@ -32,26 +32,6 @@ if ! mkdir "${output_dir}"; then
   exit 1
 fi
 mkdir -p "${output_dir}/bundle/wheels"
-
-artifact_args=()
-for name in torch torchvision xgrammar; do
-  artifact_args+=(
-    --artifact "$(value "wheel.${name}.path")=$(value "wheel.${name}.sha256")"
-  )
-done
-
-docker image save "${source_image}" \
-  | python3 "${tool_dir}/extract_deleted_wheels.py" \
-      --output-dir "${output_dir}/recovered" \
-      "${artifact_args[@]}" \
-  > "${output_dir}/bundle/extraction.json"
-
-for name in torch torchvision xgrammar; do
-  path=$(value "wheel.${name}.path")
-  install -m 0644 \
-    "${output_dir}/recovered/${path##*/}" \
-    "${output_dir}/bundle/wheels/${path##*/}"
-done
 
 builder=${BUILDX_BUILDER:-default}
 docker buildx build \
@@ -65,8 +45,10 @@ docker buildx build \
 cp -a "${output_dir}/repacked/wheels/." "${output_dir}/bundle/wheels/"
 cp "${output_dir}/repacked/repack-provenance.json" \
   "${output_dir}/bundle/repack-provenance.json"
+cp "${output_dir}/repacked/torch-native-support-provenance.json" \
+  "${output_dir}/bundle/torch-native-support-provenance.json"
 
-for name in triton triton-kernels flash-attn; do
+for name in torch torchvision triton triton-kernels flash-attn; do
   actual=$(jq -r --arg name "${name}" \
     '.packages[] | select((.name | ascii_downcase | gsub("_"; "-")) == $name) | .source_record_sha256' \
     "${output_dir}/bundle/repack-provenance.json")
@@ -95,13 +77,13 @@ while IFS= read -r wheel; do
     "${package}" "${url}" "${digest}" >> "${github_requirements}"
   normalized=$(tr '[:upper:]_' '[:lower:]-' <<<"${package}" | tr -d '\n')
   case "${normalized}" in
-    torch|torchvision|xgrammar)
-      provenance=exact-wheel-payload
-      origin_sha=$(value "wheel.${normalized}.sha256")
-      ;;
-    triton|triton-kernels|flash-attn)
+    torch|torchvision|triton|triton-kernels|flash-attn)
       provenance=hash-verified-installed-distribution-repack
       origin_sha=$(value "wheel.${normalized}.installed-record.sha256")
+      ;;
+    local-inference-torch-native-support)
+      provenance=hash-locked-native-loader-closure
+      origin_sha=$(sha256sum "${tool_dir}/torch_native_support.json" | awk '{print $1}')
       ;;
     *)
       printf 'Unexpected foundation package: %s\n' "${package}" >&2
@@ -140,11 +122,13 @@ jq -n \
   --arg nccl_commit "$(value nccl.commit)" \
   --arg cudnn_version "$(value host.cudnn.version)" \
   --arg cusparselt_version "$(value host.cusparselt.version)" \
+  --arg cuda13_driver_minimum "$(value host.driver.cuda13.minimum)" \
+  --arg cuda134_feature_driver "$(value host.driver.cuda134.features)" \
   --argjson packages "${packages}" \
   '{
     schema: "local-inference-jovian-foundation-bundle/v1",
     status: $status,
-    scope: "Python ABI foundation wheels used by the CUDA 13.3 serving runtime",
+    scope: "Python ABI foundation wheels used by the CUDA 13.4 serving runtime",
     source: {
       image: $source_image,
       image_id: $source_image_id,
@@ -169,30 +153,30 @@ jq -n \
         repository: "https://github.com/local-inference-lab/nccl-canonical.git",
         commit: $nccl_commit,
         version: "2.31.2",
-        delivery: "local-inference-nccl-cu133 release artifact"
+        delivery: "local-inference-nccl-cu134 release artifact"
       },
       host_requirements: [
-        "NVIDIA driver compatible with CUDA 13.3",
-        "CUDA 13.3 userspace and compiler",
-        "cuDNN 9.24.0.43",
-        "cuSPARSELt 0.9.1.1",
-        "Open MPI ABI libmpi.so.40 for the exact PyTorch wheel"
+        ("NVIDIA R" + $cuda13_driver_minimum +
+          " or newer driver for CUDA 13.x minor-version compatibility"),
+        ("NVIDIA R" + $cuda134_feature_driver +
+          " or newer driver for CUDA 13.4-specific features")
       ]
     }
   }' > "${output_dir}/bundle/manifest.json"
 
-cp "${lock_path}" "${tool_dir}/install_foundation.sh" \
+cp "${lock_path}" "${tool_dir}/cuda-runtime.lock" \
+  "${tool_dir}/install_foundation.sh" \
   "${output_dir}/bundle/"
 chmod 0755 "${output_dir}/bundle/install_foundation.sh"
 (
   cd "${output_dir}/bundle"
   find wheels -type f -print0 | sort -z | xargs -0 sha256sum
-  sha256sum extraction.json foundation.lock install_foundation.sh \
+  sha256sum cuda-runtime.lock foundation.lock install_foundation.sh \
     manifest.json repack-provenance.json requirements-foundation.txt \
-    requirements-github.txt
+    requirements-github.txt torch-native-support-provenance.json
 ) > "${output_dir}/bundle/SHA256SUMS"
 
-archive="${output_dir}/jovian-cu133-foundation.tar.zst"
+archive="${output_dir}/jovian-cu134-foundation.tar.zst"
 tar --sort=name --mtime="@${source_date_epoch}" \
   --owner=0 --group=0 --numeric-owner --zstd \
   -C "${output_dir}/bundle" -cf "${archive}" .

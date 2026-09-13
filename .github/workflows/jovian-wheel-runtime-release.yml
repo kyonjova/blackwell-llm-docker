@@ -1,11 +1,11 @@
-name: Jovian CUDA 13.3 wheel foundation
+name: Jovian CUDA 13.4 wheel foundation
 
 on:
   push:
     branches:
-      - master
+      - main
     tags:
-      - jovian-cu133-foundation-stable-*
+      - jovian-cu134-foundation-stable-*
     paths:
       - .github/workflows/jovian-wheel-runtime-release.yml
       - tools/jovian_wheel_runtime/**
@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: jovian-cu133-foundation-${{ github.ref }}
+  group: jovian-cu134-foundation-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -32,7 +32,7 @@ jobs:
 
       - name: Build and verify the foundation wheels
         env:
-          BUILDX_BUILDER: lil-flashinfer-cu133-sm120
+          BUILDX_BUILDER: lil-wheel-cu134-sm120
         run: tools/jovian_wheel_runtime/build_foundation_bundle.sh
 
       - name: Publish or verify the immutable beta release
@@ -41,7 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           output=tools/jovian_wheel_runtime/dist/foundation
-          tag="jovian-cu133-foundation-beta-${GITHUB_SHA}"
+          tag="jovian-cu134-foundation-beta-${GITHUB_SHA}"
           if gh release view "${tag}" >/dev/null 2>&1; then
             mkdir existing-release
             gh release download "${tag}" --dir existing-release
@@ -55,19 +55,20 @@ jobs:
           gh release create "${tag}" \
             --target "${GITHUB_SHA}" \
             --prerelease \
-            --title "Jovian CUDA 13.3 wheel foundation beta ${GITHUB_SHA:0:12}" \
-            --notes "Research-only Python foundation for the declared CUDA 13.3 serving ABI." \
+            --title "Jovian CUDA 13.4 wheel foundation beta ${GITHUB_SHA:0:12}" \
+            --notes "Research-only Python foundation for the declared CUDA 13.4 serving ABI." \
             "${output}"/bundle/wheels/*.whl \
-            "${output}"/bundle/extraction.json \
+            "${output}"/bundle/cuda-runtime.lock \
             "${output}"/bundle/foundation.lock \
             "${output}"/bundle/install_foundation.sh \
             "${output}"/bundle/manifest.json \
             "${output}"/bundle/repack-provenance.json \
             "${output}"/bundle/requirements-foundation.txt \
             "${output}"/bundle/requirements-github.txt \
+            "${output}"/bundle/torch-native-support-provenance.json \
             "${output}"/bundle/SHA256SUMS \
-            "${output}"/jovian-cu133-foundation.tar.zst \
-            "${output}"/jovian-cu133-foundation.tar.zst.sha256
+            "${output}"/jovian-cu134-foundation.tar.zst \
+            "${output}"/jovian-cu134-foundation.tar.zst.sha256
 
   promote-stable:
     if: github.repository == 'local-inference-lab/blackwell-llm-docker' && github.ref_type == 'tag'
@@ -85,7 +86,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          beta_tag="jovian-cu133-foundation-beta-${GITHUB_SHA}"
+          beta_tag="jovian-cu134-foundation-beta-${GITHUB_SHA}"
           stable_tag="${GITHUB_REF_NAME}"
           mkdir assets
           gh release download "${beta_tag}" \
@@ -121,6 +122,6 @@ jobs:
           gh release create "${stable_tag}" \
             --repo "${GITHUB_REPOSITORY}" \
             --target "${GITHUB_SHA}" \
-            --title "Jovian CUDA 13.3 wheel foundation stable ${GITHUB_SHA:0:12}" \
+            --title "Jovian CUDA 13.4 wheel foundation stable ${GITHUB_SHA:0:12}" \
             --notes "Qualified promotion of ${beta_tag}. Wheel bytes were not rebuilt." \
             assets/*

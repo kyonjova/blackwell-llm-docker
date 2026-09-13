@@ -26,6 +26,22 @@ from pathlib import Path, PurePosixPath
 INSTALLATION_METADATA = {"INSTALLER", "RECORD", "REQUESTED", "direct_url.json"}
 
 
+def parse_allowed_modification(value: str) -> tuple[PurePosixPath, str]:
+    """Parse an installed-file digest that intentionally differs from RECORD."""
+    try:
+        path_text, digest = value.rsplit("=", 1)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "allowed modification must have the form WHEEL_PATH=SHA256"
+        ) from error
+    path = PurePosixPath(path_text)
+    if path.is_absolute() or ".." in path.parts or not path.name:
+        raise argparse.ArgumentTypeError(f"invalid wheel path: {path_text!r}")
+    if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+        raise argparse.ArgumentTypeError(f"invalid SHA-256 digest: {digest!r}")
+    return path, digest
+
+
 def sha256(path: Path) -> str:
     """Return the hexadecimal SHA-256 digest of one file."""
     digest = hashlib.sha256()
@@ -60,7 +76,12 @@ def normalize_tree_mtime(root: Path, epoch: int) -> None:
     os.utime(root, (epoch, epoch))
 
 
-def repack_distribution(name: str, output_dir: Path, epoch: int) -> dict[str, object]:
+def repack_distribution(
+    name: str,
+    output_dir: Path,
+    epoch: int,
+    allowed_modifications: dict[PurePosixPath, str] | None = None,
+) -> dict[str, object]:
     """Verify and repack one installed distribution into ``output_dir``."""
     distribution = importlib.metadata.distribution(name)
     files = distribution.files
@@ -70,8 +91,10 @@ def repack_distribution(name: str, output_dir: Path, epoch: int) -> dict[str, ob
     if not source_record.is_file():
         raise RuntimeError(f"distribution RECORD is absent: {name}")
 
+    allowed_modifications = allowed_modifications or {}
     copied: list[str] = []
     skipped: list[str] = []
+    verified_modifications: list[dict[str, str]] = []
     with tempfile.TemporaryDirectory(prefix=f"repack-{name}-") as temporary:
         stage = Path(temporary) / "payload"
         stage.mkdir()
@@ -81,11 +104,25 @@ def repack_distribution(name: str, output_dir: Path, epoch: int) -> dict[str, ob
             if not source.is_file():
                 raise RuntimeError(f"installed RECORD path is absent: {relative}")
             if package_path.hash is not None:
-                if (
-                    package_path.hash.mode != "sha256"
-                    or record_digest(source) != package_path.hash.value
-                ):
-                    raise RuntimeError(f"installed RECORD digest mismatch: {relative}")
+                installed_digest = sha256(source)
+                record_value = package_path.hash.value
+                if package_path.hash.mode != "sha256":
+                    raise RuntimeError(f"unsupported RECORD digest mode: {relative}")
+                if record_digest(source) != record_value:
+                    declared_digest = allowed_modifications.get(relative)
+                    if installed_digest != declared_digest:
+                        raise RuntimeError(
+                            f"installed RECORD digest mismatch: {relative}"
+                        )
+                    verified_modifications.append(
+                        {
+                            "path": str(relative),
+                            "record_sha256": base64.urlsafe_b64decode(
+                                record_value + "=" * (-len(record_value) % 4)
+                            ).hex(),
+                            "installed_sha256": installed_digest,
+                        }
+                    )
             if is_installation_generated(relative):
                 skipped.append(str(relative))
                 continue
@@ -124,6 +161,7 @@ def repack_distribution(name: str, output_dir: Path, epoch: int) -> dict[str, ob
         "source_record_sha256": sha256(source_record),
         "copied_file_count": len(copied),
         "skipped_installation_file_count": len(skipped),
+        "verified_record_modifications": verified_modifications,
         "wheel": wheel.name,
         "wheel_sha256": sha256(wheel),
     }
@@ -134,13 +172,39 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--source-date-epoch", type=int, required=True)
+    parser.add_argument(
+        "--allow-modified-record-entry",
+        action="append",
+        default=[],
+        type=parse_allowed_modification,
+        metavar="WHEEL_PATH=SHA256",
+        help=(
+            "accept one image-build mutation only when its installed SHA-256 "
+            "matches the declared digest"
+        ),
+    )
     parser.add_argument("package", nargs="+")
     args = parser.parse_args()
+    allowed_modifications = dict(args.allow_modified_record_entry)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     results = [
-        repack_distribution(package, args.output_dir, args.source_date_epoch)
+        repack_distribution(
+            package,
+            args.output_dir,
+            args.source_date_epoch,
+            allowed_modifications,
+        )
         for package in args.package
     ]
+    verified_paths = {
+        PurePosixPath(modification["path"])
+        for result in results
+        for modification in result["verified_record_modifications"]
+    }
+    unverified_paths = set(allowed_modifications) - verified_paths
+    if unverified_paths:
+        missing = ", ".join(str(path) for path in sorted(unverified_paths))
+        raise RuntimeError(f"declared RECORD modifications were not observed: {missing}")
     print(
         json.dumps(
             {

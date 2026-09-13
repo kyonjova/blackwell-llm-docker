@@ -10,13 +10,14 @@ from pathlib import Path
 
 
 FIXED_CHECKSUMMED_ASSETS = {
-    "extraction.json",
+    "cuda-runtime.lock",
     "foundation.lock",
     "install_foundation.sh",
     "manifest.json",
     "repack-provenance.json",
     "requirements-foundation.txt",
     "requirements-github.txt",
+    "torch-native-support-provenance.json",
 }
 
 
@@ -60,7 +61,7 @@ def verify_release(
     package_files = {package["file"] for package in manifest["packages"]}
     if len(package_files) != 6:
         raise ValueError("foundation manifest must declare exactly six package files")
-    archive = "jovian-cu133-foundation.tar.zst"
+    archive = "jovian-cu134-foundation.tar.zst"
     expected = (
         FIXED_CHECKSUMMED_ASSETS
         | package_files

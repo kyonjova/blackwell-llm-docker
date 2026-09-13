@@ -10,7 +10,7 @@ from tools.jovian_wheel_runtime.verify_release_assets import verify_release
 
 
 COMMIT = "2" * 40
-BETA_TAG = f"jovian-cu133-foundation-beta-{COMMIT}"
+BETA_TAG = f"jovian-cu134-foundation-beta-{COMMIT}"
 
 
 def digest(payload: bytes) -> str:
@@ -31,12 +31,13 @@ def write_release(directory: Path, promotion: bool = False) -> None:
     }
     (directory / "manifest.json").write_text(json.dumps(manifest))
     fixed = {
-        "extraction.json",
+        "cuda-runtime.lock",
         "foundation.lock",
         "install_foundation.sh",
         "repack-provenance.json",
         "requirements-foundation.txt",
         "requirements-github.txt",
+        "torch-native-support-provenance.json",
     }
     for name in fixed:
         (directory / name).write_text(name)
@@ -47,7 +48,7 @@ def write_release(directory: Path, promotion: bool = False) -> None:
             for name in checksummed
         )
     )
-    archive = "jovian-cu133-foundation.tar.zst"
+    archive = "jovian-cu134-foundation.tar.zst"
     (directory / archive).write_bytes(b"archive")
     (directory / f"{archive}.sha256").write_text(f"{digest(b'archive')}  {archive}\n")
     if promotion:
