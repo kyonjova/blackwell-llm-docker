@@ -22,7 +22,8 @@ jobs:
   build-beta:
     if: github.repository == 'local-inference-lab/blackwell-llm-docker' && github.ref_type == 'branch'
     runs-on: [self-hosted, lil-wheel-builder]
-    timeout-minutes: 180
+    # Six hours of shared-worker queueing plus three hours for assembly/publication.
+    timeout-minutes: 540
     steps:
       - name: Check out the exact foundation contract
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -47,10 +48,15 @@ jobs:
           if gh release view "${tag}" >/dev/null 2>&1; then
             mkdir existing-release
             gh release download "${tag}" --dir existing-release
-            python tools/jovian_wheel_runtime/verify_release_assets.py \
+            mkdir built-release
+            find "${output}/bundle" -type f -exec cp --target-directory=built-release {} +
+            cp "${output}"/jovian-cu134-foundation.tar.zst \
+              "${output}"/jovian-cu134-foundation.tar.zst.sha256 built-release/
+            python3 tools/jovian_wheel_runtime/verify_release_assets.py \
               --directory existing-release \
               --source-commit "${GITHUB_SHA}" \
-              --beta-tag "${tag}"
+              --beta-tag "${tag}" \
+              --reference-directory built-release
             echo "Immutable release ${tag} satisfies the foundation contract."
             exit 0
           fi
@@ -96,7 +102,7 @@ jobs:
           gh release download "${beta_tag}" \
             --repo "${GITHUB_REPOSITORY}" \
             --dir assets
-          python tools/jovian_wheel_runtime/verify_release_assets.py \
+          python3 tools/jovian_wheel_runtime/verify_release_assets.py \
             --directory assets \
             --source-commit "${GITHUB_SHA}" \
             --beta-tag "${beta_tag}"
@@ -105,10 +111,11 @@ jobs:
             gh release download "${stable_tag}" \
               --repo "${GITHUB_REPOSITORY}" \
               --dir existing-stable-release
-            python tools/jovian_wheel_runtime/verify_release_assets.py \
+            python3 tools/jovian_wheel_runtime/verify_release_assets.py \
               --directory existing-stable-release \
               --source-commit "${GITHUB_SHA}" \
               --beta-tag "${beta_tag}" \
+              --reference-directory assets \
               --promotion
             echo "Immutable stable release ${stable_tag} satisfies the foundation contract."
             exit 0

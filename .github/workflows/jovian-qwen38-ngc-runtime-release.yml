@@ -92,7 +92,7 @@ jobs:
       - name: Assemble the source-locked application bundle
         run: |
           set -euo pipefail
-          python tools/jovian_wheel_runtime/assemble_qwen38_runtime_bundle.py \
+          python3 tools/jovian_wheel_runtime/assemble_qwen38_runtime_bundle.py \
             --output "${RUNNER_TEMP}/qwen38-runtime-bundle" \
             --qwen-lock tools/jovian_wheel_runtime/qwen38-runtime.lock \
             --ngc-foundation-lock tools/jovian_wheel_runtime/foundation.lock \

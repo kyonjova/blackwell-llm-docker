@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -88,3 +89,33 @@ def test_accepts_complete_stable_promotion(tmp_path):
     write_release(tmp_path, promotion=True)
 
     verify_release(tmp_path, COMMIT, BETA_TAG, promotion=True)
+
+
+def test_rejects_self_consistent_substitution_against_independent_bytes(tmp_path):
+    candidate, reference = tmp_path / "candidate", tmp_path / "reference"
+    candidate.mkdir()
+    write_release(candidate)
+    shutil.copytree(candidate, reference)
+    wheel = candidate / "package-2.whl"
+    wheel.write_bytes(b"different wheel")
+    manifest = candidate / "manifest.json"
+    data = json.loads(manifest.read_text())
+    data["packages"][2]["sha256"] = digest(wheel.read_bytes())
+    manifest.write_text(json.dumps(data))
+    checksums = candidate / "SHA256SUMS"
+    names = [line.split(maxsplit=1)[1] for line in checksums.read_text().splitlines()]
+    checksums.write_text("".join(
+        f"{digest((candidate / name).read_bytes())}  {name}\n" for name in names
+    ))
+    verify_release(candidate, COMMIT, BETA_TAG, promotion=False)
+    with pytest.raises(ValueError, match="independent reference mismatch"):
+        verify_release(candidate, COMMIT, BETA_TAG, False, reference)
+
+
+def test_stable_matches_independent_beta(tmp_path):
+    candidate, reference = tmp_path / "candidate", tmp_path / "reference"
+    candidate.mkdir()
+    reference.mkdir()
+    write_release(candidate, promotion=True)
+    write_release(reference)
+    verify_release(candidate, COMMIT, BETA_TAG, True, reference)

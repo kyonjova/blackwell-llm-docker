@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Verify that explicit runtime locks cover their resolved dependency closure."""
+"""Check external lock membership; installed component metadata is checked separately.
+
+This check compares the public requirements resolver's output with explicit
+locks. It does not certify local component wheels. The container build must
+also run verify_installed_requirements.py, which traverses the actual installed
+Requires-Dist metadata, including selected dependency extras.
+"""
 
 from __future__ import annotations
 

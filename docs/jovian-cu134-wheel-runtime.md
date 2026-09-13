@@ -1,6 +1,8 @@
 # Jovian CUDA 13.4 serving runtime
 
-Container status: **implemented; GPU-qualified**
+Container status: **implemented**. Qualification is specific to a source-locked
+image and serving configuration; the build-time GPU smoke check alone does
+not establish text, vision, CUDA-graph correctness, or performance parity.
 
 Direct-host status: **research-only**
 
@@ -118,14 +120,18 @@ unversioned `libcudart.so` linker name.
 
 ## Qwen3.8 container environment
 
-Status: **implemented; GPU-qualified**
+Status: **implemented**.
 
 `Dockerfile.qwen38-ngc-runtime` installs an assembled Qwen3.8 application bundle
 directly over the immutable NGC foundation. The build verifies the dependency
 closure, patch hashes, application wheel imports, and packaged NCCL selection.
 The resulting entry point selects the packaged NCCL library before importing
-PyTorch. GPU qualification imports the vLLM and LMCache native extensions and
-executes a BF16 matrix multiplication on an SM120 device.
+PyTorch. The optional GPU smoke check imports the vLLM and LMCache native
+extensions and executes a BF16 matrix multiplication on an SM120 device.
+Serving qualification additionally requires a full model load, target and MTP
+CUDA-graph capture, text/image requests, and warmed inference measurements.
+`qualify_qwen38_api.py` provides repeatable temperature-one arithmetic and
+solid-color image checks; those checks are not a general accuracy evaluation.
 
 Build the image with an assembled bundle directory and an explicit image tag:
 
@@ -174,7 +180,8 @@ environment at an absent destination path:
 The installer creates an isolated Python 3.12 environment with `uv`, installs
 the exact wheel set, runs `uv pip check`, preloads the packaged NCCL library,
 and imports the serving components. Run the bundled verifier with
-`--require-gpu` before qualifying a release for SM120 serving.
+`--require-gpu` for the native GPU smoke gate; full serving qualification is
+a separate requirement.
 
 The Qwen3.8 runtime uses B12X and FlashInfer execution paths and pins
 `apache-tvm-ffi` 0.1.11, which satisfies B12X, FlashInfer, and XGrammar.

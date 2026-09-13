@@ -54,6 +54,16 @@ def test_ignores_unselected_extra() -> None:
     assert dependency_errors(selected) == []
 
 
+def test_checks_dependencies_declared_by_local_wheel_and_selected_extras() -> None:
+    selected = distributions(
+        vllm=("1.0", ["component[images]>=1"]),
+        component=("1.0", ['missing_decoder>=2; extra == "images"']),
+    )
+    assert dependency_errors(selected, {"vllm"}) == [
+        "component requires missing_decoder>=2; extra == \"images\", but it is not installed"
+    ]
+
+
 def test_ignores_unrelated_system_distribution() -> None:
     selected = distributions(
         vllm=("1.0", ["torch==2.14"]),

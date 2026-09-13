@@ -27,13 +27,15 @@ def dependency_errors(
     roots: Iterable[str] | None = None,
 ) -> list[str]:
     errors: list[str] = []
-    pending = list(selected if roots is None else roots)
-    checked: set[str] = set()
+    pending = [(name, frozenset()) for name in (selected if roots is None else roots)]
+    checked: set[tuple[str, frozenset[str]]] = set()
     while pending:
-        package_name = canonicalize_name(pending.pop())
-        if package_name in checked:
+        name, extras = pending.pop()
+        package_name = canonicalize_name(name)
+        identity = (package_name, extras)
+        if identity in checked:
             continue
-        checked.add(package_name)
+        checked.add(identity)
         distribution = selected.get(package_name)
         if distribution is None:
             errors.append(f"runtime root {package_name} is not installed")
@@ -44,8 +46,8 @@ def dependency_errors(
             except InvalidRequirement as error:
                 errors.append(f"{package_name}: invalid requirement {raw_requirement!r}: {error}")
                 continue
-            if requirement.marker is not None and not requirement.marker.evaluate(
-                {"extra": ""}
+            if requirement.marker is not None and not any(
+                requirement.marker.evaluate({"extra": extra}) for extra in extras | {""}
             ):
                 continue
             dependency_name = canonicalize_name(requirement.name)
@@ -61,7 +63,7 @@ def dependency_errors(
                     f"{dependency.version} is selected"
                 )
                 continue
-            pending.append(dependency_name)
+            pending.append((dependency_name, frozenset(requirement.extras)))
     return errors
 
 

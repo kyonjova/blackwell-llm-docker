@@ -49,6 +49,7 @@ def verify_release(
     source_commit: str,
     beta_tag: str,
     promotion: bool,
+    reference_directory: Path | None = None,
 ) -> None:
     """Verify identity, membership, and hashes for one foundation release."""
     manifest_path = directory / "manifest.json"
@@ -101,6 +102,15 @@ def verify_release(
     if sha256(directory / archive) != archive_checksums[archive]:
         raise ValueError("foundation archive digest mismatch")
 
+    if reference_directory is not None:
+        reference = {path.name for path in reference_directory.iterdir() if path.is_file()}
+        beta_assets = expected - {"stable-promotion.json"}
+        if reference != beta_assets:
+            raise ValueError("independent reference asset set mismatch")
+        for name in sorted(beta_assets):
+            if sha256(directory / name) != sha256(reference_directory / name):
+                raise ValueError(f"independent reference mismatch: {name}")
+
     if promotion:
         promotion_record = json.loads(
             (directory / "stable-promotion.json").read_text(encoding="utf-8")
@@ -127,8 +137,12 @@ def main() -> None:
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--beta-tag", required=True)
     parser.add_argument("--promotion", action="store_true")
+    parser.add_argument("--reference-directory", type=Path)
     args = parser.parse_args()
-    verify_release(args.directory, args.source_commit, args.beta_tag, args.promotion)
+    verify_release(
+        args.directory, args.source_commit, args.beta_tag, args.promotion,
+        args.reference_directory,
+    )
 
 
 if __name__ == "__main__":

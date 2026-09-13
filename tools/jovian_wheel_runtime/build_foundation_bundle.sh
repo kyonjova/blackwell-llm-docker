@@ -57,8 +57,8 @@ done
 
 wheel_metadata() {
   local wheel=$1 field=$2
-  unzip -p "${wheel}" '*/METADATA' \
-    | awk -F': ' -v field="${field}" '$1 == field {print $2; exit}'
+  unzip -p "${wheel}" '*.dist-info/METADATA' \
+    | awk -F': ' -v field="${field}" '$1 == field && !seen {print $2; seen=1}'
 }
 
 requirements="${output_dir}/bundle/requirements-foundation.txt"
