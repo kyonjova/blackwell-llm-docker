@@ -37,10 +37,12 @@ cuda-pathfinder==1.6.0
 cuda-python==13.3.1
 cuda-tile==1.4.0
 cufile-python==0.2.0
+cupy-cuda13x==13.6.0
 depyf==0.20.0
 dill==0.4.1
 docstring-parser==0.18.0
 fastapi==0.136.3
+fastrlock==0.8.3
 frozenlist==1.8.0
 google-api-core==2.34.0
 google-auth==2.57.0
