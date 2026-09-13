@@ -179,6 +179,46 @@ def assembly_identity(channel: dict, components: dict, recipe_commit: str) -> st
     ).hexdigest()
 
 
+def completed_publication(repository: str, assembly: dict) -> bool:
+    """Do not suppress retries for a release with interrupted asset uploads."""
+    tag = assembly["release_tag"]
+    page = 1
+    release = None
+    while True:
+        releases = api(f"repos/{repository}/releases?per_page=100&page={page}")
+        release = next((item for item in releases if item["tag_name"] == tag), None)
+        if release is not None or len(releases) < 100:
+            break
+        page += 1
+    if release is None or release["draft"]:
+        return False
+    required = {"container-release.json", "manifest.json", "community-assembly.json"}
+    assets = {item["name"]: item for item in release["assets"]}
+    if any(
+        name not in assets
+        or assets[name].get("state") != "uploaded"
+        or not assets[name].get("size")
+        for name in required
+    ):
+        return False
+    receipt = json.loads(asset_bytes(repository, assets["container-release.json"]))
+    manifest = asset_bytes(repository, assets["manifest.json"])
+    lock = json.loads(asset_bytes(repository, assets["community-assembly.json"]))
+    return (
+        receipt.get("status") == "qualified"
+        and receipt.get("assembly_sha256") == assembly["assembly_sha256"]
+        and lock.get("assembly_sha256") == assembly["assembly_sha256"]
+        and receipt.get("runtime_manifest_sha256")
+        == hashlib.sha256(manifest).hexdigest()
+        and bool(
+            re.fullmatch(
+                r"ghcr.io/local-inference-lab/vllm@sha256:[0-9a-f]{64}",
+                receipt.get("digest", ""),
+            )
+        )
+    )
+
+
 def resolve(config_path: Path, output: Path) -> dict:
     config = json.loads(config_path.read_text())
     if config.get("schema") != "local-inference-container-channel/v1":
@@ -295,7 +335,14 @@ def main() -> None:
     downloader = commands.add_parser("download")
     downloader.add_argument("--assembly", type=Path, required=True)
     downloader.add_argument("--output", type=Path, required=True)
+    completed = commands.add_parser("completed")
+    completed.add_argument("--assembly", type=Path, required=True)
+    completed.add_argument("--repository", required=True)
     args = parser.parse_args()
+    if args.command == "completed":
+        assembly = json.loads(args.assembly.read_text())
+        print("true" if completed_publication(args.repository, assembly) else "false")
+        return
     if args.command == "download":
         download(json.loads(args.assembly.read_text()), args.output)
         return

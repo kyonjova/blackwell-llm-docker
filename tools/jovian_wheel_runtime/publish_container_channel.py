@@ -68,6 +68,72 @@ def verify_cache_test_report(path: Path) -> dict[str, int]:
     return {"passed": len(cases) - skipped, "skipped": skipped}
 
 
+def publish_release(
+    repository: str, assembly: dict, commit: str, notes: Path, assets: list[Path]
+) -> None:
+    """Repair interrupted uploads before making the release publicly complete."""
+    tag = assembly["release_tag"]
+    listing = (
+        run(
+            [
+                "gh",
+                "api",
+                "--paginate",
+                f"repos/{repository}/releases?per_page=100",
+                "--jq",
+                ".[].tag_name",
+            ]
+        )
+        .decode()
+        .splitlines()
+    )
+    if tag not in listing:
+        execute(
+            [
+                "gh",
+                "release",
+                "create",
+                tag,
+                "--repo",
+                repository,
+                "--target",
+                commit,
+                "--draft",
+                "--prerelease",
+                "--title",
+                assembly["image"].rsplit(":", 1)[1],
+                "--notes-file",
+                str(notes),
+            ]
+        )
+    execute(
+        [
+            "gh",
+            "release",
+            "upload",
+            tag,
+            "--repo",
+            repository,
+            "--clobber",
+            *map(str, assets),
+        ]
+    )
+    execute(
+        [
+            "gh",
+            "release",
+            "edit",
+            tag,
+            "--repo",
+            repository,
+            "--draft=false",
+            "--prerelease",
+            "--notes-file",
+            str(notes),
+        ]
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--assembly", type=Path, required=True)
@@ -304,25 +370,12 @@ def main() -> None:
             f"[{component['release']}]({component['release_url']}) |"
         )
     notes.write_text("\n".join(rows) + "\n")
-    execute(
-        [
-            "gh",
-            "release",
-            "create",
-            assembly["release_tag"],
-            "--repo",
-            repository,
-            "--target",
-            commit,
-            "--prerelease",
-            "--title",
-            image.rsplit(":", 1)[1],
-            "--notes-file",
-            str(notes),
-            str(receipt_path),
-            str(manifest_path),
-            str(args.assembly),
-        ]
+    publish_release(
+        repository,
+        assembly,
+        commit,
+        notes,
+        [receipt_path, manifest_path, args.assembly],
     )
 
 

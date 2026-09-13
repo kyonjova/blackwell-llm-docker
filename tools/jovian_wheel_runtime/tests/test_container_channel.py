@@ -173,3 +173,47 @@ def test_lmcache_requires_community_receipt(monkeypatch):
     config["required_reviews"] = [49, 62]
     with pytest.raises(ValueError, match="complete community"):
         channel.select_component("lmcache", config)
+
+
+@pytest.mark.parametrize(
+    "fault", [None, "missing", "uploading", "draft", "checksum", "identity"]
+)
+def test_published_assembly_requires_complete_matching_receipt(monkeypatch, fault):
+    assembly = {"release_tag": "beta-example", "assembly_sha256": "a" * 64}
+    manifest = b'{"packages":[]}'
+    receipt = {
+        **assembly,
+        "status": "qualified",
+        "runtime_manifest_sha256": hashlib.sha256(manifest).hexdigest(),
+        "digest": "ghcr.io/local-inference-lab/vllm@sha256:" + "b" * 64,
+    }
+    if fault == "checksum":
+        receipt["runtime_manifest_sha256"] = "c" * 64
+    if fault == "identity":
+        receipt["assembly_sha256"] = "c" * 64
+    payloads = {
+        "container-release.json": json.dumps(receipt).encode(),
+        "manifest.json": manifest,
+        "community-assembly.json": json.dumps(assembly).encode(),
+    }
+    assets = [
+        {"name": name, "state": "uploaded", "size": len(data)}
+        for name, data in payloads.items()
+    ]
+    if fault == "missing":
+        assets.pop()
+    if fault == "uploading":
+        assets[-1]["state"] = "starter"
+    monkeypatch.setattr(
+        channel,
+        "api",
+        lambda endpoint: [
+            {"tag_name": "beta-example", "draft": fault == "draft", "assets": assets}
+        ],
+    )
+    monkeypatch.setattr(
+        channel, "asset_bytes", lambda repo, asset: payloads[asset["name"]]
+    )
+    assert channel.completed_publication(
+        "local-inference-lab/blackwell-llm-docker", assembly
+    ) is (fault is None)

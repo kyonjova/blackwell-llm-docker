@@ -40,13 +40,22 @@ A relevant source change without a wheel leaves the assembly pending. Uploads
 must include the manifest, source archive and checksum; partial releases cannot
 enter a container build. ABI incompatibility or missing LMCache source proof
 fails the scan. Recipe and component identities form one SHA-256 assembly ID.
-An already-published ID does not trigger another build.
+An ID with a complete publication receipt does not trigger another build.
+A release with missing assets is retried; uploads are completed before a draft
+release becomes public. The receipt binds the runtime manifest checksum and
+registry digest to the assembly ID.
 
 Changes observed during one interval are assembled together. GitHub concurrency
 serializes channel jobs, and the frank2 worker lock serializes native compilation.
 The rootless builder retains its bounded memory/CPU allocation and persistent
 download, object and Docker layer caches. Other component wheels are downloaded,
 not recompiled by the container job.
+
+The Docker repository runner has a 12 GiB memory throttle threshold and 16 GiB
+hard limit, declared in
+`tools/jovian_wheel_runtime/systemd/lil-wheel-actions-runner@blackwell-llm-docker.service.d/memory.conf`.
+Buildx buffers OCI layer transfers in the client process, outside the 256 GiB
+native compiler allocation. Other repository runners retain their 3/4 GiB limits.
 
 ## Names and publication
 
@@ -57,9 +66,11 @@ The exact digest, full ID, component release URLs, source commits and wheel
 hashes are retained in GitHub Releases and the installed runtime manifest at
 `/opt/venv/share/lil-runtime/manifest.json`.
 
-The alias `jovian-judgement-beta` moves only from a successful `main` workflow
-whose source branches have not advanced during its build. The explicitly named
-CI branch can publish immutable qualification images but cannot move the alias.
+Publication runs only from `main`. The alias `jovian-judgement-beta` moves only
+when source branches have not advanced during the build. The explicitly named
+CI branch performs build and qualification with a read-only GitHub token; it
+cannot publish an image or move the alias. Repository administrators must protect
+write access to `main` and the trusted self-hosted qualification branch.
 No running serving container is restarted or updated by publication.
 
 The publisher verifies 67 preserved NGC foundation layers plus one application

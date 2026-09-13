@@ -8,6 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from publish_container_channel import verify_cache_test_report
+import publish_container_channel as publisher
 
 
 @pytest.mark.parametrize("skip_checkpoint", [False, True])
@@ -32,3 +33,31 @@ def test_qualification_requires_executed_cache_contract_groups(
             verify_cache_test_report(report)
     else:
         assert verify_cache_test_report(report) == {"passed": 5, "skipped": 0}
+
+
+@pytest.mark.parametrize("exists", [False, True])
+def test_release_upload_repairs_partial_release_before_publishing(
+    monkeypatch, tmp_path, exists
+):
+    calls = []
+    monkeypatch.setattr(
+        publisher, "run", lambda args: b"beta-example\n" if exists else b""
+    )
+    monkeypatch.setattr(publisher, "execute", lambda args: calls.append(args))
+    publisher.publish_release(
+        "local-inference-lab/blackwell-llm-docker",
+        {
+            "release_tag": "beta-example",
+            "image": "ghcr.io/local-inference-lab/vllm:beta-example",
+        },
+        "a" * 40,
+        tmp_path / "notes.md",
+        [tmp_path / "manifest.json"],
+    )
+    assert [call[2] for call in calls] == (
+        ["upload", "edit"] if exists else ["create", "upload", "edit"]
+    )
+    if not exists:
+        assert "--draft" in calls[0]
+    assert "--clobber" in calls[-2]
+    assert "--draft=false" in calls[-1]

@@ -46,19 +46,45 @@ jobs:
             echo 'build=false' >> "${GITHUB_OUTPUT}"
             exit 0
           fi
-          release_tag=$(jq -r .release_tag "${assembly}")
-          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
-            --jq '.[].tag_name' > "${RUNNER_TEMP}/published-tags.txt"
-          if grep -Fxq "${release_tag}" "${RUNNER_TEMP}/published-tags.txt"; then
+          complete=$(python3 tools/jovian_wheel_runtime/container_channel.py completed \
+            --assembly "${assembly}" --repository "${GITHUB_REPOSITORY}")
+          if [[ "${complete}" == true ]]; then
             echo 'build=false' >> "${GITHUB_OUTPUT}"
             exit 0
           fi
           echo 'build=true' >> "${GITHUB_OUTPUT}"
           printf 'assembly=%s\n' "$(base64 -w0 "${assembly}")" >> "${GITHUB_OUTPUT}"
 
-  build:
+  qualify:
     needs: resolve
-    if: needs.resolve.outputs.build == 'true'
+    if: needs.resolve.outputs.build == 'true' && github.ref != 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, lil-wheel-builder]
+    timeout-minutes: 540
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Build and qualify without publication credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSEMBLY_BASE64: ${{ needs.resolve.outputs.assembly }}
+          QUALIFICATION_GPU: ${{ vars.LIL_RUNTIME_QUALIFICATION_GPU }}
+        run: |
+          set -euo pipefail
+          test -n "${QUALIFICATION_GPU}"
+          assembly="${RUNNER_TEMP}/community-assembly.json"
+          printf '%s' "${ASSEMBLY_BASE64}" | base64 -d > "${assembly}"
+          python3 tools/jovian_wheel_runtime/publish_container_channel.py \
+            --assembly "${assembly}" \
+            --output "${RUNNER_TEMP}/community-build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --gpu "${QUALIFICATION_GPU}" --build-only
+
+  publish:
+    needs: resolve
+    if: needs.resolve.outputs.build == 'true' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, linux, x64, lil-wheel-builder]
     timeout-minutes: 540
     permissions:
