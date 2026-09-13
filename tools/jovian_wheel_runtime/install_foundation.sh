@@ -34,17 +34,12 @@ test "$(sha256sum "${uv_path}" | awk '{print $1}')" = "${expected_uv_sha256}"
   -r "${bundle_dir}/requirements-foundation.txt"
 
 "${venv_path}/bin/python" - <<'PY'
-import ctypes
 import importlib.metadata
-import torch
+from pathlib import Path
 
 assert importlib.metadata.version("torch") == (
     "2.14.0a0+4fdf77b940.nv26.8.63802676"
 )
-assert torch.__version__ == "2.14.0a0+4fdf77b940.nv26.08"
-assert torch.version.cuda == "13.4"
-assert torch._C._GLIBCXX_USE_CXX11_ABI
-ctypes.CDLL("libmpi.so.40")
 for package in (
     "local-inference-torch-native-support",
     "nvidia-cuda-runtime",
@@ -53,8 +48,15 @@ for package in (
     "nvidia-cudnn-cu13",
 ):
     importlib.metadata.version(package)
-print("CUDA 13.4 PyTorch foundation import: PASS")
+torch_distribution = importlib.metadata.distribution("torch")
+for relative_path in (
+    "torch/_C.cpython-312-x86_64-linux-gnu.so",
+    "torch/lib/libtorch_cuda.so",
+    "torch/lib/libmpi.so.40",
+):
+    assert Path(torch_distribution.locate_file(relative_path)).is_file()
+print("CUDA 13.4 PyTorch foundation files: PASS")
 PY
 
-printf 'foundation_venv=%s status=installed native_runtime=self-contained driver=R580+ full_cuda134=R615+\n' \
+printf 'foundation_venv=%s status=installed nccl=required driver=R580+ full_cuda134=R615+\n' \
   "$(realpath "${venv_path}")"

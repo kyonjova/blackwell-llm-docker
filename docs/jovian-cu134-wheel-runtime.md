@@ -79,9 +79,11 @@ foundation installer creates an isolated environment without
 ```
 
 The installer obtains public CUDA wheels from PyPI, installs foundation wheels
-from the release bundle, and verifies the PyTorch version, CUDA build version,
-C++ ABI, and native loader closure. Application and NCCL installers must reject
-manifests whose Python, CUDA, PyTorch, or C++ ABI fields differ.
+from the release bundle, and verifies package versions and native payloads.
+Importing PyTorch requires the separately versioned LIL NCCL package. The
+complete runtime verifier imports PyTorch with that package preloaded, checks
+the CUDA build version and C++ ABI, and rejects manifests whose Python, CUDA,
+PyTorch, or C++ ABI fields differ.
 
 ## Build isolation and caching
 
