@@ -1,0 +1,43 @@
+# syntax=docker/dockerfile:1.7
+
+ARG UV_IMAGE=ghcr.io/astral-sh/uv@sha256:173bd274963155487320f70564f5e2eb28c415eaac841ec25f9c55422ca1d068
+ARG UBUNTU_IMAGE=ubuntu:24.04@sha256:a61567bd31828687156d735ea8eb01ba4e37636e225dd6a48ba94136a70d9d61
+
+FROM ${UV_IMAGE} AS uv
+
+FROM ${UBUNTU_IMAGE} AS runtime-base
+ENV DEBIAN_FRONTEND=noninteractive
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update \
+ && apt-get install --yes --no-install-recommends \
+      build-essential \
+      ca-certificates \
+      libaio1t64 \
+      libibverbs1 \
+      libnuma1 \
+      liburing2 \
+      python3.12 \
+      python3.12-dev
+
+FROM runtime-base AS install
+COPY --from=uv /uv /usr/local/bin/uv
+COPY --from=qwen-runtime-bundle / /opt/local-inference/qwen38-runtime/
+RUN UV_BIN=/usr/local/bin/uv \
+    /opt/local-inference/qwen38-runtime/install_qwen38_runtime.sh \
+      /opt/local-inference/venvs/qwen38-cu134
+
+FROM runtime-base AS runtime
+ARG RUNTIME_SOURCE_COMMIT
+LABEL org.opencontainers.image.title="LIL Qwen3.8 CUDA 13.4 wheel runtime" \
+      org.opencontainers.image.description="Qwen3.8 Flash Next vLLM runtime installed from one SHA-256-locked wheel bundle" \
+      org.opencontainers.image.source="https://github.com/local-inference-lab/blackwell-llm-docker" \
+      org.opencontainers.image.revision="${RUNTIME_SOURCE_COMMIT}"
+COPY --from=install /opt/local-inference/venvs/qwen38-cu134 \
+  /opt/local-inference/venvs/qwen38-cu134
+COPY tools/jovian_wheel_runtime/qwen38_runtime_entrypoint.sh \
+  /usr/local/bin/qwen38-runtime
+ENV PATH=/opt/local-inference/venvs/qwen38-cu134/bin:${PATH} \
+    VIRTUAL_ENV=/opt/local-inference/venvs/qwen38-cu134
+ENTRYPOINT ["/usr/local/bin/qwen38-runtime"]
+CMD ["python", "-m", "vllm.entrypoints.cli.main", "--help"]
