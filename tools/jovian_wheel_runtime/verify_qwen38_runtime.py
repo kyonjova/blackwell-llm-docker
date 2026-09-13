@@ -38,7 +38,11 @@ def main() -> int:
     import modelopt  # noqa: F401
     import torch
     import vllm  # noqa: F401
-    import vllm._C  # noqa: F401
+    # CUDA operators use vLLM's stable LibTorch ABI extensions.  The legacy
+    # vllm._C module is a ROCm/CPU compatibility target and is intentionally
+    # absent from the CUDA wheel.
+    import vllm._C_stable_libtorch  # noqa: F401
+    import vllm._moe_C_stable_libtorch  # noqa: F401
     import xgrammar  # noqa: F401
     from instanttensor import safe_open  # noqa: F401
 
