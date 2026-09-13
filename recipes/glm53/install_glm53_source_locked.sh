@@ -54,6 +54,9 @@ readonly lmcache_package=/opt/venv/lib/python3.12/site-packages/lmcache
 torch_before=$("$uv" run --no-project --python "$python" "$python" -c \
     'import torch; print(f"{torch.__version__}|{torch.version.cuda}|{int(torch._C._GLIBCXX_USE_CXX11_ABI)}")')
 test "$torch_before" = '2.13.0|13.3|1'
+"$python" /build-inputs/install_dependency_python_patches.py
+install -Dm644 /build-inputs/dependency-python-patches.json \
+    /opt/glm53-flash/dependency-python-patches.json
 "$uv" pip install --python "$python" --no-deps --requirement \
     /build-inputs/glm53-r18-lmcache-runtime-requirements.txt
 "$uv" pip install --python "$python" --no-deps --reinstall /lmcache-artifacts/*.whl

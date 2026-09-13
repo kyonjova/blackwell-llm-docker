@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -77,6 +78,7 @@ def main() -> None:
         "runtime.liburing.package.version": "2.5-1build1",
         "runtime.rootfs.layers": "2",
         "runtime.cudagraph.mode": "FULL_AND_PIECEWISE",
+        "runtime.ds41.breakable-prefill.default": "0",
         "runtime.moe-backend.default": "b12x",
         "runtime.scheduler.max-num-batched-tokens": "4096",
         "runtime.scheduler.prefill-compute-share": "0.4",
@@ -170,6 +172,11 @@ def main() -> None:
         "pack_lmcache_native_reuse.py",
         "install_glm53_source_locked.sh",
         "install_vllm_source_version.py",
+        "install_dependency_python_patches.py",
+        "dependency-python-patches.json",
+        "torch-schema-enumeration.patch",
+        "torch-mutable-argument-metadata.patch",
+        "cutlass-sentinel-identity.patch",
         "serve-ds4-jovian.sh",
         "serve-ds41-jovian.sh",
         "Dockerfile.jovian-stable-native",
@@ -184,6 +191,11 @@ def main() -> None:
     )
     for filename in inputs:
         lock[f"input.{filename}.sha256"] = digest(docker / filename)
+    dependency_manifest = docker / "dependency-python-patches.json"
+    for item in json.loads(dependency_manifest.read_text())["patches"]:
+        prefix = "dependency.python." + item["patch"].removesuffix(".patch")
+        for field in ("path", "before_sha256", "after_sha256", "attribution"):
+            lock[f"{prefix}.{field}"] = item[field]
     shutil.copy2(args.uv, args.output / "uv")
     lock["build.uv.sha256"] = digest(args.output / "uv")
     lock["runtime.cache.fingerprint"] = (
@@ -192,6 +204,7 @@ def main() -> None:
         f"-flashkda{lock['flashkda.extension.sha256'][:8]}"
         f"-native{lock['vllm.native.extension.sha256'][:8]}"
         f"-fi{lock['flashinfer.commit'][:8]}"
+        f"-py{digest(dependency_manifest)[:8]}"
     )
     target = args.output / "source.lock"
     target.write_text("".join(f"{key}={value}\n" for key, value in lock.items()))
