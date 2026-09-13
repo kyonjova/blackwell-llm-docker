@@ -1,0 +1,26 @@
+{
+  "schema": "local-inference-python-patches/v1",
+  "patches": [
+    {
+      "patch": "torch-schema-enumeration.patch",
+      "path": "usr/local/lib/python3.12/dist-packages/torch/_library/utils.py",
+      "before_sha256": "e0db5e8977c2775443a46bd2f251cf07087863ed301b6fbb76d006a0cf0ef854",
+      "after_sha256": "7e694fb5c280d4cb671415d6b14a6975f9ed42c8fb3c9907e93c1a3d57493e64",
+      "attribution": "Equivalent backport of yingru's linear schema expansion, pytorch/pytorch#195110 (7a1a695c903d583f4d1e55b08eeacd2dc5a4238a); enumeration spelling retained from serving qualification."
+    },
+    {
+      "patch": "torch-mutable-argument-metadata.patch",
+      "path": "usr/local/lib/python3.12/dist-packages/torch/_library/custom_ops.py",
+      "before_sha256": "8480c54e3645915a8062ee96d558e4ee7387a3cf9d52d644551e8147063dfc90",
+      "after_sha256": "aabff0867064a80dda974986ea3a31659105e3020248562f1de1cf89daf759cc",
+      "attribution": "Martin Vit with OpenAI Codex assistance; immutable mutation metadata over PyTorch cf30153c4c131c8164ee7798e5022d810682e2cb."
+    },
+    {
+      "patch": "cutlass-sentinel-identity.patch",
+      "path": "opt/venv/lib/python3.12/site-packages/nvidia_cutlass_dsl/dsl_packages/cutlass/base_dsl/jit_executor.py",
+      "before_sha256": "1c2f992e7ffd574ef2c3f6ad2af48f3e7c182e9d3feff8ec1a363f8747fcef20",
+      "after_sha256": "a36eea9adcb75546aa5a373809581772234d13392df74a9f4854291e0e9e4221",
+      "attribution": "Martin Vit with OpenAI Codex assistance; identify unbound argument slots by sentinel identity."
+    }
+  ]
+}
