@@ -141,6 +141,17 @@ def main() -> int:
         run(
             [
                 str(args.uv),
+                "venv",
+                "--python",
+                sys.executable,
+                "--system-site-packages",
+                str(venv),
+            ],
+            env=environment,
+        )
+        run(
+            [
+                str(args.uv),
                 "pip",
                 "install",
                 "--python",
@@ -149,17 +160,6 @@ def main() -> int:
                 "--no-deps",
                 "-r",
                 str(args.overlay_lock),
-            ],
-            env=environment,
-        )
-        run(
-            [
-                str(args.uv),
-                "venv",
-                "--python",
-                sys.executable,
-                "--system-site-packages",
-                str(venv),
             ],
             env=environment,
         )
