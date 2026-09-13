@@ -1,12 +1,15 @@
-# Jovian CUDA 13.4 wheel runtime
+# Jovian CUDA 13.4 serving runtime
 
-Status: **research-only**
+Container status: **implemented; GPU-qualified**
 
-The Jovian CUDA 13.4 wheel runtime defines one source-locked Python environment
-for container and direct-host vLLM serving. It uses Python 3.12, CUDA 13.4.1,
-the NVIDIA PyTorch 26.08 build, the C++11 ABI, and NVIDIA compute capability
-12.0. Docker and direct-host installations consume the same wheel files and
-SHA-256-locked dependency manifests.
+Direct-host status: **research-only**
+
+The Jovian CUDA 13.4 serving runtime defines a source-locked Python environment
+for vLLM on NVIDIA compute capability 12.0. It uses Python 3.12, CUDA 13.4.1,
+the NVIDIA PyTorch 26.08 build, and the C++11 ABI. The supported deployment is a
+single-layer application image over an immutable NVIDIA PyTorch foundation.
+Component releases use the same SHA-256-locked wheel manifests so a container
+can be reconstructed from independently published source revisions.
 
 The runtime has three independently versioned parts:
 
@@ -22,6 +25,21 @@ digest `sha256:33ef5fc15e8937602d64022209cdb2777b32dadf742f41332023d946041b3c14`
 It contains PyTorch
 `2.14.0a0+4fdf77b940.nv26.8.63802676`, CUDA 13.4.1, and the exact NVIDIA Triton
 build used to compile the application wheels.
+
+The foundation has 67 root filesystem layers. The Qwen3.8 runtime image retains
+those 67 layer digests unchanged and adds one application layer containing the
+isolated virtual environment, launch entry point, dependency manifests, and
+Python compatibility patches. Image construction rejects an NGC source image
+whose manifest digest differs from the value above.
+
+The application layer applies two fail-closed compatibility patches. The Torch
+schema enumeration patch implements the behavior proposed by PyTorch pull
+request 195110, which is not part of NVIDIA PyTorch 26.08. The CUTLASS DSL patch
+stabilizes generated kernel identity in both the NGC Python tree and the venv
+copy installed by application dependencies. Each patched file must match a
+known input hash and a known output hash. NVIDIA PyTorch 26.08 already contains
+the required custom-operation mutation hot path, so the corresponding PyTorch
+2.13 patch is neither applied nor supported on this foundation.
 
 NVIDIA does not publish that PyTorch build through a public Python package
 index. The foundation builder verifies every hashed installed file against the
@@ -98,9 +116,32 @@ from `/usr/local/cuda` instead of the venv. The standalone compiler smoke uses
 the static CUDA runtime because NVIDIA's pip runtime wheel does not install an
 unversioned `libcudart.so` linker name.
 
-## Qwen3.8 serving environment
+## Qwen3.8 container environment
 
-Status: **implemented; GPU qualification required**
+Status: **implemented; GPU-qualified**
+
+`Dockerfile.qwen38-ngc-runtime` installs an assembled Qwen3.8 application bundle
+directly over the immutable NGC foundation. The build verifies the dependency
+closure, patch hashes, application wheel imports, and packaged NCCL selection.
+The resulting entry point selects the packaged NCCL library before importing
+PyTorch. GPU qualification imports the vLLM and LMCache native extensions and
+executes a BF16 matrix multiplication on an SM120 device.
+
+Build the image with an assembled bundle directory and an explicit image tag:
+
+```bash
+tools/jovian_wheel_runtime/build_qwen38_ngc_runtime_image.sh \
+  /path/to/qwen38-runtime-bundle \
+  local/qwen38-cu134:source-locked
+```
+
+The build context must contain a clean Git tree because the image label records
+the exact `blackwell-llm-docker` revision. Set `RUNTIME_GPU` to a physical GPU
+identifier to execute the GPU verifier after the image is loaded.
+
+## Qwen3.8 application bundle
+
+Status: **implemented**
 
 `assemble_qwen38_runtime_bundle.py` combines seven independently verified
 component bundles: the CUDA foundation, NCCL, FlashInfer, B12X, vLLM, LMCache,
@@ -108,7 +149,10 @@ and InstantTensor. It rejects incompatible Python, CUDA, PyTorch, builder-image,
 manifest-schema, or SHA-256 contracts. The resulting directory contains every
 custom wheel plus two hash-locked public dependency manifests.
 
-Install the assembled directory into an absent destination path:
+Direct-host installation of the assembled directory remains research-only. It
+requires repackaging the patched NVIDIA PyTorch foundation and validating every
+native loader path outside the NGC image. The installer creates an isolated
+environment at an absent destination path:
 
 ```bash
 ./install_qwen38_runtime.sh /opt/local-inference/venvs/qwen38-cu134

@@ -93,9 +93,9 @@ def main() -> int:
         raise RuntimeError("PyTorch and application wheels require the C++11 ABI")
     cuda_home = Path(os.environ.get("CUDA_HOME", "")).resolve()
     if not (cuda_home / "include" / "cuda.h").is_file():
-        raise RuntimeError("CUDA_HOME must expose the wheel-packaged cuda.h")
+        raise RuntimeError("CUDA_HOME must expose the selected foundation's cuda.h")
     if not (cuda_home / "bin" / "nvcc").is_file():
-        raise RuntimeError("CUDA_HOME must expose the wheel-packaged nvcc")
+        raise RuntimeError("CUDA_HOME must expose the selected foundation's nvcc")
     if args.foundation == "ngc":
         expected_cuda = Path("/usr/local/cuda").resolve()
         if cuda_home != expected_cuda:
