@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-ARG UV_IMAGE=ghcr.io/astral-sh/uv@sha256:173bd274963155487320f70564f5e2eb28c415eaac841ec25f9c55422ca1d068
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.11.30@sha256:173b74e36e4bddd0546771a7041cae9f65b3ad28964eb22a2853bca944b2c67a
 ARG UBUNTU_IMAGE=ubuntu:24.04@sha256:a61567bd31828687156d735ea8eb01ba4e37636e225dd6a48ba94136a70d9d61
 
 FROM ${UV_IMAGE} AS uv
