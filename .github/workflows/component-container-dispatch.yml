@@ -1,0 +1,42 @@
+name: Request community container assembly
+
+on:
+  workflow_call:
+    secrets:
+      container_dispatch_token:
+        description: Token with Actions write access only to blackwell-llm-docker
+        required: true
+
+permissions: {}
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      # No checkout or caller-controlled command is executed with this credential.
+      - name: Request the main-branch container resolver
+        env:
+          GH_TOKEN: ${{ secrets.container_dispatch_token }}
+          GH_HOST: github.com
+          GH_PROMPT_DISABLED: "1"
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo '::error::Set LIL_CONTAINER_DISPATCH_TOKEN with Actions write access only to local-inference-lab/blackwell-llm-docker.' >&2
+            exit 1
+          fi
+          for attempt in 1 2 3; do
+            if timeout 30s gh api --hostname github.com --method POST \
+              repos/local-inference-lab/blackwell-llm-docker/actions/workflows/community-container-release.yml/dispatches \
+              -f ref=main; then
+              echo 'Container resolution requested; image qualification and publication run separately.'
+              exit 0
+            fi
+            if [[ ${attempt} -lt 3 ]]; then
+              sleep "$((attempt * 5))"
+            fi
+          done
+          echo '::error::Container dispatch failed; retry this job after correcting credentials or connectivity. Published component assets are unchanged.' >&2
+          exit 1
