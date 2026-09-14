@@ -8,7 +8,22 @@ on:
       - jovian-cu134-foundation-stable-*
     paths:
       - .github/workflows/jovian-wheel-runtime-release.yml
-      - tools/jovian_wheel_runtime/**
+      # The Python foundation is independent of component wheels and Docker assembly.
+      - tools/jovian_wheel_runtime/Dockerfile
+      - tools/jovian_wheel_runtime/build_foundation_bundle.sh
+      - tools/jovian_wheel_runtime/build_torch_native_support.py
+      - tools/jovian_wheel_runtime/foundation-runtime.in
+      - tools/jovian_wheel_runtime/foundation-runtime.lock
+      - tools/jovian_wheel_runtime/foundation.lock
+      - tools/jovian_wheel_runtime/install_foundation.sh
+      - tools/jovian_wheel_runtime/repack_installed_distribution.py
+      - tools/jovian_wheel_runtime/run_serialized_build.sh
+      - tools/jovian_wheel_runtime/torch_native_support.json
+      - tools/jovian_wheel_runtime/verify_foundation_gpu.sh
+      - tools/jovian_wheel_runtime/verify_release_assets.py
+      - tools/jovian_wheel_runtime/tests/smoke_cuda.cu
+      - tools/jovian_wheel_runtime/tests/test_repack_installed_distribution.py
+      - tools/jovian_wheel_runtime/tests/test_verify_release_assets.py
   workflow_dispatch:
 
 permissions:
