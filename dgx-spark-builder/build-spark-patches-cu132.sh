@@ -217,10 +217,11 @@ export LAUNCHER_COMMIT="${LAUNCHER_COMMIT:-${VLLM_COMMIT}}"
 # this the right branch for my model" guard). Set per profile.
 export VLLM_REQUIRED_LAUNCHERS="${VLLM_REQUIRED_LAUNCHERS:-}"
 
-# B12X was renamed SparkInfer; the Docker build args keep the legacy name.
+# B12X repo: local-inference-lab/b12x (formerly named sparkinfer; that URL
+# 301-redirects here). Only the B12X_* build-arg names are legacy.
 # Pinned the same way as vLLM (the b12x stage also checks out the ref before
 # verifying the commit, so a moving branch races mid-build).
-export B12X_REPO="${SPARKINFER_REPO:-${B12X_REPO:-https://github.com/local-inference-lab/sparkinfer.git}}"
+export B12X_REPO="${SPARKINFER_REPO:-${B12X_REPO:-https://github.com/local-inference-lab/b12x.git}}"
 B12X_PIN="${B12X_PIN:-2fcf23a0ce269be27b2e03fece73d46e90e6aeea}"
 export B12X_REF="${SPARKINFER_REF:-${B12X_REF:-${B12X_PIN}}}"
 export B12X_COMMIT="${SPARKINFER_COMMIT:-${B12X_COMMIT:-${B12X_PIN}}}"

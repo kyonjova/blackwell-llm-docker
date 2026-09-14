@@ -1,0 +1,17 @@
+diff --git a/vllm/models/deepseek_v4/nvidia/dspark.py b/vllm/models/deepseek_v4/nvidia/dspark.py
+index f041aac..56fc582 100644
+--- a/vllm/models/deepseek_v4/nvidia/dspark.py
++++ b/vllm/models/deepseek_v4/nvidia/dspark.py
+@@ -323,6 +323,12 @@ def _insert_context_kv(
+ 
+ 
+ class DSparkDeepseekV4ForCausalLM(nn.Module):
++    # The draft ships in the target checkpoint as mtp.{0,1,2}.*; restrict the
++    # loader to the shards that hold those names (via the safetensors index)
++    # instead of streaming the whole 168 GB checkpoint a second time. Same
++    # mechanism as the V4.1 draft and the GLM/Qwen MTP heads.
++    checkpoint_weight_name_prefixes = ("mtp.",)
++
+     model_cls = DSparkDeepseekV4Model
+     # Draft weights ship in the target checkpoint (mtp.*) without embed/head, so
+     # load_dspark_model always aliases the target's.
