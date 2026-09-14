@@ -23,6 +23,8 @@ VLLM_DISABLED_KERNELS MarlinFP8ScaledMMLinearKernel
 VLLM_CPP_AR_1STAGE_NCCL_CUTOFF 56KB
 VLLM_CPP_AR_IGNORE_CUTOFF_MAX_ROWS 0
 VLLM_SOURCE_OVERLAY_ACTIVE 1
+OMP_NUM_THREADS 1
+MAX_CUDAGRAPH_CAPTURE_SIZE 256
 B12X_DYNAMIC_SPLIT_ROUTE_COMPUTE 1
 B12X_DYNAMIC_DIRECT_EXPERT_SCALES 1
 B12X_DYNAMIC_SPLIT_LOW_SMEM 1
@@ -45,6 +47,9 @@ export TP_SIZE=${TP_SIZE:-4}
 export MAX_MODEL_LEN=${MAX_MODEL_LEN:-131072}
 export MAX_NUM_SEQS=${MAX_NUM_SEQS:-4}
 export MAX_NUM_BATCHED_TOKENS=${MAX_NUM_BATCHED_TOKENS:-4096}
+export OMP_NUM_THREADS=${OMP_NUM_THREADS:-8}
+export MAX_CUDAGRAPH_CAPTURE_SIZE=${MAX_CUDAGRAPH_CAPTURE_SIZE:-128}
+export MAX_PARALLEL_PREFILLS=${MAX_PARALLEL_PREFILLS:-1}
 export GPU_MEMORY_UTILIZATION=${GPU_MEMORY_UTILIZATION:-0.95}
 export LOAD_FORMAT=${LOAD_FORMAT:-instanttensor}
 export ENGRAM_TABLE_MEMORY=${ENGRAM_TABLE_MEMORY:-disk}
@@ -68,9 +73,18 @@ for argument in "$@"; do
             generation_args=() ;;
     esac
 done
+page_args=()
+if [[ -n ${SWA_BLOCK_SIZE:-} ]]; then
+    page_args=(--swa-block-size "$SWA_BLOCK_SIZE")
+    for argument in "$@"; do
+        case "${argument//_/-}" in
+            --swa-block-size|--swa-block-size=*) page_args=() ;;
+        esac
+    done
+fi
 exec "${VLLM_SOURCE_DIR:-/opt/glm53-flash/vllm}/serve-ds41-flash.sh" \
     --decode-context-parallel-size "${DCP_SIZE:-1}" \
     --kv-cache-dtype fp8 --enable-chunked-prefill \
     --attention-backend B12X \
     --compilation-config '{"cudagraph_mode":"FULL_AND_PIECEWISE"}' \
-    "${generation_args[@]}" "$@"
+    "${generation_args[@]}" "${page_args[@]}" "$@"
