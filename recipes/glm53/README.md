@@ -22,12 +22,12 @@ authenticated. Replacing any native dependency requires serving qualification.
 
 ## Build inputs
 
-For a pinned branch-plus-PR reconstruction, use the
-[public review composition contract](review-composition.md). It verifies all
-three component trees from public review heads without private resolution
-patches. The source table below identifies those composed trees. Historical
-R34 identities are recorded separately in the preservation audit; do not mix
-components from the two compositions.
+The source table identifies the public component boundaries used by the R38
+image. vLLM and B12X already contain the required source merges; do not reapply
+their review PRs. The [review composition contract](review-composition.md)
+documents the historical branch-plus-PR reconstruction, not an additional
+stack to apply to these public heads. Historical R34 identities are recorded
+separately in the preservation audit.
 
 Provide clean, complete Git checkouts as `vllm-source`, `b12x-source` and
 `lmcache-source`. Use the release's published source refs and revisions, not
@@ -38,20 +38,19 @@ hashes, Git-bundle hashes and native-artifact identity.
 Host requirements: Git, Docker Buildx and `uv`; no host PyTorch or active GPU
 is needed for image construction. Compilation uses the runtime foundation.
 
-The GLM/Qwen/DS4 shared serving artifact uses the following published integration
-refs. They preserve contributor history and integration resolutions; simply
-merging arbitrary PR heads or changing the declared merge order does not
-reproduce the source contract. The pinned, ordered manifests reproduce these
-trees including their required integration resolutions.
-These source refs are **implemented**, not by themselves release approval.
+The shared serving artifact uses the following public source references.
+They preserve contributor history and integration resolutions. These source
+references are **implemented**, not by themselves serving qualification;
+the release receipt defines the tested hardware, models and workloads.
 
 | Checkout | Repository | Commit |
 |---|---|---|
-| `vllm-source` | [voipmonitor/vllm](https://github.com/voipmonitor/vllm/tree/integration/jovian-reviewed-sources-20260911) | `de982a50c6a3e4718e5cf9f00423a92192718da1` |
-| `b12x-source` | [voipmonitor/b12x](https://github.com/voipmonitor/b12x/tree/integration/jovian-reviewed-sources-20260911) | `98086604c86ec1e78977e5023ce282ecb97ab8a7` |
+| `vllm-source` | [local-inference-lab/vllm](https://github.com/local-inference-lab/vllm) | `66c293578412417476f842c1da5805d3a3d959a8` |
+| `b12x-source` | [local-inference-lab/b12x](https://github.com/local-inference-lab/b12x) | `ce419b52681b7922bb0972d4b58b590a3fd005b2` |
 | `lmcache-source` | [local-inference-lab/LMCache](https://github.com/local-inference-lab/LMCache/tree/release/jovian-fp4-fs-ledger-r33-20260910) | `29bc5a2efde737c436b04499eb62cd1776cebeec` |
 
-Clone each linked branch into its checkout directory, then verify `git rev-parse HEAD`
+Clone each repository into its checkout directory, check out the specified
+commit with `git checkout --detach COMMIT`, then verify `git rev-parse HEAD`
 against the table. Complete checkouts are required; do not use shallow clones
 for the source bundles. The package trees and compiled FlashKDA artifact are
 reproducible inputs; OCI timestamps and archive metadata are not promised to
@@ -91,8 +90,8 @@ Freeze source bundles and install them:
 ```bash
 uv run --no-project --python 3.12 prepare_glm53_source_bundles.py \
   --vllm ./vllm-source --b12x ./b12x-source --lmcache ./lmcache-source \
-  --vllm-repository https://github.com/voipmonitor/vllm.git \
-  --b12x-repository https://github.com/voipmonitor/b12x.git \
+  --vllm-repository https://github.com/local-inference-lab/vllm.git \
+  --b12x-repository https://github.com/local-inference-lab/b12x.git \
   --lmcache-repository https://github.com/local-inference-lab/LMCache.git \
   --native-artifact ./flashkda-artifact --uv "$(command -v uv)" \
   --lmcache-native-mode reuse-all \

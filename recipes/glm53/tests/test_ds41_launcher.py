@@ -2,9 +2,9 @@
 
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -26,7 +26,11 @@ def launch(tmp_path, overrides=None, arguments=()):
         **(overrides or {}),
     }
     return subprocess.run(
-        ["bash", str(LAUNCHER), *arguments], env=env, text=True, capture_output=True
+        ["bash", str(LAUNCHER), *arguments],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
     )
 
 
@@ -118,3 +122,46 @@ def test_prefill_capture_is_opt_in_without_disabling_decode_graphs(tmp_path):
     payload = json.loads(result.stdout)
     assert payload["env"]["VLLM_USE_BREAKABLE_CUDAGRAPH"] == "0"
     assert '{"cudagraph_mode":"FULL_AND_PIECEWISE"}' in payload["args"]
+
+
+def test_model_thread_graph_and_lane_defaults_replace_image_inheritance(tmp_path):
+    result = launch(
+        tmp_path,
+        {
+            "OMP_NUM_THREADS": "1",
+            "MAX_CUDAGRAPH_CAPTURE_SIZE": "256",
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    env = json.loads(result.stdout)["env"]
+    assert env["OMP_NUM_THREADS"] == "8"
+    assert env["MAX_CUDAGRAPH_CAPTURE_SIZE"] == "128"
+    assert env["MAX_PARALLEL_PREFILLS"] == "1"
+
+
+def test_nondefault_model_capacity_and_interleaving_overrides_survive(tmp_path):
+    overrides = {
+        "OMP_NUM_THREADS": "2",
+        "MAX_CUDAGRAPH_CAPTURE_SIZE": "64",
+        "MAX_PARALLEL_PREFILLS": "auto",
+    }
+    result = launch(tmp_path, overrides)
+    assert result.returncode == 0, result.stderr
+    env = json.loads(result.stdout)["env"]
+    for key, value in overrides.items():
+        assert env[key] == value
+
+
+@pytest.mark.parametrize(
+    "arguments", [(), ("--swa-block-size", "64"), ("--swa_block_size=32",)]
+)
+def test_swa_page_environment_respects_explicit_cli(tmp_path, arguments):
+    result = launch(tmp_path, {"SWA_BLOCK_SIZE": "128"}, arguments)
+    assert result.returncode == 0, result.stderr
+    argv = json.loads(result.stdout)["args"]
+    if arguments:
+        assert argv[-len(arguments) :] == list(arguments)
+        assert "128" not in argv
+    else:
+        assert argv.count("--swa-block-size") == 1
+        assert argv[argv.index("--swa-block-size") + 1] == "128"
