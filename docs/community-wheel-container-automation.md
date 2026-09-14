@@ -32,8 +32,27 @@ every five minutes and on relevant recipe pushes. GitHub may delay scheduled
 runs; five minutes is a requested interval, not a delivery guarantee.
 `repository_dispatch` with type `component-wheel-published` and manual dispatch
 also request a scan. Dispatch payloads are not used as build instructions.
-Polling needs no cross-repository write credential. An optional GitHub App can
-send immediate dispatches; its absence does not prevent periodic operation.
+
+The reusable workflow `.github/workflows/component-container-dispatch.yml`
+requests the resolver directly after a component publisher succeeds. Callers pin
+the reusable workflow to a reviewed commit and depend on the publication job,
+including successful verification of an already published release. Failed builds
+and stable promotions do not request a beta rebuild. The notification executes on
+a GitHub-hosted runner without checking out component code. Its repository,
+workflow, and `main` ref are fixed; it neither accepts source overrides nor
+publishes an image itself. It retries a failed request up to three times and
+reports an error rather than silently relying on the schedule.
+
+Immediate notification requires the Actions secret
+`LIL_CONTAINER_DISPATCH_TOKEN` in vLLM, B12X, FlashInfer, LMCache, InstantTensor,
+and nccl-canonical. Use a fine-grained token restricted to
+`local-inference-lab/blackwell-llm-docker` with **Actions: read and write**, or an
+equivalently restricted GitHub App token. No Contents or Packages write access is
+needed. A repository's ordinary `GITHUB_TOKEN` cannot dispatch into another
+repository. An organization secret may be shared only with these six publishers.
+Rotate the token before expiry; never commit or print its value. Without the
+secret, notification is unsupported and fails visibly; scheduled scans remain
+available as a backup.
 
 Each scan selects complete wheel releases from the declared source branches.
 A relevant source change without a wheel leaves the assembly pending. Uploads
