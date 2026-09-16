@@ -689,7 +689,7 @@ elif len(hits) == 0 and tog == "auto":
           "(upstream may have restructured the checkout)", file=sys.stderr)
 else:
     assert len(hits) == 1, f"vLLM commit-check anchor found {len(hits)} times"
-    inject = " && git tag -l 'vllm-jovian-*' | xargs -r git tag -d \\"
+    inject = " && git -C /opt/vllm tag -l 'vllm-jovian-*' | xargs -r git -C /opt/vllm tag -d \\"
     path.write_text(text.replace(hits[0], hits[0] + "\n" + inject, 1))
     print("injected vllm-jovian wheel-tag cleanup after the vLLM commit check",
           file=sys.stderr)

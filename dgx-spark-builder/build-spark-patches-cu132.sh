@@ -94,7 +94,7 @@ fi
 [[ -n "${ENV_FILE}" ]] \
   || warn "no profile found beside this script: building from IN-SCRIPT FALLBACK PINS, which are not the source of truth and are probably stale"
 
-ALLOWED_KEYS=" ALLOW_FOREIGN_ARCH B12X_COMMIT B12X_PATCH_FILE B12X_PATCH_SHA256 B12X_PIN B12X_REF B12X_REPO BUILD_BASE_IMAGE_TAG CUTLASS_COMMIT CUTLASS_DSL_VERSION CUTLASS_REF DEEPGEMM_COMMIT DEEPGEMM_REF FASTSAFETENSORS_SPEC FLASHINFER_BUILD_CUBIN FLASHINFER_COMMIT FLASHINFER_REF FLASHINFER_REPO FROZEN_ACK HUMMING_KERNELS_SPEC IMAGE IMAGE_REPO IMAGE_TAG INSTANTTENSOR_COMMIT INSTANTTENSOR_REF INSTANTTENSOR_REPO LAUNCHER_COMMIT LAUNCHER_REF LAUNCHER_REPO LOGGING MAX_JOBS NCCL_COMMIT NCCL_REF NCCL_REPO NVCC_THREADS PATCH_EXLLAMAV3_AVX PATCH_GPU_ARCH PATCH_HOST_ARCH PATCH_PCIE_ENV PATCH_PIPCHECK_WHEELTAG PATCH_VLLM_REQ_MARKERS PIN_PREFLIGHT PIN_SOURCE_COMMITS PROFILE_NAME QUACK_KERNELS_SPEC SPARKINFER_COMMIT SPARKINFER_REF SPARKINFER_REPO SYSTEM_BASE_IMAGE TILELANG_VERSION TOKENSPEED_MLA_VERSION TORCHVISION_VERSION TORCH_BUNDLED_NCCL_VERSION TORCH_VERSION TVM_FFI_VERSION VLLM_BUILD_VERSION VLLM_COMMIT VLLM_MAX_JOBS VLLM_NVCC_THREADS VLLM_PATCH_FILE VLLM_PATCH_SHA256 VLLM_PATCH_URL VLLM_PIN VLLM_REF VLLM_REPO VLLM_REQUIRED_LAUNCHERS VLLM_RUNTIME_EXTRA_PACKAGES XGRAMMAR_COMMIT XGRAMMAR_REF XGRAMMAR_TRANSFORMERS5_COMPAT XGRAMMAR_VERSION "
+ALLOWED_KEYS=" ALLOW_FOREIGN_ARCH B12X_COMMIT B12X_PATCH_FILE B12X_PATCH_SHA256 B12X_PIN B12X_REF B12X_REPO BUILD_BASE_IMAGE_TAG CUTLASS_COMMIT CUTLASS_DSL_VERSION CUTLASS_REF DEEPGEMM_COMMIT DEEPGEMM_REF FASTSAFETENSORS_SPEC FLASHINFER_BUILD_CUBIN FLASHINFER_COMMIT FLASHINFER_REF FLASHINFER_REPO FROZEN_ACK HUMMING_KERNELS_SPEC IMAGE IMAGE_REPO IMAGE_TAG INSTANTTENSOR_COMMIT INSTANTTENSOR_REF INSTANTTENSOR_REPO LAUNCHER_COMMIT LAUNCHER_REF LAUNCHER_REPO LOGGING MAX_JOBS NCCL_COMMIT NCCL_REF NCCL_REPO NVCC_THREADS PATCH_EXLLAMAV3_AVX PATCH_GPU_ARCH PATCH_HOST_ARCH PATCH_PCIE_ENV PATCH_PIPCHECK_WHEELTAG PATCH_VLLM_REQ_MARKERS PATCH_VLLM_WHEEL_TAGS PIN_PREFLIGHT PIN_SOURCE_COMMITS PROFILE_NAME QUACK_KERNELS_SPEC SPARKINFER_COMMIT SPARKINFER_REF SPARKINFER_REPO SYSTEM_BASE_IMAGE TILELANG_VERSION TOKENSPEED_MLA_VERSION TORCHVISION_VERSION TORCH_BUNDLED_NCCL_VERSION TORCH_VERSION TVM_FFI_VERSION VLLM_BUILD_VERSION VLLM_COMMIT VLLM_MAX_JOBS VLLM_NVCC_THREADS VLLM_PATCH_FILE VLLM_PATCH_SHA256 VLLM_PATCH_URL VLLM_PIN VLLM_REF VLLM_REPO VLLM_REQUIRED_LAUNCHERS VLLM_RUNTIME_EXTRA_PACKAGES XGRAMMAR_COMMIT XGRAMMAR_REF XGRAMMAR_TRANSFORMERS5_COMPAT XGRAMMAR_VERSION "
 if [[ -n "${ENV_FILE}" ]]; then
   [[ -f "${ENV_FILE}" ]] || die "env file not found: ${ENV_FILE}"
   # Canonicalize now: the repo-root cd below would break a relative path for
@@ -388,7 +388,8 @@ fi
 
 # ------------------------------------------------------------- patch toggles
 for t in PATCH_GPU_ARCH PATCH_HOST_ARCH PATCH_PCIE_ENV \
-         PATCH_PIPCHECK_WHEELTAG PATCH_VLLM_REQ_MARKERS PATCH_EXLLAMAV3_AVX; do
+         PATCH_PIPCHECK_WHEELTAG PATCH_VLLM_REQ_MARKERS PATCH_EXLLAMAV3_AVX \
+         PATCH_VLLM_WHEEL_TAGS; do
   v="${!t:-auto}"
   case "${v}" in on|off|auto) ;; *) die "${t} must be on, off, or auto: ${v}" ;; esac
   printf -v "${t}" '%s' "${v}"; export "${t}"
@@ -661,6 +662,38 @@ else:
     text = text.replace(hits[0], injection + hits[0])
     path.write_text(text)
     print("injected exllamav3 aarch64 source patch", file=sys.stderr)
+PYEOF
+
+# vllm-jovian wheel tags: the cu134 wheel-release CI now tags EVERY commit on
+# dev/jovian-judgement (vllm-jovian-cu134-beta-<sha>), and the in-image clone
+# fetches those tags (git auto-follows tags pointing at fetched objects).
+# tools/build_rust.py's prepare_build_environment() describes with
+# --exclude vllm-jovian-cu134-* (the #750 fix), but its bare setup() then lets
+# the setuptools_scm integration describe WITHOUT the exclude -- the
+# unparseable beta tag at distance 0 raises "ValueError: Can't parse version
+# from tag" and kills the build (r39 first hit, 2026-09-16). Deleting the
+# source-addressed tags in the clone restores the pre-publisher behavior; the
+# main wheel version is governed by VLLM_VERSION_OVERRIDE, so nothing else
+# consumes them. Upstream fix (build_rust.py should export
+# SETUPTOOLS_SCM_PRETEND_VERSION before setup()) tracked separately.
+# Keep in sync with build-spark-cu132.sh, which carries the same injector.
+python3 - "${dockerfile}" "${PATCH_VLLM_WHEEL_TAGS}" <<'PYEOF'
+import pathlib, sys
+path, tog = pathlib.Path(sys.argv[1]), sys.argv[2]
+text = path.read_text()
+anchor = 'expected=${VLLM_COMMIT}'
+hits = [line for line in text.splitlines() if anchor in line]
+if tog == "off":
+    print("PATCH_VLLM_WHEEL_TAGS=off: wheel-tag cleanup skipped", file=sys.stderr)
+elif len(hits) == 0 and tog == "auto":
+    print("PATCH_VLLM_WHEEL_TAGS(auto): vLLM commit-check line absent; skipping "
+          "(upstream may have restructured the checkout)", file=sys.stderr)
+else:
+    assert len(hits) == 1, f"vLLM commit-check anchor found {len(hits)} times"
+    inject = " && git -C /opt/vllm tag -l 'vllm-jovian-*' | xargs -r git -C /opt/vllm tag -d \\"
+    path.write_text(text.replace(hits[0], hits[0] + "\n" + inject, 1))
+    print("injected vllm-jovian wheel-tag cleanup after the vLLM commit check",
+          file=sys.stderr)
 PYEOF
 
 # The exact Dockerfile the build consumed (all patches applied) -- the

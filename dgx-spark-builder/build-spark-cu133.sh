@@ -374,7 +374,7 @@ elif len(hits) == 0 and tog == "auto":
           "skipping (upstream may have restructured it)", file=sys.stderr)
 else:
     assert len(hits) == 1, f"compose_source commit-check anchor found {len(hits)} times"
-    inject = '      git -C "${destination}" tag -l \'vllm-jovian-*\' | xargs -r git tag -d; \\'
+    inject = '      git -C "${destination}" tag -l \'vllm-jovian-*\' | xargs -r git -C "${destination}" tag -d; \\'
     path.write_text(text.replace(hits[0], hits[0] + "\n" + inject, 1))
     print("injected vllm-jovian wheel-tag cleanup into compose_source", file=sys.stderr)
 PYEOF
