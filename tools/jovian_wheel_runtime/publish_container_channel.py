@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and publish a source-addressed beta image after native GPU checks."""
+"""Build and publish a source-addressed runtime after native GPU checks."""
 
 from __future__ import annotations
 
@@ -13,10 +13,28 @@ from pathlib import Path
 from urllib.parse import quote
 
 from container_channel import api, digest, download, run
+from prepare_runtime_auxiliary import prepare as prepare_auxiliary
 
 
 def execute(args: list[str], **kwargs: object) -> None:
     subprocess.run(args, check=True, **kwargs)
+
+
+def alias_is_current(assembly: dict, repository: str, ref: str) -> bool:
+    """An obsolete recipe or component revision must not replace a channel alias."""
+    if ref != "refs/heads/main":
+        return False
+    recipe = api(f"repos/{repository}/commits/main")
+    if recipe["sha"] != assembly["recipe_commit"]:
+        return False
+    for component in assembly["components"].values():
+        head = api(
+            f"repos/{component['repository']}/commits/"
+            f"{quote(component['branch'], safe='')}"
+        )
+        if component["observed_branch_commit"] != head["sha"]:
+            return False
+    return True
 
 
 def require_idle_gpu(gpu: str) -> None:
@@ -169,6 +187,17 @@ def main() -> None:
     manifest_path = runtime / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
     manifest["assembly"] = assembly
+    auxiliary_cache = (
+        Path(
+            os.environ.get(
+                "LIL_COMPONENT_ARCHIVE_CACHE", str(args.output / "archive-cache")
+            )
+        )
+        / "lmcache-cumem-source"
+    )
+    manifest["auxiliary"] = {
+        "lmcache_cumem": prepare_auxiliary(manifest, runtime, auxiliary_cache)
+    }
     manifest_path.write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n")
     checksum = runtime / "SHA256SUMS"
     checksum.write_text(
@@ -184,7 +213,8 @@ def main() -> None:
     execute(
         [
             str(tools / "run_serialized_build.sh"),
-            str(tools / "build_qwen38_ngc_runtime_image.sh"),
+            "bash",
+            str(tools / "build_runtime_image.sh"),
             str(runtime),
             image,
         ]
@@ -202,6 +232,19 @@ def main() -> None:
             "container must retain the 67 foundation layers plus one application layer"
         )
     require_idle_gpu(args.gpu)
+    execute(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--device",
+            f"nvidia.com/gpu={args.gpu}",
+            image,
+            "python",
+            "-m",
+            "runtime.native_cli_contract",
+        ]
+    )
     execute(
         [
             "docker",
@@ -333,18 +376,9 @@ def main() -> None:
         )
         receipt_path = args.output / "container-release.json"
         receipt_path.write_text(json.dumps(receipt, sort_keys=True, indent=2) + "\n")
-        # Serialize resolution/publication in Actions; an obsolete source cannot replace beta.
-        superseded = False
-        for component in assembly["components"].values():
-            head = api(
-                f"repos/{component['repository']}/commits/"
-                f"{quote(component['branch'], safe='')}"
-            )
-            # New source is handled by the following scan. Immutable image remains usable.
-            if component.get("observed_branch_commit") not in {None, head["sha"]}:
-                superseded = True
-        promote_alias = (
-            not superseded and os.environ.get("GITHUB_REF") == "refs/heads/main"
+        # Source advances are handled by a subsequent scan; immutable images remain usable.
+        promote_alias = alias_is_current(
+            assembly, repository, os.environ.get("GITHUB_REF", "")
         )
         if promote_alias:
             execute(["docker", "tag", image, assembly["alias"]])
@@ -353,7 +387,7 @@ def main() -> None:
         receipt_path.write_text(json.dumps(receipt, sort_keys=True, indent=2) + "\n")
     notes = args.output / "release-notes.md"
     rows = [
-        "# Jovian Judgement wheel-built beta",
+        f"# Wheel-built runtime: {assembly['channel']} / {assembly['release_channel']}",
         "",
         f"Image: `{image}`",
         "",

@@ -118,32 +118,42 @@ from `/usr/local/cuda` instead of the venv. The standalone compiler smoke uses
 the static CUDA runtime because NVIDIA's pip runtime wheel does not install an
 unversioned `libcudart.so` linker name.
 
-## Qwen3.8 container environment
+## Multi-model container environment
 
 Status: **implemented**.
 
-`Dockerfile.qwen38-ngc-runtime` installs an assembled Qwen3.8 application bundle
+`tools/jovian_wheel_runtime/Dockerfile.runtime` installs the application bundle
 directly over the immutable NGC foundation. The build verifies the dependency
 closure, patch hashes, application wheel imports, and packaged NCCL selection.
-The resulting entry point selects the packaged NCCL library before importing
-PyTorch. The optional GPU smoke check imports the vLLM and LMCache native
+The entrypoint selects a model profile or an explicit command and preserves
+the bootstrap that selects packaged NCCL before importing PyTorch. Model
+profiles, typed environment aliases and invocation examples are documented in
+[`runtime/README.md`](../runtime/README.md). The dependency-patch contract,
+including the DS4.1 PyTorch requirements, is documented in
+[`runtime/DEPENDENCIES.md`](../runtime/DEPENDENCIES.md).
+The optional GPU smoke check imports the vLLM and LMCache native
 extensions and executes a BF16 matrix multiplication on an SM120 device.
 Serving qualification additionally requires a full model load, target and MTP
 CUDA-graph capture, text/image requests, and warmed inference measurements.
 `qualify_qwen38_api.py` provides repeatable temperature-one arithmetic and
 solid-color image checks; those checks are not a general accuracy evaluation.
 
-Build the image with an assembled bundle directory and an explicit image tag:
+The publisher assembles verified component wheels, adds the source-matched
+LMCache cuMem helper source, and writes complete artifact checksums. Build the
+image from that complete bundle and an explicit image tag:
 
 ```bash
-tools/jovian_wheel_runtime/build_qwen38_ngc_runtime_image.sh \
-  /path/to/qwen38-runtime-bundle \
-  local/qwen38-cu134:source-locked
+tools/jovian_wheel_runtime/build_runtime_image.sh \
+  /path/to/complete-runtime-bundle \
+  local/lil-cu134:source-locked
 ```
 
 The build context must contain a clean Git tree because the image label records
 the exact `blackwell-llm-docker` revision. Set `RUNTIME_GPU` to a physical GPU
 identifier to execute the GPU verifier after the image is loaded.
+The `build_qwen38_ngc_runtime_image.sh` filename remains a compatibility alias.
+The assembler's existing `qwen38` filenames and wire schema are retained for
+artifact compatibility; they do not restrict the serving image to Qwen.
 
 ## Qwen3.8 application bundle
 

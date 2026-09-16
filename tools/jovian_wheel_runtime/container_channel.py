@@ -8,6 +8,8 @@ rescan; their payloads never supply executable commands, URLs or source refs.
 from __future__ import annotations
 
 import argparse
+import base64
+import copy
 import datetime as dt
 import hashlib
 import json
@@ -219,10 +221,37 @@ def completed_publication(repository: str, assembly: dict) -> bool:
     )
 
 
-def resolve(config_path: Path, output: Path) -> dict:
-    config = json.loads(config_path.read_text())
-    if config.get("schema") != "local-inference-container-channel/v1":
+def channel_config(config: dict, name: str) -> dict:
+    """Select branch overrides without duplicating dependencies or build rules."""
+    if config.get("schema") != "local-inference-container-channel/v2":
         raise ValueError("unsupported channel schema")
+    channels = config["channels"]
+    if name not in channels:
+        raise ValueError(f"unknown release channel: {name}")
+    tags = []
+    for key, entry in channels.items():
+        if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", key):
+            raise ValueError("invalid release channel name")
+        if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", entry["image_tag"]):
+            raise ValueError("invalid image tag")
+        if set(entry["branches"]) - set(config["components"]):
+            raise ValueError("branch override names an unknown component")
+        tags.append(entry["image_tag"])
+    if len(tags) != len(set(tags)):
+        raise ValueError("release channels must have distinct image tags")
+    selected = copy.deepcopy(config)
+    entry = selected.pop("channels")[name]
+    selected["release_channel"] = name
+    selected["image_tag"] = entry["image_tag"]
+    for role, branch in entry["branches"].items():
+        if not isinstance(branch, str) or not branch or branch.startswith("-"):
+            raise ValueError("invalid component branch")
+        selected["components"][role]["branch"] = branch
+    return selected
+
+
+def resolve(config_path: Path, output: Path, name: str = "main") -> dict:
+    config = channel_config(json.loads(config_path.read_text()), name)
     if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", config["channel"]):
         raise ValueError("invalid channel name")
     if not re.fullmatch(
@@ -249,16 +278,41 @@ def resolve(config_path: Path, output: Path) -> dict:
     result = {
         "schema": "local-inference-container-assembly/v1",
         "channel": config["channel"],
+        "release_channel": name,
         "recipe_commit": commit,
         "assembly_sha256": identity,
         "components": components,
-        "image": f"{config['image_repository']}:{config['channel']}-beta-{date}-{identity[:16]}",
-        "alias": f"{config['image_repository']}:{config['channel']}-beta",
-        "release_tag": f"{config['channel']}-beta-{identity}",
+        "image": f"{config['image_repository']}:{config['image_tag']}-{date}-{identity[:16]}",
+        "alias": f"{config['image_repository']}:{config['image_tag']}",
+        "release_tag": f"{config['image_tag']}-{identity}",
         "status": "research-only",
     }
     output.write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
     return result
+
+
+def resolve_matrix(config_path: Path, directory: Path, repository: str) -> dict:
+    """Let a complete channel build while another channel waits for wheels."""
+    config = json.loads(config_path.read_text())
+    directory.mkdir(parents=True, exist_ok=True)
+    matrix = {"include": []}
+    for name in config["channels"]:
+        try:
+            assembly = resolve(config_path, directory / f"{name}.json", name)
+        except PendingBuild as error:
+            print(f"{name}: waiting for component build: {error}")
+            continue
+        if completed_publication(repository, assembly):
+            print(f"{name}: assembly already published")
+            continue
+        matrix["include"].append(
+            {
+                "channel": name,
+                "assembly": base64.b64encode(canonical(assembly)).decode(),
+            }
+        )
+        print(f"{name}: resolved {assembly['image']}")
+    return matrix
 
 
 def safe_extract(tar_path: Path, destination: Path) -> None:
@@ -349,6 +403,11 @@ def main() -> None:
     resolver = commands.add_parser("resolve")
     resolver.add_argument("--config", type=Path, required=True)
     resolver.add_argument("--output", type=Path, required=True)
+    resolver.add_argument("--channel", default="main")
+    matrix_parser = commands.add_parser("resolve-matrix")
+    matrix_parser.add_argument("--config", type=Path, required=True)
+    matrix_parser.add_argument("--output", type=Path, required=True)
+    matrix_parser.add_argument("--repository", required=True)
     downloader = commands.add_parser("download")
     downloader.add_argument("--assembly", type=Path, required=True)
     downloader.add_argument("--output", type=Path, required=True)
@@ -356,6 +415,13 @@ def main() -> None:
     completed.add_argument("--assembly", type=Path, required=True)
     completed.add_argument("--repository", required=True)
     args = parser.parse_args()
+    if args.command == "resolve-matrix":
+        matrix = resolve_matrix(args.config, args.output, args.repository)
+        if "GITHUB_OUTPUT" in os.environ:
+            with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
+                stream.write(f"build={str(bool(matrix['include'])).lower()}\n")
+                stream.write(f"matrix={canonical(matrix).decode()}\n")
+        return
     if args.command == "completed":
         assembly = json.loads(args.assembly.read_text())
         print("true" if completed_publication(args.repository, assembly) else "false")
@@ -364,7 +430,7 @@ def main() -> None:
         download(json.loads(args.assembly.read_text()), args.output)
         return
     try:
-        assembly = resolve(args.config, args.output)
+        assembly = resolve(args.config, args.output, args.channel)
     except PendingBuild as error:
         print(f"Waiting for component build: {error}")
         if "GITHUB_OUTPUT" in os.environ:
