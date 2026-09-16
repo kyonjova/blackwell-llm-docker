@@ -50,6 +50,7 @@ def test_notifications_and_container_tools_do_not_publish_foundation():
     assert "tools/jovian_wheel_runtime/community-channel.json" not in paths
     assert "tools/jovian_wheel_runtime/publish_container_channel.py" not in paths
     assert "tools/jovian_wheel_runtime/Dockerfile.qwen38-ngc-runtime" not in paths
+    assert "tools/jovian_wheel_runtime/Dockerfile.runtime" not in paths
     assert events["push"]["branches"] == ["main"]
     assert events["push"]["tags"] == ["jovian-cu134-foundation-stable-*"]
     assert "workflow_dispatch" in events

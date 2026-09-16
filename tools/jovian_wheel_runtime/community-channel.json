@@ -1,7 +1,20 @@
 {
-  "schema": "local-inference-container-channel/v1",
+  "schema": "local-inference-container-channel/v2",
   "channel": "jovian-judgement",
   "image_repository": "ghcr.io/local-inference-lab/vllm",
+  "channels": {
+    "main": {
+      "image_tag": "jovian-judgement",
+      "branches": {}
+    },
+    "beta": {
+      "image_tag": "jovian-judgement-beta",
+      "branches": {
+        "vllm": "integration/beta",
+        "b12x": "integration/beta"
+      }
+    }
+  },
   "components": {
     "vllm": {
       "repository": "local-inference-lab/vllm",

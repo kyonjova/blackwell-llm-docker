@@ -1,0 +1,159 @@
+"""External-cache launch plans preserve model geometry and transport identity."""
+
+import json
+
+import pytest
+
+from runtime import ConfigError
+from runtime.cache import resolve_identity
+from runtime.launcher import make_argv, resolve
+from runtime.supervisor import validate_pool
+
+
+@pytest.mark.parametrize(
+    "mode,depth,rows", [("off", 0, 4096), ("mtp", 3, 4096), ("dflash2", 7, 4320)]
+)
+@pytest.mark.parametrize("dcp", [1, 4])
+@pytest.mark.parametrize("dtype", ["fp8", "nvfp4_ds_mla"])
+def test_glm_target_budget_is_not_reduced_by_dflash(mode, depth, rows, dcp, dtype):
+    plan = resolve(
+        "glm53-flash",
+        env={
+            "CACHE_MODE": "lmcache",
+            "SPECULATOR": mode,
+            "DCP": str(dcp),
+            "KV_CACHE_DTYPE": dtype,
+        },
+    )
+    assert plan.values["draft-tokens"] == depth
+    assert plan.values["max-num-batched-tokens"] == rows
+    assert plan.values["max-num-scheduled-tokens"] == 4096
+    assert plan.values["prefix-cache-retention-interval"] == 0
+    assert plan.values["target-page-size"] == "auto"
+    assert plan.values["gpu-memory-utilization"] == 0.95
+    assert plan.cache_service.environment["CUDA_VISIBLE_DEVICES"] == ""
+    assert "UNRESOLVED-CHECKPOINT" in plan.cache_service.namespace
+    assert plan.argv.count("--kv-transfer-config") == 1
+
+
+def test_aligned_direct_transport_retains_interposer_and_checkpoints():
+    plan = resolve(
+        "glm53-flash",
+        env={"CACHE_MODE": "lmcache", "LMCACHE_TRANSFER_MODE": "lmcache_driven"},
+    )
+    assert plan.values["recurrent-checkpoint-policy"] == "aligned"
+    assert plan.values["prefix-cache-retention-interval"] == 4096
+    assert plan.values["kv-transfer-config"]["kv_connector"] == "LMCacheMPConnector"
+    assert plan.values["enable-cumem-allocator"] is True
+    assert "liblmcache_cumem_shareable.so" in plan.environment["LD_PRELOAD"]
+    assert not plan.cache_service.environment
+
+
+@pytest.mark.parametrize("identifier", ["ds4-flash", "ds4-vision"])
+def test_ds4_ram_and_disk_use_one_cpu_only_service(identifier):
+    ram = resolve(identifier, env={"LMCACHE_MODE": "ram"})
+    disk = resolve(identifier, env={"LMCACHE_MODE": "disk"})
+    assert ram.values["cache-l1-gib"] == 24
+    assert ram.values["cache-object-tokens"] == 4096
+    assert ram.values["gpu-memory-utilization"] == 0.970
+    assert "--l2-adapter" not in ram.cache_service.argv
+    assert "--l2-adapter" in disk.cache_service.argv
+    assert ram.cache_service.environment["CUDA_VISIBLE_DEVICES"] == ""
+
+
+@pytest.mark.parametrize("identifier", ["qwen38-flash-next", "ds41-flash"])
+def test_unqualified_external_cache_is_explicitly_rejected(identifier):
+    with pytest.raises(ConfigError, match="external cache is unsupported"):
+        resolve(identifier, env={"CACHE_MODE": "lmcache"})
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"LMCACHE_L1_SIZE_GB": "64", "LMCACHE_L1_GB": "24"},
+        {"LMCACHE_CHUNK_SIZE": "8192"},
+        {"LMCACHE_SHM_NAME": ""},
+        {"LMCACHE_L2_PATH": "/"},
+        {"PORT": "60000"},
+        {"GLM53_TARGET_BLOCK_SIZE": "2048", "DCP": "4"},
+    ],
+)
+def test_invalid_cache_configuration_fails_before_io(env):
+    with pytest.raises(ConfigError):
+        resolve("glm53-flash", env={"CACHE_MODE": "lmcache", **env})
+
+
+def test_pool_must_match_both_identity_and_capacity():
+    service = resolve("ds4-flash", env={"CACHE_MODE": "lmcache"}).cache_service
+    assert (
+        service.shm_name
+        == "lmcache_l1_pool_" + service.argv[service.argv.index("--shm-name") + 1]
+    )
+    pool = {"shm_name": service.shm_name, "pool_size": service.shm_bytes}
+    validate_pool({"engine_driven_shm_pool": pool}, service)
+    for change in ({"shm_name": "another-service"}, {"pool_size": 1}):
+        with pytest.raises(ConfigError, match="no pickle fallback"):
+            validate_pool({"engine_driven_shm_pool": {**pool, **change}}, service)
+
+
+def test_cache_aliases_follow_settings_and_cli_precedence():
+    plan = resolve(
+        "ds4-flash",
+        env={"CACHE_MODE": "vram"},
+        config={"environment": {"LMCACHE_MODE": "disk"}},
+    )
+    assert plan.cache_service is not None
+    assert plan.values["cache-l2-enabled"] is True
+    plan = resolve(
+        "ds4-flash",
+        env={"CACHE_MODE": "native", "LMCACHE_MODE": "disk"},
+        argv=["--cache-mode", "vram"],
+    )
+    assert plan.cache_service is None
+    with pytest.raises(ConfigError, match="Conflicting environment aliases"):
+        resolve("ds4-flash", env={"CACHE_MODE": "vram", "LMCACHE_MODE": "disk"})
+
+
+def test_explicit_retention_is_not_silently_overridden():
+    with pytest.raises(ConfigError, match="retention conflicts"):
+        resolve(
+            "glm53-flash",
+            env={"CACHE_MODE": "lmcache"},
+            argv=["--prefix-cache-retention-interval", "512"],
+        )
+
+
+def test_runtime_and_geometry_change_persistent_namespace():
+    first = resolve(
+        "glm53-flash", env={"CACHE_MODE": "lmcache"}, runtime_identity="a" * 64
+    )
+    second = resolve(
+        "glm53-flash", env={"CACHE_MODE": "lmcache"}, runtime_identity="b" * 64
+    )
+    dcp = resolve(
+        "glm53-flash",
+        env={"CACHE_MODE": "lmcache", "DCP": "4"},
+        runtime_identity="a" * 64,
+    )
+    assert len({plan.cache_service.namespace for plan in (first, second, dcp)}) == 3
+
+
+def test_immutable_identity_pins_both_loaders_before_startup(tmp_path):
+    helper = tmp_path / "identity.py"
+    helper.write_text(
+        'def resolve_checkpoint(model, revision):\n    return {"identity": "a" * 40, "revision": "a" * 40}\n'
+    )
+    plan = resolve(
+        "glm53-flash",
+        env={"CACHE_MODE": "lmcache", "SPECULATOR": "dflash2"},
+        runtime_identity="b" * 64,
+    )
+    resolve_identity(plan, {"runtime_lock_sha256": "b" * 64}, helper)
+    assert plan.values["revision"] == "a" * 40
+    assert plan.values["speculative-config"]["revision"] == "a" * 40
+    assert "UNRESOLVED" not in json.dumps(plan.cache_service.argv)
+    assert "--revision" in make_argv(plan.values, [])
+    identity = plan.values["kv-transfer-config"]["kv_connector_extra_config"][
+        "lmcache.mp.checkpoint_identity"
+    ]
+    assert identity["source_revision"] == "b" * 64
