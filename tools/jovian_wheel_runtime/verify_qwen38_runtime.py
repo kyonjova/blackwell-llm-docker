@@ -15,6 +15,7 @@ from pathlib import Path
 
 EXPECTED_VERSIONS = {
     "nvidia-modelopt": "0.46.1",
+    "quack-kernels": "0.6.4",
     "torch": "2.14.0a0+4fdf77b940.nv26.8.63802676",
     "xgrammar": "0.2.6",
 }
@@ -101,6 +102,7 @@ def main() -> int:
     import flashinfer_jit_cache  # noqa: F401
     import lmcache  # noqa: F401
     import modelopt  # noqa: F401
+    import quack  # noqa: F401
     import torch
     import uvloop  # noqa: F401
     import vllm  # noqa: F401
