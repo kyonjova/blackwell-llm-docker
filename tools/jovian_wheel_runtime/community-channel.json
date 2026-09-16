@@ -1,0 +1,48 @@
+{
+  "schema": "local-inference-container-channel/v1",
+  "channel": "jovian-judgement",
+  "image_repository": "ghcr.io/local-inference-lab/vllm",
+  "components": {
+    "vllm": {
+      "repository": "local-inference-lab/vllm",
+      "branch": "dev/jovian-judgement",
+      "release_prefix": "vllm-jovian-cu134-beta-",
+      "source_paths": ["vllm/", "csrc/", "cmake/", "rust/", "requirements/", "setup.py", "pyproject.toml", "CMakeLists.txt", "tools/jovian_wheel_release/"],
+      "bootstrap": {"branch_commit": "fa6ae9212e72edff781cf8ec083a0a9dfc3c58b6", "release_commit": "103bd90ea49e6f93171c980938cae169d2514538"}
+    },
+    "b12x": {
+      "repository": "local-inference-lab/b12x",
+      "branch": "master",
+      "release_prefix": "b12x-cu134-beta-",
+      "source_paths": ["b12x/", "setup.py", "pyproject.toml", "ci/lil_wheels/"],
+      "bootstrap": {"branch_commit": "135c9715d20d8534638b57be8dcd634ab333e87a", "release_commit": "6a4661ffe2dfc51b8f28bee0ac7b9db55e2823d6"}
+    },
+    "flashinfer": {
+      "repository": "local-inference-lab/flashinfer",
+      "branch": "community/jovian-judgement-cu134-sm120",
+      "release_prefix": "flashinfer-cu134-sm120-beta-",
+      "source_paths": ["flashinfer/", "flashinfer-jit-cache/", "csrc/", "include/", "aot_build_utils/", "3rdparty/", "setup.py", "pyproject.toml", "ci/lil_wheels/"]
+    },
+    "lmcache": {
+      "repository": "local-inference-lab/LMCache",
+      "branch": "integration/local-inference-lab",
+      "release_prefix": "lmcache-cu134-sm120-beta-",
+      "source_paths": ["lmcache/", "csrc/", "rust/", "requirements/", "setup_extensions/", "setup.py", "pyproject.toml", "ci/lil_wheels/"],
+      "required_reviews": [49, 50, 51, 55, 56, 61, 62, 65, 66]
+    },
+    "instanttensor": {
+      "repository": "local-inference-lab/InstantTensor",
+      "branch": "main",
+      "release_prefix": "instanttensor-cu134-beta-",
+      "source_paths": ["instanttensor/", "csrc/", "setup.py", "pyproject.toml", "ci/lil_wheels/"],
+      "bootstrap": {"branch_commit": "4d97a44fe02933dded40bd2745660fab30afa24f", "release_commit": "6b0e78a6ee4f65c8e30dd3abbf1be459a7a7a935"}
+    },
+    "nccl": {
+      "repository": "local-inference-lab/nccl-canonical",
+      "branch": "canonical/cu134-nccl2312-amd-turin",
+      "release_prefix": "nccl-cu134-sm120-",
+      "source_paths": ["src/", "makefiles/", "Makefile", "ci/lil_wheels/"],
+      "bootstrap": {"branch_commit": "fb6f40999a2a9e63104d4ae4a84118bce61528f8", "release_commit": "67e8df6672ad6ea7d4aa4c3b67cc729b2f53bbab"}
+    }
+  }
+}

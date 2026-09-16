@@ -11,8 +11,11 @@ ARG BUILD_JOBS=8
 # The caller-owned DeepSeek query output changes the registered stable operator
 # schema. Rebuild that extension; retain the separately qualified FlashKDA and
 # MoE artifacts rather than substituting unrelated native implementations.
+# Generator outputs live in the ephemeral source tree, not the build cache.
+# Reset their CMake stamps so cached configuration cannot suppress generation.
 RUN --mount=type=cache,id=jovian-shared-stable-native-cu133,target=/tmp/stable-build,sharing=locked \
     cmake -S . -B /tmp/stable-build -G Ninja \
+      -U MARLIN_GEN_SCRIPT_HASH_AND_ARCH -U MOE_MARLIN_GEN_SCRIPT_HASH_AND_ARCH \
       -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=120 \
       -DVLLM_TARGET_DEVICE=cuda \
       -DVLLM_PYTHON_EXECUTABLE=/opt/venv/bin/python -DNVCC_THREADS=2 \

@@ -1,0 +1,5 @@
+--- a/cutlass/base_dsl/jit_executor.py
++++ b/cutlass/base_dsl/jit_executor.py
+@@ -586,1 +586,1 @@
+-        if self._missing in rectified:
++        if any(value is self._missing for value in rectified):

@@ -1,0 +1,33 @@
+# Python and CUDA dependencies required by the repacked NVIDIA PyTorch 26.08
+# foundation wheels. Versions match the immutable NGC source image except
+# setuptools: vLLM requires a version below 81 and ModelOpt requires 80 or newer.
+einops==0.8.2
+filelock==3.32.3
+fsspec==2026.6.0
+jinja2==3.1.6
+markupsafe==3.0.3
+mpmath==1.3.0
+networkx==3.6.1
+numpy==2.1.0
+pillow==12.3.0
+setuptools==80.9.0
+sympy==1.14.0
+typing-extensions==4.16.0
+
+# CUDA 13.4 userspace and developer libraries. The NVIDIA driver remains a
+# host requirement.
+nvidia-cuda-runtime==13.4.49
+nvidia-cuda-nvrtc==13.4.59
+nvidia-cuda-nvcc==13.4.59
+nvidia-cuda-cupti==13.4.58
+nvidia-nvjitlink==13.4.52
+nvidia-nvtx==13.4.49
+nvidia-cublas==13.7.0.27
+nvidia-cusparse==12.8.6.49
+nvidia-cusolver==12.3.2.15
+nvidia-cufft==12.4.0.34
+nvidia-curand==10.4.4.49
+nvidia-cufile==1.19.0.109
+nvidia-cudnn-cu13==9.26.0.51
+nvidia-cusparselt-cu13==0.9.1
+nvidia-nvshmem-cu13==3.7.1
