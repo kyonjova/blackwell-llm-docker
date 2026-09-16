@@ -1,10 +1,30 @@
 # Model runtime configuration
 
-Status: **implemented**, with CPU configuration-contract tests. The resolver
-does not replace the published community launchers or the wheel-runtime
-entrypoint. GPU serving, throughput, and external-cache migration are not
-qualified by these tests. In particular, this work does not fix B12X prepared
-kernel startup failures or supply missing native extensions.
+Status: **implemented**, with CPU configuration-contract and cache-service
+lifecycle tests. The CUDA 13.4 image recipe installs this interface over its
+CUDA/NCCL bootstrap. GPU model serving, throughput and external-cache restore
+are separate qualification gates; CPU tests do not qualify those operations.
+Published community images and wiki commands are not changed by this source tree.
+
+## One image, explicit model selection
+
+For an image built from `tools/jovian_wheel_runtime/Dockerfile.runtime`:
+
+```bash
+docker run --rm --init --gpus '"device=0,1,2,3"' --network host --ipc host \
+  -v model-cache:/root/.cache/huggingface -v runtime-cache:/cache \
+  -e PROFILE=glm53-flash -e HARDWARE_PROFILE=rtx-pro-6000-pcie \
+  -e TP=4 -e SPECULATOR=mtp -e MTP_DEPTH=3 -e PORT=8000 "$LIL_IMAGE"
+```
+
+Profiles are `glm53-flash`, `qwen38-flash-next`, `ds4-flash`, `ds4-vision`
+and `ds41-flash`. Select GPUs to match TP. DS4.1's Engram access also needs
+the generated Compose's memory-lock and io_uring permissions. `MODEL` is an
+optional checkpoint override; it does not select another model architecture.
+`--print-config` displays the resolved command without starting services.
+With no profile or command the container prints help, not an implicit model.
+Explicit commands such as `python`, `bash` or `vllm serve` retain the ABI
+bootstrap and bypass profile defaults.
 
 ## Ownership
 
@@ -45,7 +65,8 @@ performance measurements. Source references are recorded inside each profile.
   head, Marlin draft MoE, and B12X draft attention. DFlash2 defaults to seven
   proposals from `local-inference-lab/GLM-5.3-Flash-DFlash2`, FLASH_ATTN draft
   attention and `auto` draft KV, retaining the MXFP8 checkpoint policy.
-  Target KV remains FP8. FlashKDA prefill is retained; selecting B12X MoE
+  Target KV defaults to FP8; `nvfp4_ds_mla` remains an explicit GLM option.
+  FlashKDA prefill is retained; selecting B12X MoE
   does not imply replacing recurrent prefill with B12X.
 - DS4 text/Vision: fixed DSpark K5/K3, B12X W4A8 MoE, and native dense
   selection corresponding to `BACKEND=b12x-a8-dglin`. That source launcher
@@ -54,6 +75,10 @@ performance measurements. Source references are recorded inside each profile.
   `--linear-backend b12x` are explicit alternatives requiring dispatch and
   performance checks. Model choice is explicit: changing speculation mode
   never silently changes the checkpoint repository.
+  The official text/Vision checkpoint and remote-code revisions follow the
+  source launcher's pinned revisions. An explicit model override does not
+  inherit another repository's revision; `MODEL_REVISION` and
+  `MODEL_CODE_REVISION` remain operator controls.
 - DS4.1: DSpark K7 with adaptive verification, greedy proposals, standard
   rejection, B12X target/draft attention and B12X MoE/dense. Engram table
   placement selects `ram` or `disk` independently of general CPU offload.
@@ -144,9 +169,11 @@ layout validation. Native vLLM remains the owner of its full option schema.
 
 Legacy `BACKEND`, `MODE`, `SPEC_MODE`, and `DS4_*` graph/OMP aliases are not
 silently ignored: they fail with migration guidance. The production wrappers
-continue to accept them. Their eventual thin compatibility adapters must
-translate them once into this interface; do not implement another precedence
-resolver in shell. `FAIRNESS_ENGINE=none` is supported; `micro_slicing` is not.
+in published community images continue to accept them. The installed
+`serve-*.sh` names select a profile; they are not byte-for-byte replicas of
+every historical shell interface. Use `SPECULATOR`, `OMP_NUM_THREADS` and
+native CLI options for this interface. `FAIRNESS_ENGINE=none` is supported;
+`micro_slicing` is not.
 
 `--print-config` includes effective arguments, settings, model-relevant
 environment and each value's origin. It does not dump the process environment
@@ -175,13 +202,15 @@ python -m runtime.packaging \
 Inside the image build, `runtime/install.sh` installs `/usr/local/bin/lil-serve`
 and the package in `/opt/lil/runtime`. Serving dependencies must already exist
 in `/opt/venv`. The installer does not rebuild CUDA, torch, NCCL, FlashInfer,
-B12X, vLLM, or LMCache, and does not replace the production entrypoints.
+B12X, vLLM, or LMCache. The image entrypoint is `lil-entrypoint`, which selects
+profile serving or an explicit command. Dependency correction ownership is
+documented in [DEPENDENCIES.md](DEPENDENCIES.md).
 
 The CUDA 13.4 wheel image must preserve its CUDA/NCCL bootstrap:
 
 ```bash
 bash runtime/install.sh /build/foundation.inspect.json RUNTIME_LOCK_SHA256 \
-  /opt/venv/bin/qwen38-ngc-runtime
+  /opt/venv/bin/lil-runtime-bootstrap
 ```
 
 The bootstrap is recorded in the image contract and runs before the final
@@ -195,13 +224,12 @@ Explicit user cache paths are honored. An inspection without an image
 contract shows `UNBOUND-RUNTIME`; execution refuses an unbound namespace.
 GPU architecture and kernel-specific cache keys remain owned by the libraries.
 
-A profile-enabled image should retain the existing two-filesystem-layer
-composition: immutable neutral runtime foundation plus serving sources and
-profiles in the installation layer. Removing `ENV` from a child Dockerfile
-does not remove values inherited from `FROM`. Produce a neutral foundation
-configuration without deleting runtime files or dependency patches. Do not
-add successive release-on-release layers and do not rebuild native components
-merely to change model policy.
+The CUDA 13.4 recipe retains 67 pinned NGC foundation layers and one application
+layer. It does not use a preceding community image as its base. The separate
+flattened CUDA 13.3 community recipe has two layers; that is not this recipe's
+layer count. Removing `ENV` in a child Dockerfile cannot clear inherited model
+policy, so foundation and final image metadata are both audited. Profile edits
+do not recompile native component wheels.
 
 ## Generated Compose and wiki material
 
@@ -232,29 +260,37 @@ configuration implementation stays here.
 
 ## External cache preservation and migration gates
 
-The direct resolver intentionally rejects LMCache/native offload execution
-until lifecycle adapters are implemented and tested. This is **not** removal
-of LMCache from the community image: existing source-locked cache launchers
-are unchanged. They remain the executable interface for those deployments.
-Do not set the image default entrypoint to `lil-serve` yet.
+`CACHE_MODE=vram` starts no external service. `CACHE_MODE=native` selects
+GLM native KV offload. `CACHE_MODE=lmcache` constructs an explicit service plan
+for GLM or DS4. `LMCACHE_MODE=ram|disk|off` preserves the DS4 tier selection.
+The model and cache use distinct ports, defaulting to API port plus
+10000/10001/10002 for cache RPC/HTTP/metrics. Overflow and collisions are errors.
 
 | Contract | Required preserved behavior | Resolver disposition |
 |---|---|---|
-| GLM atomic recurrent cache | Target/recurrent/draft all-rank bundles, request/SYSTEM boundaries, aligned exports, DCP-derived object geometry, identity checks, cancellation and restart restore | Lifecycle adapter required; not replaced by a generic KV connector |
-| DS4 engine-driven cache | Worker-owned async pinned SHM, CPU-only sidecar, RAM/disk modes, health gating, coordinated shutdown, memory admission | Lifecycle adapter required; reuse existing transport implementation |
+| GLM atomic recurrent cache | Target/recurrent/draft all-rank bundles, request/SYSTEM boundaries, aligned exports, DCP-derived object geometry, identity checks, cancellation and restart restore | Adapter implemented; model restore qualification required |
+| DS4 engine-driven cache | Worker-owned async pinned SHM, CPU-only sidecar, RAM/disk modes, health gating, coordinated shutdown, memory admission | CPU service lifecycle qualified; model transfer qualification required |
 | Qwen external cache | Separate model/cache correctness qualification | Unsupported, matching the published recipe's qualification limit |
 | DS4.1 external cache | Model-specific cache qualification | Not inferred from Engram RAM support |
 
-Use canonical external-cache settings `cache.mode`, `cache.transfer`,
-`cache.l1_gib`, `cache.l2_gib`, `cache.path`, and `cache.object_tokens` in the
-adapter schema. Translate both `LMCACHE_L1_SIZE_GB` and `LMCACHE_L1_GB` to
-`cache.l1_gib`, rejecting contradictory values. The adapter must produce an
-immutable service plan containing sidecar command/environment, readiness
-condition, final worker arguments, geometry and namespace. A supervisor owns
-process lifetimes; the model resolver owns model defaults. Neither re-resolves
-the other's configuration. The sidecar remains CPU-only for engine-driven
-transport. Do not implement a second SHM allocator, checkpoint store, or restore
-protocol as part of configuration consolidation.
+Typed settings include `cache-mode`, `cache-transfer-mode`, `cache-l1-gib`,
+`cache-l2-gib`, `cache-directory` and `cache-object-tokens`. Both
+`LMCACHE_L1_SIZE_GB` and `LMCACHE_L1_GB` address one setting; contradictory
+values fail at the selected precedence level. The supervisor owns process
+groups, readiness, exact SHM name/capacity checks and coordinated shutdown.
+The model resolver owns geometry; the supervisor never re-resolves policy.
+Engine-driven service processes have an empty CUDA device list. Persistent
+namespaces include immutable checkpoint identity, runtime identity and layout.
+HF revisions are resolved and pinned before opening persistent storage, not
+during `--print-config`. GLM DFlash preserves the target scheduler budget while
+reserving additional input rows for draft verification. Existing LMCache
+transport, allocation and checkpoint implementations remain authoritative.
+
+GLM direct cuMem transfer requires a helper library built from the **same
+LMCache commit** as the wheel. Its source hashes, license and compiled-library
+hash are recorded in the image. The build reuses cached source and does not
+recompile the LMCache wheel. Unknown shell-text extensions are not evaluated;
+operators can use the raw-command interface for unsupported wrapper options.
 
 Production cutover requires:
 
@@ -272,7 +308,7 @@ Production cutover requires:
 4. For external cache: cold/L1/restart-L2, request and shared-SYSTEM endpoints,
    aligned retention, DCP/MTP/DFlash ownership, cancellation/eviction and
    sidecar shutdown checks. Preserve bytes, state identity and geometry.
-5. Thin legacy aliases only after these gates pass. No duplicated kernel
+5. Qualification of legacy profile-selector aliases. No duplicated kernel
    variables in wiki Compose; both community and wheel builds install the
    same profile source revision but retain independent qualification records.
 

@@ -37,6 +37,10 @@
     "description": {
       "type": "string"
     },
+    "checkpoint_revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
     "evidence": {
       "type": "array",
       "items": {

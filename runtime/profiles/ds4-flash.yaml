@@ -3,11 +3,18 @@ kind: model
 id: ds4-flash
 status: implemented
 description: DeepSeek V4 text DSpark with B12X W4A8 MoE and native dense-kernel selection.
+checkpoint_revision: 9e165c30e2704aec5d9d593cce3eebd58bbef1cb
 evidence:
   - https://github.com/local-inference-lab/rtx6kpro/blob/master/models/ds4-jovian-community-r29.md
   - recipes/glm53/serve-ds4-jovian.sh
   - local-inference-lab/vllm:serve-ds4-flash.sh
 defaults:
+  cache-l1-gib: 24
+  cache-l1-init-gib: 24
+  cache-l2-gib: 256
+  cache-l2-enabled: false
+  cache-cpu-workers: 4
+  cache-l2-workers: 4
   model: deepseek-ai/DeepSeek-V4-Flash-0731
   served-model-name: DeepSeek-V4-Flash-0731
   tensor-parallel-size: 2
@@ -53,5 +60,5 @@ modes:
     config: {method: dspark, draft_sample_method: probabilistic, rejection_sample_method: standard}
 cache:
   gpu: implemented
-  external: unsupported
+  external: implemented
   migration_contract: ds4-engine-driven

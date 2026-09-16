@@ -8,6 +8,13 @@ evidence:
   - recipes/glm53/serve-glm53-flash-cache-complete.sh
   - recipes/glm53/serve-glm53-flash-nvfp4-dflash2.sh
 defaults:
+  cache-l1-gib: 64
+  cache-l1-init-gib: 2
+  cache-l2-gib: 512
+  cache-l2-enabled: true
+  cache-cpu-workers: 16
+  cache-gpu-workers: 8
+  cache-l2-workers: 8
   model: local-inference-lab/GLM-5.3-Flash-NVFP4
   served-model-name: GLM-5.3-Flash-NVFP4
   tensor-parallel-size: 4
@@ -84,5 +91,5 @@ modes:
       kv_cache_dtype: auto
 cache:
   gpu: implemented
-  external: unsupported
+  external: implemented
   migration_contract: glm-atomic-recurrent

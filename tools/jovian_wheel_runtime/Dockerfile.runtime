@@ -8,14 +8,15 @@ FROM ${UV_IMAGE} AS uv
 FROM ${SOURCE_IMAGE} AS runtime
 ARG SOURCE_IMAGE
 ARG RUNTIME_SOURCE_COMMIT
-LABEL org.opencontainers.image.title="LIL Qwen3.8 CUDA 13.4 NGC runtime" \
-      org.opencontainers.image.description="Qwen3.8 Flash Next runtime over a patched, immutable NVIDIA PyTorch foundation" \
+LABEL org.opencontainers.image.title="LIL multi-model CUDA 13.4 runtime" \
+      org.opencontainers.image.description="Model-profile serving over a source-locked NVIDIA PyTorch foundation" \
       org.opencontainers.image.source="https://github.com/local-inference-lab/blackwell-llm-docker" \
       org.opencontainers.image.revision="${RUNTIME_SOURCE_COMMIT}" \
       org.opencontainers.image.base.name="${SOURCE_IMAGE}"
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv,ro \
     --mount=type=bind,source=.,target=/source,ro \
     --mount=type=bind,from=qwen-runtime-bundle,source=/,target=/runtime-bundle,ro \
+    --mount=type=bind,from=runtime-build-metadata,source=/,target=/runtime-build-metadata,ro \
     --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     python /source/recipes/glm53/install_dependency_python_patches.py \
       --manifest /source/tools/jovian_wheel_runtime/ngc-python-patches.json \
@@ -25,17 +26,25 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv,ro \
       --uv /usr/local/bin/uv \
       --source-image "${SOURCE_IMAGE}" \
       --overlay-lock /source/tools/jovian_wheel_runtime/ngc-runtime-overlay.lock \
-      --entrypoint /source/tools/jovian_wheel_runtime/qwen38_ngc_runtime_entrypoint.sh \
+      --entrypoint /source/tools/jovian_wheel_runtime/runtime-entrypoint.sh \
       --verifier /source/tools/jovian_wheel_runtime/verify_qwen38_runtime.py \
  && python /source/recipes/glm53/install_dependency_python_patches.py \
       --manifest /source/tools/jovian_wheel_runtime/ngc-venv-python-patches.json \
+ && /opt/venv/bin/python /source/tools/jovian_wheel_runtime/install_runtime_auxiliary.py \
+      --bundle /runtime-bundle \
  && /opt/venv/bin/python \
       /source/tools/jovian_wheel_runtime/verify_installed_requirements.py \
  && /opt/venv/bin/qwen38-ngc-runtime /opt/venv/bin/python \
       /opt/venv/libexec/verify_qwen38_runtime.py \
       --foundation ngc \
-      --defer-native-imports
+      --defer-native-imports \
+ && cd /source \
+ && /opt/venv/bin/python -m runtime.image_install \
+      --image-inspect /runtime-build-metadata/foundation.inspect.json \
+      --runtime-manifest /opt/venv/share/lil-runtime/manifest.json \
+      --bootstrap /opt/venv/bin/lil-runtime-bootstrap
 ENV PATH=/opt/venv/bin:${PATH} \
     VIRTUAL_ENV=/opt/venv
-ENTRYPOINT ["/opt/venv/bin/qwen38-ngc-runtime"]
-CMD ["python", "-m", "vllm.entrypoints.cli.main", "--help"]
+WORKDIR /opt/lil
+ENTRYPOINT ["/usr/local/bin/lil-entrypoint"]
+CMD []

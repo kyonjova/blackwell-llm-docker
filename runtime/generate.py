@@ -25,7 +25,7 @@ def compose(
         overrides.extend(["--mode", mode])
     plan = resolve(identifier, hardware, env={}, argv=overrides)
     tp = plan.values["tensor-parallel-size"]
-    return {
+    result = {
         "name": identifier,
         "services": {
             "model": {
@@ -68,6 +68,11 @@ def compose(
         },
         "volumes": {"model-cache": {}, "runtime-cache": {}},
     }
+    if identifier == "ds41-flash":
+        result["services"]["model"]["ulimits"] = {"memlock": {"soft": -1, "hard": -1}}
+        # The published Engram disk path uses io_uring, blocked by Docker's default seccomp profile.
+        result["services"]["model"]["security_opt"] = ["seccomp=unconfined"]
+    return result
 
 
 def parameter_table() -> str:

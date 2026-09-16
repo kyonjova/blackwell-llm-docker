@@ -4,11 +4,14 @@ on:
   schedule:
     - cron: '3-58/5 * * * *'
   push:
-    branches: [main, ci/jovian-cu134-wheel-runtime-20260913]
+    branches: [main, ci/jovian-cu134-wheel-runtime-20260913, feat/unified-runtime-image]
     paths:
       - .github/workflows/community-container-release.yml
       - tools/jovian_wheel_runtime/**
+      - runtime/**
       - recipes/glm53/torch-schema-enumeration.patch
+      - recipes/glm53/cutlass-sentinel-identity.patch
+      - recipes/glm53/glm53_checkpoint_identity.py
       - recipes/glm53/install_dependency_python_patches.py
   repository_dispatch:
     types: [component-wheel-published]
@@ -39,6 +42,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          python3 -m venv "${RUNNER_TEMP}/runtime-contract-tests"
+          "${RUNNER_TEMP}/runtime-contract-tests/bin/pip" install -r runtime/requirements.txt pytest
+          "${RUNNER_TEMP}/runtime-contract-tests/bin/python" -m pytest -q runtime/tests tools/jovian_wheel_runtime/tests
           assembly="${RUNNER_TEMP}/community-assembly.json"
           python3 tools/jovian_wheel_runtime/container_channel.py resolve \
             --config tools/jovian_wheel_runtime/community-channel.json --output "${assembly}"

@@ -8,14 +8,14 @@ import subprocess
 import pytest
 import yaml
 
-from runtime.launcher import ConfigError, ROOT, profile, read_yaml, resolve
+from runtime.generate import compose, parameter_table
+from runtime.launcher import ROOT, ConfigError, profile, read_yaml, resolve
 from runtime.packaging import (
     audit_image_metadata,
     make_contract,
     owned_environment,
     payload_hashes,
 )
-from runtime.generate import compose, parameter_table
 
 MODELS = ["glm53-flash", "ds4-flash", "ds4-vision", "ds41-flash", "qwen38-flash-next"]
 
@@ -283,7 +283,7 @@ def test_ds4_keeps_native_dense_selection_and_accepts_explicit_deepgemm():
         ["--cudagraph-capture-sizes", "4", "2"],
         ["--max-parallel-prefills", "0"],
         ["--draft-tokens", "-1"],
-        ["--kv-cache-dtype", "nvfp4_ds_mla"],
+        ["--kv-cache-dtype", "unrecognized-cache-format"],
         ["--compilation-config", '{"x":NaN}'],
         ["--config", "arbitrary.yaml"],
     ],
@@ -319,8 +319,17 @@ def test_auto_fairness_uses_native_options_without_reimplementing_controller(hal
     ],
 )
 def test_external_cache_cannot_silently_fall_back_to_gpu_cache(environment):
-    with pytest.raises(ConfigError):
-        resolve("glm53-flash", env=environment)
+    plan = resolve("glm53-flash", env=environment)
+    if environment.get("CACHE_MODE") == "native":
+        assert plan.values["kv-offloading-backend"] == "native"
+        assert plan.values["enable-cumem-allocator"] is True
+    else:
+        assert plan.cache_service is not None
+        assert (
+            plan.values["kv-transfer-config"]["kv_connector"]
+            == "LMCacheRecurrentCheckpointConnector"
+        )
+        assert plan.cache_service.identity_required
 
 
 def test_unknown_native_arguments_and_logging_are_preserved():

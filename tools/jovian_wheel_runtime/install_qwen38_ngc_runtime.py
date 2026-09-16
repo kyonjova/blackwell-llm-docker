@@ -194,16 +194,21 @@ def main() -> int:
             ],
             env=environment,
         )
-    destination = venv / "bin/qwen38-ngc-runtime"
+    destination = venv / "bin/lil-runtime-bootstrap"
     manifest_destination = venv / "share/lil-runtime/manifest.json"
     manifest_destination.parent.mkdir(parents=True)
     shutil.copyfile(bundle / "manifest.json", manifest_destination)
     shutil.copyfile(args.entrypoint, destination)
     destination.chmod(0o755)
+    (venv / "bin/qwen38-ngc-runtime").symlink_to(destination.name)
     verifier = venv / "libexec/verify_qwen38_runtime.py"
     verifier.parent.mkdir()
     shutil.copyfile(args.verifier, verifier)
     verifier.chmod(0o755)
+    shutil.copyfile(
+        args.verifier.with_name("verify_torch_operator_contract.py"),
+        verifier.with_name("verify_torch_operator_contract.py"),
+    )
     print(f"qwen38_ngc_runtime={venv.resolve()} status=installed")
     return 0
 
