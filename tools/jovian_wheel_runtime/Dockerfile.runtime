@@ -45,6 +45,5 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv,ro \
       --bootstrap /opt/venv/bin/lil-runtime-bootstrap
 ENV PATH=/opt/venv/bin:${PATH} \
     VIRTUAL_ENV=/opt/venv
-WORKDIR /opt/lil
 ENTRYPOINT ["/usr/local/bin/lil-entrypoint"]
 CMD []
