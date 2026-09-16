@@ -379,6 +379,56 @@ if [[ "${PHASE}" == all || "${PHASE}" == overlay ]]; then
   done
 fi
 [[ -n "${TORCHVISION_COMMIT}" ]] || warn "TORCHVISION_COMMIT is empty; the foundation Dockerfile's own ARG default applies"
+case "${NVIDIA_PYTORCH_IMAGE}" in
+  *@sha256:*) ;;
+  *) warn "NVIDIA_PYTORCH_IMAGE carries no @sha256 digest: the NGC tag can drift under the build (the foundation Dockerfile's own default pins one). The manifest records the resolved digest either way." ;;
+esac
+
+# ------------------------------------------------------------ pin pre-flight
+# Same contract as build-spark-cu132.sh: one HTTPS round-trip per pinned sha,
+# die on 404/422 (deleted branch, force-push, typo), warn on anything
+# inconclusive (rate limit, auth, no network). Without it a bad pin surfaces
+# only at the in-build clone test -- minutes for NCCL, but the torch clone
+# sits behind the whole NCCL build stage. PIN_PREFLIGHT=0 skips (air-gapped).
+check_pin() {  # repo-url sha label
+  case "$1" in *github.com/*) ;; *) return 0 ;; esac
+  local nwo="${1#*github.com/}"; nwo="${nwo%.git}"
+  local code auth=()
+  [[ -z "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]] \
+    || auth=(-H "Authorization: Bearer ${GH_TOKEN:-${GITHUB_TOKEN}}")
+  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "${auth[@]}" \
+    "https://api.github.com/repos/${nwo}/commits/$2" 2>/dev/null || echo 000)"
+  case "${code}" in
+    200) ;;
+    404|422) die "$3 pin $2 is not on ${nwo} (HTTP ${code}) -- deleted branch, force-push, or typo. Verify: git ls-remote https://github.com/${nwo}.git" ;;
+    *) warn "$3 pin pre-flight inconclusive (HTTP ${code} from api.github.com); pin unverified"; return 1 ;;
+  esac
+}
+if [[ "${PIN_PREFLIGHT:-1}" == 1 ]] && command -v curl >/dev/null 2>&1; then
+  _pins=()
+  if [[ "${PHASE}" == all || "${PHASE}" == foundation ]]; then
+    _pins+=("${PYTORCH_REPO}|${PYTORCH_COMMIT}|pytorch" "${NCCL_REPO}|${NCCL_COMMIT}|nccl" "${XGRAMMAR_REPO}|${XGRAMMAR_COMMIT}|xgrammar")
+    [[ -z "${TORCHVISION_COMMIT}" ]] || _pins+=("${TORCHVISION_REPO}|${TORCHVISION_COMMIT}|torchvision")
+  fi
+  if [[ "${PHASE}" == all || "${PHASE}" == flashinfer ]]; then
+    _pins+=("${FLASHINFER_REPO}|${FLASHINFER_COMMIT}|flashinfer")
+  fi
+  if [[ "${PHASE}" == all || "${PHASE}" == overlay ]]; then
+    _pins+=("${VLLM_REPO}|${VLLM_COMMIT}|vLLM" "${B12X_REPO}|${B12X_COMMIT}|B12X" "${LMCACHE_REPO}|${LMCACHE_COMMIT}|LMCache" \
+            "${EXLLAMAV3_REPO}|${EXLLAMAV3_COMMIT}|exllamav3" "${DEEPGEMM_REPO}|${DEEPGEMM_COMMIT}|DeepGEMM" \
+            "${INSTANTTENSOR_REPO}|${INSTANTTENSOR_COMMIT}|InstantTensor")
+  fi
+  _pins_ok=1
+  for _p in "${_pins[@]}"; do
+    IFS='|' read -r _repo _sha _label <<<"${_p}"
+    check_pin "${_repo}" "${_sha}" "${_label}" || _pins_ok=0
+  done
+  if [[ "${_pins_ok}" == 1 ]]; then
+    note "pin pre-flight OK: ${#_pins[@]} pins reachable"
+  else
+    warn "pin pre-flight INCOMPLETE -- at least one pin unverified; a bad sha will not surface until the in-build clone test. Set GH_TOKEN to make this check reliable."
+  fi
+fi
 
 if [[ "${DRY_RUN}" == 1 ]]; then
   note "DRY RUN complete: rewrites validated on ${D_FOUND}, ${D_FI}, ${D_OVER}; no image built."
@@ -463,7 +513,7 @@ PY
   for launcher in ${VLLM_REQUIRED_LAUNCHERS}; do
     docker run --rm --entrypoint test "${IMAGE}" -f "/usr/local/bin/${launcher}" || die "required launcher missing from image: ${launcher}"
   done
-  docker run --rm --entrypoint bash "${IMAGE}" -c 'ls /opt/local-inference/nccl/lib/libnccl.so.2.31.2 >/dev/null' || warn "patched NCCL not at /opt/local-inference/nccl/lib (check the foundation layout before setting LD_PRELOAD)"
+  docker run --rm --entrypoint bash "${IMAGE}" -c "ls /opt/local-inference/nccl/lib/libnccl.so.${NCCL_VERSION} >/dev/null" || warn "patched NCCL not at /opt/local-inference/nccl/lib (check the foundation layout before setting LD_PRELOAD)"
   printf '\nBuilt %s (base %s, runtime_foundation=%s, flashinfer %s)\n' "${IMAGE}" "${BASE_IMAGE}" "${RUNTIME_FOUNDATION}" "${FLASHINFER_WHEEL_IMAGE}"
   report_telemetry "OK+VERIFIED"
 
