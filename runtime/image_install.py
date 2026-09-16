@@ -56,20 +56,41 @@ def install(
         (payload / "image-contract.json").write_text(
             json.dumps(contract, sort_keys=True, indent=2) + "\n"
         )
-        os.rename(payload, destination)
-    for name in ("lil-serve", "lil-entrypoint"):
-        target = bin_directory / name
-        shutil.copyfile(ROOT / name, target)
-        target.chmod(0o755)
-    for name in LEGACY_PROFILES:
-        target = bin_directory / name
-        # Literal, repository-owned names only; caller arguments remain argv.
-        target.write_text(
-            f'#!/bin/sh\nexec /usr/local/bin/lil-entrypoint {name} "$@"\n'
-        )
-        target.chmod(0o755)
-    python_site.mkdir(parents=True, exist_ok=True)
-    package_path.write_text(str(destination.parent.resolve()) + "\n")
+        staged_launchers = Path(tmp) / "launchers"
+        staged_launchers.mkdir()
+        for name in ("lil-serve", "lil-entrypoint"):
+            target = staged_launchers / name
+            shutil.copyfile(ROOT / name, target)
+            target.chmod(0o755)
+        for name in LEGACY_PROFILES:
+            target = staged_launchers / name
+            # Literal, repository-owned names only; caller arguments remain argv.
+            target.write_text(
+                f'#!/bin/sh\nexec /usr/local/bin/lil-entrypoint {name} "$@"\n'
+            )
+            target.chmod(0o755)
+        python_site.mkdir(parents=True, exist_ok=True)
+        created = []
+        try:
+            outputs = [
+                (path, bin_directory / path.name) for path in staged_launchers.iterdir()
+            ]
+            staged_path = Path(tmp) / package_path.name
+            staged_path.write_text(str(destination.parent.resolve()) + "\n")
+            outputs.append((staged_path, package_path))
+            for source, target in outputs:
+                # Exclusive creation prevents overwriting files introduced after
+                # preflight. Only files owned by this invocation are rolled back.
+                with target.open("xb") as output:
+                    created.append(target)
+                    with source.open("rb") as input_file:
+                        shutil.copyfileobj(input_file, output)
+                target.chmod(source.stat().st_mode & 0o777)
+            os.rename(payload, destination)
+        except BaseException:
+            for target in reversed(created):
+                target.unlink()
+            raise
     return contract
 
 

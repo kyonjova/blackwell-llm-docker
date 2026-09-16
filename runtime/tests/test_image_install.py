@@ -5,12 +5,14 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
 from runtime import ConfigError
 from runtime.entrypoint import command
 from runtime.image_install import install
+from runtime.launcher import ROOT
 from runtime.packaging import audit_image_metadata
 
 METADATA = {"Id": "sha256:" + "1" * 64, "Config": {"Env": ["PATH=/usr/bin"]}}
@@ -35,6 +37,7 @@ def test_profile_environment_and_legacy_path():
 def test_env_only_interface_inspects_without_runtime_or_gpu():
     result = subprocess.run(
         [sys.executable, "-m", "runtime.launcher", "--print-config"],
+        cwd=ROOT.parent,
         env={
             "PATH": os.environ["PATH"],
             "PROFILE": "ds41-flash",
@@ -84,9 +87,41 @@ def test_rejects_incomplete_foundation_identity(image_id):
 
 def test_installer_rejects_excess_arguments_before_writing():
     result = subprocess.run(
-        ["bash", "runtime/install.sh", "a", "b", "c", "d"],
+        ["bash", str(ROOT / "install.sh"), "a", "b", "c", "d"],
+        cwd=ROOT.parent,
         capture_output=True,
         text=True,
         check=False,
     )
     assert result.returncode == 2 and "Usage" in result.stderr
+
+
+def test_failed_install_removes_only_its_outputs_and_allows_retry(
+    tmp_path, monkeypatch
+):
+    destination, bindir, site = (
+        tmp_path / name for name in ("lib/runtime", "bin", "site")
+    )
+    bindir.mkdir()
+    sentinel = bindir / "operator-command"
+    sentinel.write_text("preserve")
+    kwargs = {"destination": destination, "bin_directory": bindir, "python_site": site}
+    original_open = Path.open
+
+    def fail_import_path(path, mode="r", *args, **extra):
+        if path == site / "lil-model-runtime.pth" and any(
+            flag in mode for flag in "wxa"
+        ):
+            raise OSError("injected import-path write failure")
+        return original_open(path, mode, *args, **extra)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "open", fail_import_path)
+        with pytest.raises(OSError, match="injected"):
+            install(METADATA, "2" * 64, "/bootstrap", **kwargs)
+    assert not destination.exists()
+    assert list(bindir.iterdir()) == [sentinel]
+    assert sentinel.read_text() == "preserve"
+    assert not (site / "lil-model-runtime.pth").exists()
+    install(METADATA, "2" * 64, "/bootstrap", **kwargs)
+    assert destination.is_dir()

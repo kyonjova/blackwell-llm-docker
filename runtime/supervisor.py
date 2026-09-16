@@ -154,7 +154,7 @@ def supervise(
                         service,
                     )
                 break
-            except (urllib.error.URLError, TimeoutError):
+            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
                 time.sleep(0.1)
         if requested_signal:
             return 128 + requested_signal
