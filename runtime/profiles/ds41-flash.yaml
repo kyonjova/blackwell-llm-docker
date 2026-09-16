@@ -28,7 +28,7 @@ defaults:
   linear-backend: b12x
   async-scheduling: true
   scheduler-reserve-full-isl: false
-  prefill-policy: decode-aware
+  prefill-policy: round-robin
   decode-refill-target: auto
   generation-config: vllm
   override-generation-config: {temperature: 1.0, top_p: 0.95}

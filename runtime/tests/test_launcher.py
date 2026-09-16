@@ -126,6 +126,27 @@ def test_environment_equal_to_a_different_models_default_is_explicit():
     assert plan.values["max-cudagraph-capture-size"] == 256
 
 
+def test_ds41_single_prefill_uses_round_robin():
+    values = resolve("ds41-flash", env={}).values
+    assert values["max-parallel-prefills"] == 1
+    assert values["prefill-policy"] == "round-robin"
+
+
+def test_decode_aware_prefill_requires_interleaving():
+    with pytest.raises(ConfigError, match="max-parallel-prefills"):
+        resolve("ds41-flash", env={"PREFILL_POLICY": "decode-aware"})
+    values = resolve(
+        "ds41-flash",
+        env={"PREFILL_POLICY": "decode-aware", "MAX_PARALLEL_PREFILLS": "auto"},
+    ).values
+    assert values["prefill-policy"] == "decode-aware"
+
+
+def test_decode_refill_target_requires_decode_aware_policy():
+    with pytest.raises(ConfigError, match="decode-refill-target"):
+        resolve("ds41-flash", env={"DECODE_REFILL_TARGET": "2"})
+
+
 def test_cli_overrides_invalid_environment_and_updates_speculative_tp():
     plan = resolve(
         "ds41-flash",

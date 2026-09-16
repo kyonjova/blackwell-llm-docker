@@ -1,8 +1,27 @@
-"""Check generated profile arguments against the installed vLLM parser, without serving."""
+"""Validate profile CLI and scheduler contracts without loading model weights."""
 
+import inspect
 import json
 
 from runtime.launcher import ROOT, profile, resolve
+
+
+def validate_scheduler(args):
+    """Exercise native cross-field validators independently of checkpoint access."""
+    from vllm.config.scheduler import SchedulerConfig
+
+    parameters = inspect.signature(SchedulerConfig).parameters
+    values = {
+        name: value
+        for name, value in vars(args).items()
+        if name in parameters and value is not None
+    }
+    # Automatic model lengths require checkpoint metadata. A concrete context
+    # validates scheduling relationships without claiming model qualification.
+    if not isinstance(values.get("max_model_len"), int) or values["max_model_len"] <= 0:
+        values["max_model_len"] = 131072
+    values["is_encoder_decoder"] = False
+    SchedulerConfig(**values)
 
 
 def main():
@@ -28,7 +47,8 @@ def main():
                     env={"SPECULATOR": mode, "CACHE_MODE": cache},
                     runtime_identity="a" * 64,
                 )
-                parser.parse_args(plan.argv[3:])
+                args = parser.parse_args(plan.argv[3:])
+                validate_scheduler(args)
                 cases.append({"profile": path.stem, "mode": mode, "cache": cache})
     print(json.dumps({"native_cli_cases": cases, "result": "PASS"}, sort_keys=True))
 

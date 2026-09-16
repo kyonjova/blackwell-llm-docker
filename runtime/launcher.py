@@ -805,6 +805,16 @@ def validate(values: dict, environment: dict, identifier: str) -> None:
         and not values["enable-chunked-prefill"]
     ):
         raise ConfigError("Parallel prefills require chunked prefill")
+    if (
+        values.get("max-parallel-prefills", 1) == 1
+        and values.get("prefill-policy", "round-robin") != "round-robin"
+    ):
+        raise ConfigError("decode-aware prefill requires max-parallel-prefills > 1 or auto")
+    if (
+        values.get("prefill-policy", "round-robin") != "decode-aware"
+        and values.get("decode-refill-target", "auto") != "auto"
+    ):
+        raise ConfigError("decode-refill-target requires decode-aware prefill")
     captures = values.get("cudagraph-capture-sizes", [])
     if captures and (
         captures != sorted(set(captures))
