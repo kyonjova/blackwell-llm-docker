@@ -809,7 +809,9 @@ def validate(values: dict, environment: dict, identifier: str) -> None:
         values.get("max-parallel-prefills", 1) == 1
         and values.get("prefill-policy", "round-robin") != "round-robin"
     ):
-        raise ConfigError("decode-aware prefill requires max-parallel-prefills > 1 or auto")
+        raise ConfigError(
+            "decode-aware prefill requires max-parallel-prefills > 1 or auto"
+        )
     if (
         values.get("prefill-policy", "round-robin") != "decode-aware"
         and values.get("decode-refill-target", "auto") != "auto"
