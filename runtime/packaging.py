@@ -8,7 +8,7 @@ import json
 import re
 from pathlib import Path
 
-from runtime.launcher import ConfigError, JIT_PATHS, ROOT, read_yaml
+from runtime.launcher import JIT_PATHS, ROOT, ConfigError, read_yaml
 
 
 def owned_environment() -> set[str]:
@@ -53,11 +53,11 @@ def audit_image_metadata(metadata: dict) -> None:
         raise ConfigError(
             "Image Config.Env contains profile-owned values: " + ", ".join(forbidden)
         )
-    if not metadata.get("Id", "").startswith("sha256:"):
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", metadata.get("Id", "")):
         raise ConfigError("Image inspection must identify an immutable image ID")
 
 
-def payload_hashes(root: Path = ROOT) -> dict[str, str]:
+def payload_sources(root: Path = ROOT) -> dict[str, Path]:
     result = {}
     candidates = [
         *root.iterdir(),
@@ -70,13 +70,25 @@ def payload_hashes(root: Path = ROOT) -> dict[str, str]:
             path.is_file()
             and (
                 path.suffix in {".py", ".json", ".yaml", ".txt", ".sh"}
-                or path.name == "lil-serve"
+                or path.name in {"lil-serve", "lil-entrypoint"}
             )
             and relative.parts[0] not in {"tests", "generated", "__pycache__"}
             and path.name != "image-contract.json"
         ):
-            result[relative.as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+            result[relative.as_posix()] = path
+    identity = root / "checkpoint_identity.py"
+    if not identity.exists() and root == ROOT:
+        identity = root.parent / "recipes/glm53/glm53_checkpoint_identity.py"
+    if identity.is_file():
+        result["checkpoint_identity.py"] = identity
     return result
+
+
+def payload_hashes(root: Path = ROOT) -> dict[str, str]:
+    return {
+        name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for name, path in payload_sources(root).items()
+    }
 
 
 def make_contract(

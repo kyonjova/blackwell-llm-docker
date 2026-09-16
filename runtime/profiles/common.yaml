@@ -3,6 +3,16 @@ kind: common
 id: single-node-vllm
 status: implemented
 defaults:
+  cache-transfer-mode: engine_driven
+  cache-directory: /cache/lmcache
+  cache-object-tokens: 4096
+  cache-native-gib: 64
+  cache-host: 127.0.0.1
+  cache-http-host: 127.0.0.1
+  cache-start-timeout: 120
+  cache-prefetch-policy: retain
+  cache-broker-directory: /cache/lmcache-cumem
+  cache-load-failure-policy: recompute
   host: 0.0.0.0
   port: 8000
   pipeline-parallel-size: 1

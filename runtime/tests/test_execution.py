@@ -8,7 +8,7 @@ import sys
 import pytest
 
 from runtime import launcher
-from runtime.launcher import ConfigError, ROOT, execute, resolve
+from runtime.launcher import ROOT, ConfigError, execute, resolve
 from runtime.packaging import make_contract, verify_contract
 
 
@@ -26,6 +26,7 @@ def test_cli_process_is_cpu_only_and_does_not_execute_unbound_plan():
         env={"PATH": os.environ["PATH"]},
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["settings"]["host"]["value"] == "0.0.0.0"
@@ -35,6 +36,7 @@ def test_cli_process_is_cpu_only_and_does_not_execute_unbound_plan():
         env={"PATH": os.environ["PATH"]},
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 2
     assert "build-audited" in result.stderr
@@ -77,3 +79,20 @@ def test_sampling_file_explicitly_replaces_profile_defaults():
         argv=["--generation-config", "auto", "--override-generation-config.top_p=1"],
     )
     assert combined.values["override-generation-config"] == {"top_p": 1}
+
+
+def test_remote_code_revision_tracks_only_the_selected_model():
+    plan = resolve("ds4-flash", env={})
+    assert (
+        plan.values["revision"]
+        == plan.values["code-revision"]
+        == "9e165c30e2704aec5d9d593cce3eebd58bbef1cb"
+    )
+    assert plan.values["speculative-config"]["revision"] == plan.values["revision"]
+    custom = resolve("ds4-flash", env={"MODEL": "owner/custom-model"})
+    assert "revision" not in custom.values and "code-revision" not in custom.values
+    explicit = resolve(
+        "ds4-flash", env={"MODEL_REVISION": "b" * 40, "MODEL_CODE_REVISION": "c" * 40}
+    )
+    assert explicit.values["revision"] == "b" * 40
+    assert explicit.values["code-revision"] == "c" * 40

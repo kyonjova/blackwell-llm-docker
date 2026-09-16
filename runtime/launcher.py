@@ -10,7 +10,7 @@ import math
 import os
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +34,8 @@ JIT_PATHS = {
 }
 NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SECRET = re.compile(
-    r"api[-_]?key|password|secret|authorization|access[-_]?token|hf_token", re.I
+    r"api[-_]?key|password|secret|authorization|access[-_]?token|hf_token",
+    re.IGNORECASE,
 )
 
 
@@ -48,7 +49,9 @@ UniqueLoader.yaml_implicit_resolvers = {
     for key, rules in yaml.SafeLoader.yaml_implicit_resolvers.items()
 }
 UniqueLoader.add_implicit_resolver(
-    "tag:yaml.org,2002:bool", re.compile(r"^(?:true|false)$", re.I), list("tTfF")
+    "tag:yaml.org,2002:bool",
+    re.compile(r"^(?:true|false)$", re.IGNORECASE),
+    list("tTfF"),
 )
 
 
@@ -230,6 +233,7 @@ class LaunchPlan:
     argv: list[str]
     passthrough: list[str]
     warnings: list[str]
+    cache_service: Any = None
 
     def public(self) -> dict:
         # Build public argv from redacted values; never dump the process environment.
@@ -273,6 +277,9 @@ class LaunchPlan:
                 for key, value in sorted(self.environment.items())
             },
             "warnings": self.warnings,
+            "cache_service": _redact(asdict(self.cache_service))
+            if self.cache_service
+            else None,
         }
 
 
@@ -360,6 +367,25 @@ def resolve(
             candidate_source = "environment"
         normalized = []
         for alias, raw in candidates:
+            if alias == "LMCACHE_MODE":
+                cache_modes = {
+                    "off": ("vram", False),
+                    "0": ("vram", False),
+                    "ram": ("lmcache", False),
+                    "memory": ("lmcache", False),
+                    "1": ("lmcache", False),
+                    "disk": ("lmcache", True),
+                    "ram-disk": ("lmcache", True),
+                    "memory-disk": ("lmcache", True),
+                }
+                if str(raw).lower() not in cache_modes:
+                    raise ConfigError("LMCACHE_MODE must select off, ram or disk")
+                mode, l2 = cache_modes[str(raw).lower()]
+                raw = mode if key == "cache-mode" else l2
+            if alias == "LMCACHE_ENABLED":
+                if raw not in {"0", "1"}:
+                    raise ConfigError("LMCACHE_ENABLED must be 0 or 1")
+                raw = "lmcache" if raw == "1" else "vram"
             if key == "kv-cache-dtype" and raw == "fp8_ds_mla":
                 raw = "fp8"
             if key == "mode" and raw in {"dflash", "none"}:
@@ -431,6 +457,7 @@ def resolve(
                 "PYTORCH_CUDA_ALLOC_CONF",
                 "INSTANTTENSOR_BACKEND",
                 "XDG_CACHE_HOME",
+                "LD_PRELOAD",
             }
         ):
             source = (
@@ -451,6 +478,26 @@ def resolve(
     def derive(key, value, reason):
         values[key] = value
         origins[key] = f"derived:{reason}"
+
+    # A repository-specific code revision must not leak to an operator's model.
+    if (
+        "revision" not in values
+        and values["model"] == model["defaults"]["model"]
+        and model.get("checkpoint_revision")
+    ):
+        derive(
+            "revision", model["checkpoint_revision"], "profile checkpoint/code revision"
+        )
+    if (
+        values.get("trust-remote-code")
+        and "revision" in values
+        and "code-revision" not in values
+    ):
+        derive(
+            "code-revision",
+            values["revision"],
+            "remote code follows selected checkpoint",
+        )
 
     if explicit_env.get("EXTRA_VLLM_ARGS"):
         raise ConfigError(
@@ -513,7 +560,7 @@ def resolve(
                 spec["model"] = values["draft-model"]
             if "draft-revision" in values:
                 spec["revision"] = values["draft-revision"]
-            elif mode == "mtp" and "revision" in values:
+            elif mode in {"mtp", "dspark"} and "revision" in values:
                 spec["revision"] = values["revision"]
             derive(
                 "speculative-config", spec, f"{mode} policy and resolved draft settings"
@@ -531,17 +578,6 @@ def resolve(
         values.get("speculative-config", {}).get("num_speculative_tokens", 0),
         "effective proposal width",
     )
-
-    if values["cache-mode"] != "vram":
-        raise ConfigError(
-            f"{identifier}: external cache migration contract '{model['cache']['migration_contract']}' is not executable through this resolver. Use the source-locked cache launcher; no silent GPU-cache fallback is permitted"
-        )
-    if str(explicit_env.get("LMCACHE_ENABLED", "0")) != "0" or explicit_env.get(
-        "LMCACHE_MODE", "off"
-    ) not in {"off", "0"}:
-        raise ConfigError(
-            "External cache requires its lifecycle adapter; LMCACHE settings cannot be ignored"
-        )
 
     if identifier == "glm53-flash":
         for name, key in (
@@ -647,7 +683,29 @@ def resolve(
         warnings.append(
             "Unmanaged native options are forwarded to vLLM; their values are not validated by the profile schema."
         )
+    from runtime.cache import configure as configure_cache
+
+    cache_service = configure_cache(
+        values, origins, environment, env_origins, identifier, runtime_identity
+    )
     validate(values, environment, identifier)
+    command = make_argv(values, passthrough)
+    return LaunchPlan(
+        identifier,
+        hardware,
+        values,
+        environment,
+        origins,
+        env_origins,
+        command,
+        passthrough,
+        warnings,
+        cache_service,
+    )
+
+
+def make_argv(values: dict, passthrough: list[str]) -> list[str]:
+    specs = read_yaml(ROOT / "options.yaml")
     command = [
         "/opt/venv/bin/python",
         "-m",
@@ -656,7 +714,7 @@ def resolve(
         values["model"],
     ]
     for key, value in sorted(values.items()):
-        if key == "model" or specs[key].get("control"):
+        if key == "model" or specs.get(key, {}).get("control"):
             continue
         if isinstance(value, bool):
             command.append("--" + ("" if value else "no-") + key)
@@ -669,17 +727,7 @@ def resolve(
         else:
             command.extend(["--" + key, str(value)])
     command.extend(passthrough)
-    return LaunchPlan(
-        identifier,
-        hardware,
-        values,
-        environment,
-        origins,
-        env_origins,
-        command,
-        passthrough,
-        warnings,
-    )
+    return command
 
 
 def validate(values: dict, environment: dict, identifier: str) -> None:
@@ -702,9 +750,12 @@ def validate(values: dict, environment: dict, identifier: str) -> None:
         raise ConfigError(
             "These profiles support single-node tensor parallelism, not pipeline parallelism"
         )
-    if values["kv-cache-dtype"] not in {"fp8", "fp8_e4m3"}:
+    supported_kv = {"fp8", "fp8_e4m3"}
+    if identifier == "glm53-flash":
+        supported_kv.add("nvfp4_ds_mla")
+    if values["kv-cache-dtype"] not in supported_kv:
         raise ConfigError(
-            "The profile migration covers FP8 target KV; other precisions require separate qualification"
+            f"{identifier} supports target KV settings {sorted(supported_kv)}; other precisions require separate qualification"
         )
     if values["tensor-parallel-size"] % values["decode-context-parallel-size"]:
         raise ConfigError("DCP must divide TP")
@@ -823,14 +874,39 @@ def execute(plan: LaunchPlan, contract_path: Path) -> None:
     if environment.get("NCCL_GRAPH_FILE") == "":
         environment.pop("NCCL_GRAPH_FILE")
     environment.update(plan.environment)
+    if plan.cache_service:
+        from runtime.cache import resolve_identity
+        from runtime.supervisor import supervise
+
+        helper = ROOT / "checkpoint_identity.py"
+        if not helper.is_file():
+            raise ConfigError(
+                "The image must package its source-locked checkpoint identity helper"
+            )
+        resolve_identity(plan, contract, helper)
+        command = [
+            *contract.get("bootstrap", []),
+            *make_argv(plan.values, plan.passthrough),
+        ]
+        raise SystemExit(
+            supervise(
+                plan.cache_service, command, environment, contract.get("bootstrap", [])
+            )
+        )
     command = [*contract.get("bootstrap", []), *plan.argv]
     os.execvpe(command[0], command, environment)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
-    parser.add_argument("--profile", required=True)
-    parser.add_argument("--hardware", default="native")
+    parser.add_argument(
+        "--profile",
+        default=os.environ.get("PROFILE"),
+        help="Model profile (or PROFILE): glm53-flash, qwen38-flash-next, ds4-flash, ds4-vision, ds41-flash",
+    )
+    parser.add_argument(
+        "--hardware", default=os.environ.get("HARDWARE_PROFILE", "native")
+    )
     parser.add_argument("--settings", type=Path)
     parser.add_argument("--env", action="append", default=[], metavar="NAME=VALUE")
     parser.add_argument("--print-config", action="store_true")
@@ -838,6 +914,10 @@ def main() -> int:
         "--image-contract", type=Path, default=ROOT / "image-contract.json"
     )
     args, native = parser.parse_known_args()
+    if not args.profile:
+        parser.error(
+            "Select a model with PROFILE or --profile; use an explicit vllm command for models without a profile"
+        )
     try:
         explicit_env = {}
         for item in args.env:

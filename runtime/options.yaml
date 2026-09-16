@@ -407,7 +407,9 @@
     "type": "string",
     "control": true,
     "env": [
-      "CACHE_MODE"
+      "CACHE_MODE",
+      "LMCACHE_MODE",
+      "LMCACHE_ENABLED"
     ],
     "enum": [
       "vram",
@@ -448,7 +450,8 @@
     "control": true,
     "env": [
       "DFLASH_MODEL",
-      "SPEC_MODEL_PATH"
+      "SPEC_MODEL_PATH",
+      "DRAFT_MODEL"
     ]
   },
   "draft-revision": {
@@ -506,6 +509,194 @@
     "control": true,
     "env": [
       "DSPARK_ADAPTIVE_VERIFICATION_COST_SCALE"
+    ]
+  },
+  "cache-transfer-mode": {
+    "type": "string",
+    "control": true,
+    "env": [
+      "LMCACHE_TRANSFER_MODE"
+    ],
+    "enum": [
+      "engine_driven",
+      "lmcache_driven",
+      "auto"
+    ]
+  },
+  "cache-l1-gib": {
+    "type": "number",
+    "control": true,
+    "env": [
+      "LMCACHE_L1_SIZE_GB",
+      "LMCACHE_L1_GB"
+    ]
+  },
+  "cache-l1-init-gib": {
+    "type": "integer",
+    "control": true,
+    "env": [
+      "LMCACHE_L1_INIT_SIZE_GB",
+      "LMCACHE_L1_INIT_GB"
+    ]
+  },
+  "cache-l2-gib": {
+    "type": "number",
+    "control": true,
+    "env": [
+      "LMCACHE_L2_MAX_CAPACITY_GB",
+      "LMCACHE_L2_GB"
+    ]
+  },
+  "cache-l2-enabled": {
+    "type": "boolean",
+    "control": true,
+    "env": [
+      "LMCACHE_L2_ENABLED",
+      "LMCACHE_MODE"
+    ]
+  },
+  "cache-directory": {
+    "type": "string",
+    "control": true,
+    "env": [
+      "LMCACHE_L2_ROOT",
+      "LMCACHE_L2_PATH"
+    ]
+  },
+  "cache-object-tokens": {
+    "type": "integer",
+    "control": true,
+    "env": [
+      "LMCACHE_CHUNK_SIZE"
+    ]
+  },
+  "cache-target-tokens": {
+    "type": "integer",
+    "control": true,
+    "env": [
+      "LMCACHE_TARGET_TOKEN_BUDGET"
+    ]
+  },
+  "cache-native-gib": {
+    "type": "number",
+    "control": true,
+    "env": [
+      "NATIVE_KV_OFFLOADING_SIZE_GB"
+    ]
+  },
+  "cache-host": {
+    "type": "string",
+    "control": true,
+    "env": [
+      "LMCACHE_MP_HOST",
+      "LMCACHE_HOST"
+    ]
+  },
+  "cache-http-host": {
+    "type": "string",
+    "control": true,
+    "env": [
+      "LMCACHE_HTTP_HOST"
+    ]
+  },
+  "cache-port": {
+    "type": "integer",
+    "control": true,
+    "env": [
+      "LMCACHE_MP_PORT",
+      "LMCACHE_PORT"
+    ]
+  },
+  "cache-http-port": {
+    "type": "integer",
+    "control": true,
+    "env": [
+      "LMCACHE_HTTP_PORT"
+    ]
+  },
+  "cache-metrics-port": {
+    "type": "integer",
+    "control": true,
+    "env": [
+      "LMCACHE_PROMETHEUS_PORT"
+    ]
+  },
+  "cache-shm-name": {
+    "type": "string",
+    "control": true,
+    "env": [
+      "LMCACHE_SHM_NAME"
+    ]
+  },
+  "cache-instance": {
+    "type": "string",
+    "control": true,
+    "env": [
+      "LMCACHE_INSTANCE_ID"
+    ]
+  },
+  "cache-start-timeout": {
+    "type": "number",
+    "control": true,
+    "env": [
+      "LMCACHE_STARTUP_TIMEOUT_SECONDS",
+      "LMCACHE_START_TIMEOUT"
+    ]
+  },
+  "cache-cpu-workers": {
+    "type": "integer",
+    "control": true,
+    "env": [
+      "LMCACHE_MAX_CPU_WORKERS"
+    ]
+  },
+  "cache-gpu-workers": {
+    "type": "integer",
+    "control": true,
+    "env": [
+      "LMCACHE_MAX_GPU_WORKERS"
+    ]
+  },
+  "cache-l2-workers": {
+    "type": "integer",
+    "control": true,
+    "env": [
+      "LMCACHE_L2_WORKERS"
+    ]
+  },
+  "cache-prefetch-policy": {
+    "type": "string",
+    "control": true,
+    "env": [
+      "LMCACHE_L2_PREFETCH_POLICY"
+    ],
+    "enum": [
+      "default",
+      "retain"
+    ]
+  },
+  "cache-broker-directory": {
+    "type": "string",
+    "control": true,
+    "env": [
+      "LMCACHE_CUMEM_BROKER_DIR"
+    ]
+  },
+  "cache-load-failure-policy": {
+    "type": "string",
+    "control": true,
+    "env": [
+      "LMCACHE_KV_LOAD_FAILURE_POLICY"
+    ],
+    "enum": [
+      "recompute",
+      "fail"
+    ]
+  },
+  "code-revision": {
+    "type": "string",
+    "env": [
+      "MODEL_CODE_REVISION"
     ]
   }
 }

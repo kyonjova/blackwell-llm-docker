@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify package, ABI, NCCL, and optional GPU contracts of the Qwen runtime."""
+"""Verify package, ABI, dependency corrections and optional GPU runtime contracts."""
 
 from __future__ import annotations
 
@@ -30,9 +30,7 @@ NGC_PYTHON_HASHES = {
         "a36eea9adcb75546aa5a373809581772234d13392df74a9f4854291e0e9e4221"
     ),
 }
-NGC_VENV_CUTLASS = (
-    "nvidia_cutlass_dsl/dsl_packages/cutlass/base_dsl/jit_executor.py"
-)
+NGC_VENV_CUTLASS = "nvidia_cutlass_dsl/dsl_packages/cutlass/base_dsl/jit_executor.py"
 
 
 def sha256(path: Path) -> str:
@@ -65,7 +63,9 @@ def verify_b12x_package() -> None:
             raise RuntimeError("FlashInfer distribution claims B12X package files")
     for entry in flashinfer.entry_points:
         if entry.value.startswith(("b12x.", "flashinfer.b12x.")):
-            raise RuntimeError(f"FlashInfer distribution claims B12X plugin {entry.name}")
+            raise RuntimeError(
+                f"FlashInfer distribution claims B12X plugin {entry.name}"
+            )
     print(f"b12x_source={contract['source']['commit']} payload=PASS")
 
 
@@ -92,7 +92,9 @@ def main() -> int:
     for package, expected in EXPECTED_VERSIONS.items():
         actual = importlib.metadata.version(package)
         if actual != expected:
-            raise RuntimeError(f"{package} version {actual!r} does not match {expected!r}")
+            raise RuntimeError(
+                f"{package} version {actual!r} does not match {expected!r}"
+            )
 
     verify_b12x_package()
     import flashinfer  # noqa: F401
@@ -102,10 +104,12 @@ def main() -> int:
     import torch
     import uvloop  # noqa: F401
     import vllm  # noqa: F401
+
     native_modules = (
         "lmcache.cuda_ops",
         "vllm._C_stable_libtorch",
         "vllm._moe_C_stable_libtorch",
+        "vllm._flashkda_C",
     )
     if args.defer_native_imports:
         for module in native_modules:
@@ -119,7 +123,9 @@ def main() -> int:
     from instanttensor import safe_open  # noqa: F401
 
     if torch.version.cuda != "13.4":
-        raise RuntimeError(f"PyTorch reports CUDA {torch.version.cuda!r}, expected '13.4'")
+        raise RuntimeError(
+            f"PyTorch reports CUDA {torch.version.cuda!r}, expected '13.4'"
+        )
     if not torch.compiled_with_cxx11_abi():
         raise RuntimeError("PyTorch and application wheels require the C++11 ABI")
     cuda_home = Path(os.environ.get("CUDA_HOME", "")).resolve()
@@ -136,15 +142,42 @@ def main() -> int:
         system_site = Path("/usr/local/lib/python3.12/dist-packages")
         torch_path = Path(torch.__file__).resolve()
         if not torch_path.is_relative_to(system_site):
-            raise RuntimeError(f"NGC runtime imported PyTorch outside {system_site}: {torch_path}")
+            raise RuntimeError(
+                f"NGC runtime imported PyTorch outside {system_site}: {torch_path}"
+            )
         for relative, expected in NGC_PYTHON_HASHES.items():
             target = system_site / relative
             if not target.is_file() or sha256(target) != expected:
                 raise RuntimeError(f"NGC dependency contract mismatch: {target}")
-        venv_cutlass = Path(sys.prefix) / "lib/python3.12/site-packages" / NGC_VENV_CUTLASS
+        venv_cutlass = (
+            Path(sys.prefix) / "lib/python3.12/site-packages" / NGC_VENV_CUTLASS
+        )
         expected_cutlass = NGC_PYTHON_HASHES[NGC_VENV_CUTLASS]
         if not venv_cutlass.is_file() or sha256(venv_cutlass) != expected_cutlass:
             raise RuntimeError(f"NGC venv dependency contract mismatch: {venv_cutlass}")
+        from verify_torch_operator_contract import verify as verify_torch_operators
+
+        print(
+            "torch_operator_contract="
+            + json.dumps(verify_torch_operators(), sort_keys=True)
+        )
+        manifest = json.loads(
+            (Path(sys.prefix) / "share/lil-runtime/manifest.json").read_text()
+        )
+        receipt = json.loads(
+            (Path(sys.prefix) / "share/lil-runtime/lmcache-cumem.json").read_text()
+        )
+        if receipt["commit"] != manifest["components"]["lmcache"]["source"]["commit"]:
+            raise RuntimeError(
+                "cuMem helper source differs from the installed LMCache wheel"
+            )
+        library = Path("/opt/lmcache/lib/liblmcache_cumem_shareable.so")
+        if (
+            receipt["library"] != str(library)
+            or not library.is_file()
+            or sha256(library) != receipt["sha256"]
+        ):
+            raise RuntimeError("LMCache cuMem helper hash contract mismatch")
     else:
         runtime_site = Path(sys.prefix) / "lib/python3.12/site-packages"
         expected_cuda = (runtime_site / "nvidia/cu13").resolve()
@@ -156,7 +189,9 @@ def main() -> int:
     if not nccl_path or not os.path.isfile(nccl_path):
         raise RuntimeError("VLLM_NCCL_SO_PATH must identify the packaged NCCL library")
     if nccl_path not in os.environ.get("LD_PRELOAD", "").split(":"):
-        raise RuntimeError("the packaged NCCL library must be preloaded before importing PyTorch")
+        raise RuntimeError(
+            "the packaged NCCL library must be preloaded before importing PyTorch"
+        )
 
     if args.require_gpu:
         if not torch.cuda.is_available():
