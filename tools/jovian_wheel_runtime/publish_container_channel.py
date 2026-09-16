@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from container_channel import api, digest, download, run
+from prepare_runtime_auxiliary import prepare as prepare_auxiliary
 
 
 def execute(args: list[str], **kwargs: object) -> None:
@@ -186,6 +187,17 @@ def main() -> None:
     manifest_path = runtime / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
     manifest["assembly"] = assembly
+    auxiliary_cache = (
+        Path(
+            os.environ.get(
+                "LIL_COMPONENT_ARCHIVE_CACHE", str(args.output / "archive-cache")
+            )
+        )
+        / "lmcache-cumem-source"
+    )
+    manifest["auxiliary"] = {
+        "lmcache_cumem": prepare_auxiliary(manifest, runtime, auxiliary_cache)
+    }
     manifest_path.write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n")
     checksum = runtime / "SHA256SUMS"
     checksum.write_text(
@@ -201,7 +213,8 @@ def main() -> None:
     execute(
         [
             str(tools / "run_serialized_build.sh"),
-            str(tools / "build_qwen38_ngc_runtime_image.sh"),
+            "bash",
+            str(tools / "build_runtime_image.sh"),
             str(runtime),
             image,
         ]
@@ -219,6 +232,19 @@ def main() -> None:
             "container must retain the 67 foundation layers plus one application layer"
         )
     require_idle_gpu(args.gpu)
+    execute(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--device",
+            f"nvidia.com/gpu={args.gpu}",
+            image,
+            "python",
+            "-m",
+            "runtime.native_cli_contract",
+        ]
+    )
     execute(
         [
             "docker",
