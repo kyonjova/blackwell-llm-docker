@@ -84,6 +84,10 @@ performance measurements. Source references are recorded inside each profile.
   placement selects `ram` or `disk` independently of general CPU offload.
   Main/SWA pages remain 256/128. Breakable prefill graphs remain disabled;
   the native graph configuration remains FULL_AND_PIECEWISE.
+  JIT monitoring defaults to `warn`: a kernel missed during warmup may compile
+  on first use without the monitor aborting the request. Qualification runs can
+  require complete warmup with `-e JIT_MONITOR_MODE=error` or the native
+  `--jit-monitor-mode error` argument.
 - Qwen: TP1 by default; TP2 is an explicit override. Preserve CPU PLE tables,
   the BF16 target vocabulary head and private NVFP4 MTP copy. The 6,019-token
   scheduler budget is intentional preservation of the published Qwen recipe,
