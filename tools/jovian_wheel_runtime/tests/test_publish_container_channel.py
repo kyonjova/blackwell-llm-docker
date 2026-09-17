@@ -11,6 +11,102 @@ from publish_container_channel import verify_cache_test_report
 import publish_container_channel as publisher
 
 
+QUALIFICATION_GPU = "GPU-2faf5385-78f7-dab0-5528-dfaca9cc8eb8"
+
+
+def gpu_snapshot(*, memory_mib=2, utilization="0 %", process_type=None):
+    root = ET.Element("nvidia_smi_log")
+    device = ET.SubElement(root, "gpu")
+    ET.SubElement(device, "uuid").text = QUALIFICATION_GPU
+    memory = ET.SubElement(device, "fb_memory_usage")
+    ET.SubElement(memory, "used").text = f"{memory_mib} MiB"
+    usage = ET.SubElement(device, "utilization")
+    ET.SubElement(usage, "gpu_util").text = utilization
+    processes = ET.SubElement(device, "processes")
+    if process_type is not None:
+        process = ET.SubElement(processes, "process_info")
+        ET.SubElement(process, "pid").text = "1234"
+        ET.SubElement(process, "type").text = process_type
+    return root
+
+
+@pytest.mark.parametrize("memory_mib", [0, 2, 3, 32])
+def test_process_free_gpu_does_not_require_zero_vram(monkeypatch, memory_mib):
+    snapshot = gpu_snapshot(memory_mib=memory_mib)
+    calls = []
+
+    def query(args):
+        calls.append(args)
+        return ET.tostring(snapshot)
+
+    monkeypatch.setattr(publisher, "run", query)
+    publisher.require_idle_gpu(QUALIFICATION_GPU)
+    assert calls == [
+        ["nvidia-smi", "-i", QUALIFICATION_GPU, "--query", "--xml-format"]
+    ]
+
+
+@pytest.mark.parametrize("process_type", ["C", "G", "C+G", "M"])
+def test_resident_process_blocks_qualification_even_when_idle(
+    monkeypatch, process_type
+):
+    snapshot = gpu_snapshot(memory_mib=0, process_type=process_type)
+    monkeypatch.setattr(publisher, "run", lambda args: ET.tostring(snapshot))
+    with pytest.raises(RuntimeError, match="GPU is busy; no workload was stopped"):
+        publisher.require_idle_gpu(QUALIFICATION_GPU)
+
+
+@pytest.mark.parametrize("utilization", ["1 %", "100 %"])
+def test_gpu_activity_blocks_qualification_without_visible_processes(
+    monkeypatch, utilization
+):
+    snapshot = gpu_snapshot(memory_mib=0, utilization=utilization)
+    monkeypatch.setattr(publisher, "run", lambda args: ET.tostring(snapshot))
+    with pytest.raises(RuntimeError, match="GPU is busy"):
+        publisher.require_idle_gpu(QUALIFICATION_GPU)
+
+
+@pytest.mark.parametrize("utilization", ["N/A", "", "0", "zero %", "101 %"])
+def test_unknown_gpu_activity_fails_closed(monkeypatch, utilization):
+    snapshot = gpu_snapshot(utilization=utilization)
+    monkeypatch.setattr(publisher, "run", lambda args: ET.tostring(snapshot))
+    with pytest.raises(RuntimeError, match="cannot verify.*activity"):
+        publisher.require_idle_gpu(QUALIFICATION_GPU)
+
+
+@pytest.mark.parametrize("processes_text", [None, "N/A", "Not Supported"])
+def test_missing_process_visibility_fails_closed(monkeypatch, processes_text):
+    snapshot = gpu_snapshot()
+    device = snapshot.find("gpu")
+    processes = device.find("processes")
+    if processes_text is None:
+        device.remove(processes)
+    else:
+        processes.text = processes_text
+    monkeypatch.setattr(publisher, "run", lambda args: ET.tostring(snapshot))
+    with pytest.raises(RuntimeError, match="cannot verify.*activity"):
+        publisher.require_idle_gpu(QUALIFICATION_GPU)
+
+
+@pytest.mark.parametrize("identity", ["missing", "mismatch", "multiple"])
+def test_gpu_query_must_match_exact_device(monkeypatch, identity):
+    snapshot = gpu_snapshot()
+    if identity == "missing":
+        snapshot.remove(snapshot.find("gpu"))
+    elif identity == "multiple":
+        snapshot.append(gpu_snapshot().find("gpu"))
+    else:
+        snapshot.find("gpu/uuid").text = "GPU-another-device"
+    monkeypatch.setattr(publisher, "run", lambda args: ET.tostring(snapshot))
+    with pytest.raises(RuntimeError, match="cannot verify.*identity"):
+        publisher.require_idle_gpu(QUALIFICATION_GPU)
+
+
+def test_gpu_query_requires_explicit_uuid():
+    with pytest.raises(ValueError, match="explicit GPU UUID"):
+        publisher.require_idle_gpu("14")
+
+
 @pytest.mark.parametrize("skip_checkpoint", [False, True])
 def test_qualification_requires_executed_cache_contract_groups(
     tmp_path, skip_checkpoint
