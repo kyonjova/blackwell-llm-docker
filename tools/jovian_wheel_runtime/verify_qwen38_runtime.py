@@ -17,6 +17,8 @@ EXPECTED_VERSIONS = {
     "nvidia-modelopt": "0.46.1",
     "quack-kernels": "0.6.4",
     "torch-c-dlpack-ext": "0.1.5",
+    "tilelang": "0.1.12",
+    "z3-solver": "4.15.4.0",
     "torch": "2.14.0a0+4fdf77b940.nv26.8.63802676",
     "xgrammar": "0.2.6",
 }
@@ -104,6 +106,7 @@ def main() -> int:
     import lmcache  # noqa: F401
     import modelopt  # noqa: F401
     import quack  # noqa: F401
+    import tilelang  # noqa: F401
     import torch
     import torch_c_dlpack_ext  # noqa: F401
     import uvloop  # noqa: F401
