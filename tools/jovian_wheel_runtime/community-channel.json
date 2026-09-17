@@ -13,6 +13,21 @@
         "vllm": "integration/beta",
         "b12x": "integration/beta"
       }
+    },
+    "karmic-kraken": {
+      "channel": "karmic-kraken",
+      "image_tag": "karmic-kraken",
+      "branches": {
+        "vllm": "dev/karmic-kraken"
+      }
+    },
+    "karmic-kraken-beta": {
+      "channel": "karmic-kraken",
+      "image_tag": "karmic-kraken-beta",
+      "branches": {
+        "vllm": "integration/karmic-kraken-beta",
+        "b12x": "integration/karmic-kraken-beta"
+      }
     }
   },
   "components": {
