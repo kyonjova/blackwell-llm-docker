@@ -14,6 +14,7 @@ from pathlib import Path
 
 
 EXPECTED_VERSIONS = {
+    "huggingface-hub": "1.31.0",
     "nvidia-modelopt": "0.46.1",
     "quack-kernels": "0.6.4",
     "torch-c-dlpack-ext": "0.1.5",

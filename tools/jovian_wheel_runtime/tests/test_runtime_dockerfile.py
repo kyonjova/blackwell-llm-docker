@@ -41,3 +41,12 @@ def test_deepseek_hc_head_dependencies_are_locked_and_verified():
         assert f"{package}=={version} \\\n    --hash=sha256:" in lock
         assert f'"{package}": "{version}"' in verifier
     assert "import tilelang" in verifier
+
+
+def test_hub_dependency_provides_karmic_httpx_import():
+    tool_dir = Path(__file__).resolve().parents[1]
+    assert "huggingface-hub==1.31.0" in (tool_dir / "qwen38-runtime.in").read_text()
+    assert "huggingface-hub==1.31.0" in (tool_dir / "qwen38-runtime.lock").read_text()
+    assert '"huggingface-hub": "1.31.0"' in (
+        tool_dir / "verify_qwen38_runtime.py"
+    ).read_text()
