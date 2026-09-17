@@ -28,3 +28,16 @@ def test_quack_kernel_dependency_is_locked_and_verified():
     assert "import quack" in verifier
     assert "import torch_c_dlpack_ext" in verifier
     assert "--overlay-lock /source/tools/jovian_wheel_runtime/ngc-runtime-overlay.lock" in recipe
+
+
+def test_deepseek_hc_head_dependencies_are_locked_and_verified():
+    """DS4 calls the TileLang HC head even with B12X attention and MoE."""
+    tool_dir = Path(__file__).resolve().parents[1]
+    inputs = (tool_dir / "qwen38-runtime.in").read_text()
+    lock = (tool_dir / "qwen38-runtime.lock").read_text()
+    verifier = (tool_dir / "verify_qwen38_runtime.py").read_text()
+    for package, version in (("tilelang", "0.1.12"), ("z3-solver", "4.15.4.0")):
+        assert f"{package}=={version}" in inputs
+        assert f"{package}=={version} \\\n    --hash=sha256:" in lock
+        assert f'"{package}": "{version}"' in verifier
+    assert "import tilelang" in verifier

@@ -1,6 +1,6 @@
-# Complete external Python dependency closure for Qwen3.8 Flash Next serving.
+# External Python dependency closure for shared model-profile serving.
 #
-# Versions define the external dependency closure for the CUDA 13.4.1 Qwen3.8
+# Versions define the external dependency closure for the CUDA 13.4.1 model
 # serving runtime. Foundation, custom application, InstantTensor, and NCCL wheel
 # assets are supplied by their own immutable bundles and therefore do not
 # appear in this list. NVIDIA ModelOpt is an official pure-Python PyPI wheel.
@@ -88,6 +88,7 @@ lark==1.2.2
 llguidance==1.7.6
 llvmlite==0.47.0
 lm-format-enforcer==0.11.3
+ml-dtypes==0.6.0
 loguru==0.7.3
 markdown-it-py==4.2.0
 mcp==2.0.0
@@ -171,7 +172,9 @@ starlette==1.6.0
 supervisor==4.3.0
 tabulate==0.10.0
 tiktoken==0.14.0
+tilelang==0.1.12
 tokenizers==0.22.2
+torch-c-dlpack-ext==0.1.5
 tqdm==4.70.0
 transformers==5.15.0
 truststore==0.10.4
@@ -185,3 +188,4 @@ watchfiles==1.2.0
 xgrammar==0.2.6
 yarl==1.24.5
 zipp==4.1.0
+z3-solver==4.15.4.0
