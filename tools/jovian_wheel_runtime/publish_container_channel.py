@@ -61,9 +61,7 @@ def require_idle_gpu(gpu: str) -> None:
     # Resident compute or graphics processes can be idle between requests.
     # VRAM usage alone is not an occupancy test: a process-free GPU can use MiB.
     if int(utilization[0]) != 0 or len(processes) != 0:
-        raise RuntimeError(
-            f"qualification GPU is busy; no workload was stopped: {gpu}"
-        )
+        raise RuntimeError(f"qualification GPU is busy; no workload was stopped: {gpu}")
 
 
 def verify_cache_test_report(path: Path) -> dict[str, int]:
@@ -92,6 +90,13 @@ def verify_cache_test_report(path: Path) -> dict[str, int]:
             f"cache contract modules were not executed: {sorted(required - executed)}"
         )
     return {"passed": len(cases) - skipped, "skipped": skipped}
+
+
+def stage_assembly_lock(source: Path, directory: Path) -> Path:
+    """Give every published assembly the filename used by completion checks."""
+    destination = directory / "community-assembly.json"
+    destination.write_bytes(source.read_bytes())
+    return destination
 
 
 def publish_release(
@@ -417,7 +422,7 @@ def main() -> None:
         assembly,
         commit,
         notes,
-        [receipt_path, manifest_path, args.assembly],
+        [receipt_path, manifest_path, stage_assembly_lock(args.assembly, args.output)],
     )
 
 

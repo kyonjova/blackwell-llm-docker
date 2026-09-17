@@ -194,8 +194,13 @@ def completed_publication(repository: str, assembly: dict) -> bool:
         page += 1
     if release is None or release["draft"]:
         return False
-    required = {"container-release.json", "manifest.json", "community-assembly.json"}
     assets = {item["name"]: item for item in release["assets"]}
+    lock_name = "community-assembly.json"
+    if lock_name not in assets:
+        # Releases produced by channel-matrix jobs used a channel-specific
+        # basename. Accept only the selected channel, with the same checks.
+        lock_name = f"community-assembly-{assembly.get('release_channel', 'main')}.json"
+    required = {"container-release.json", "manifest.json", lock_name}
     if any(
         name not in assets
         or assets[name].get("state") != "uploaded"
@@ -205,7 +210,7 @@ def completed_publication(repository: str, assembly: dict) -> bool:
         return False
     receipt = json.loads(asset_bytes(repository, assets["container-release.json"]))
     manifest = asset_bytes(repository, assets["manifest.json"])
-    lock = json.loads(asset_bytes(repository, assets["community-assembly.json"]))
+    lock = json.loads(asset_bytes(repository, assets[lock_name]))
     return (
         receipt.get("status") == "qualified"
         and receipt.get("assembly_sha256") == assembly["assembly_sha256"]
