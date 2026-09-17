@@ -234,6 +234,9 @@ def channel_config(config: dict, name: str) -> dict:
             raise ValueError("invalid release channel name")
         if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", entry["image_tag"]):
             raise ValueError("invalid image tag")
+        family = entry.get("channel", config["channel"])
+        if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", family):
+            raise ValueError("invalid release family")
         if set(entry["branches"]) - set(config["components"]):
             raise ValueError("branch override names an unknown component")
         tags.append(entry["image_tag"])
@@ -241,6 +244,7 @@ def channel_config(config: dict, name: str) -> dict:
         raise ValueError("release channels must have distinct image tags")
     selected = copy.deepcopy(config)
     entry = selected.pop("channels")[name]
+    selected["channel"] = entry.get("channel", selected["channel"])
     selected["release_channel"] = name
     selected["image_tag"] = entry["image_tag"]
     for role, branch in entry["branches"].items():
