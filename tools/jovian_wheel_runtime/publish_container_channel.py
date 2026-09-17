@@ -38,24 +38,32 @@ def alias_is_current(assembly: dict, repository: str, ref: str) -> bool:
 
 
 def require_idle_gpu(gpu: str) -> None:
+    """Reject active or unverifiable devices, not process-free VRAM accounting."""
     if not gpu.startswith("GPU-"):
         raise ValueError("qualification GPU must be an explicit GPU UUID")
-    fields = (
-        run(
-            [
-                "nvidia-smi",
-                "-i",
-                gpu,
-                "--query-gpu=memory.used,utilization.gpu",
-                "--format=csv,noheader,nounits",
-            ]
+    devices = ET.fromstring(
+        run(["nvidia-smi", "-i", gpu, "--query", "--xml-format"])
+    ).findall("gpu")
+    if len(devices) != 1 or devices[0].findtext("uuid") != gpu:
+        raise RuntimeError(f"cannot verify qualification GPU identity: {gpu}")
+    device = devices[0]
+    utilization = device.findtext("utilization/gpu_util", "").split()
+    processes = device.find("processes")
+    if (
+        len(utilization) != 2
+        or utilization[1] != "%"
+        or not utilization[0].isdigit()
+        or not 0 <= int(utilization[0]) <= 100
+        or processes is None
+        or (processes.text or "").strip() not in ("", "None")
+    ):
+        raise RuntimeError(f"cannot verify qualification GPU activity: {gpu}")
+    # Resident compute or graphics processes can be idle between requests.
+    # VRAM usage alone is not an occupancy test: a process-free GPU can use MiB.
+    if int(utilization[0]) != 0 or len(processes) != 0:
+        raise RuntimeError(
+            f"qualification GPU is busy; no workload was stopped: {gpu}"
         )
-        .decode()
-        .strip()
-        .split(",")
-    )
-    if len(fields) != 2 or any(int(field.strip()) != 0 for field in fields):
-        raise RuntimeError(f"qualification GPU is busy; no workload was stopped: {gpu}")
 
 
 def verify_cache_test_report(path: Path) -> dict[str, int]:
