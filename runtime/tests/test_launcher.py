@@ -132,6 +132,23 @@ def test_ds41_single_prefill_uses_round_robin():
     assert values["prefill-policy"] == "round-robin"
 
 
+@pytest.mark.parametrize(
+    "environment,arguments,expected",
+    [
+        ({}, [], "warn"),
+        ({"JIT_MONITOR_MODE": "error"}, [], "error"),
+        ({"JIT_MONITOR_MODE": "error"}, ["--jit-monitor-mode", "warn"], "warn"),
+    ],
+)
+def test_ds41_jit_monitor_warns_by_default_with_explicit_strict_override(
+    environment, arguments, expected
+):
+    plan = resolve("ds41-flash", env=environment, argv=arguments)
+    assert plan.values["jit-monitor-mode"] == expected
+    assert plan.argv.count("--jit-monitor-mode") == 1
+    assert plan.argv[plan.argv.index("--jit-monitor-mode") + 1] == expected
+
+
 def test_decode_aware_prefill_requires_interleaving():
     with pytest.raises(ConfigError, match="max-parallel-prefills"):
         resolve("ds41-flash", env={"PREFILL_POLICY": "decode-aware"})

@@ -38,7 +38,7 @@ defaults:
   adaptive-verification: true
   adaptive-verification-cost-scale: 1.0
   safetensors-load-strategy: lazy
-  jit-monitor-mode: error
+  jit-monitor-mode: warn
   tokenizer-mode: deepseek_v41
   reasoning-parser: deepseek_v41
   tool-call-parser: deepseek_v41
