@@ -87,6 +87,59 @@ def test_conflicting_cache_port_and_native_connector_is_rejected():
         load_plan(frozen, runtime_identity=IDENTITY)
 
 
+@pytest.mark.parametrize("cache_mode", ["vram", "lmcache", "native"])
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("kv-transfer-config", {"kv_connector": "UnselectedConnector"}),
+        ("kv-offloading-backend", "unselected"),
+        ("kv-offloading-size", 1),
+        ("enable-cumem-allocator", False),
+        ("max-num-scheduled-tokens", 1),
+    ],
+)
+def test_generated_options_cannot_override_or_extend_the_selected_cache_mode(
+    cache_mode, key, value
+):
+    frozen = document(resolve("glm53-flash", env={"CACHE_MODE": cache_mode}))
+    frozen["options"][key] = value
+    with pytest.raises(ConfigError, match="conflict with cache controls"):
+        load_plan(frozen, runtime_identity=IDENTITY)
+
+
+@pytest.mark.parametrize(
+    "argument",
+    [
+        "--kv-transfer-config.kv_connector=UnselectedConnector",
+        "--kv-offloading-backend=native",
+        "--kv-offloading-size=1",
+        "--enable-cumem-allocator",
+        "--max-num-scheduled-tokens=1",
+    ],
+)
+def test_generated_options_cannot_bypass_controls_through_passthrough(argument):
+    frozen = document(resolve("glm53-flash", env={"CACHE_MODE": "lmcache"}))
+    frozen["passthrough"] = [argument]
+    with pytest.raises(ConfigError, match="cannot bypass profile validation"):
+        load_plan(frozen, runtime_identity=IDENTITY)
+
+
+@pytest.mark.parametrize(
+    "cache_mode,key",
+    [
+        ("lmcache", "kv-transfer-config"),
+        ("lmcache", "max-num-scheduled-tokens"),
+        ("native", "kv-offloading-backend"),
+        ("native", "enable-cumem-allocator"),
+    ],
+)
+def test_missing_generated_options_require_regenerating_the_export(cache_mode, key):
+    frozen = document(resolve("glm53-flash", env={"CACHE_MODE": cache_mode}))
+    del frozen["options"][key]
+    with pytest.raises(ConfigError, match="conflict with cache controls"):
+        load_plan(frozen, runtime_identity=IDENTITY)
+
+
 def test_all_image_environment_is_materialized_without_profile_reresolution():
     original = resolve("qwen38-flash-next", env={})
     frozen = document(

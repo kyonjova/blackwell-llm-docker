@@ -166,12 +166,13 @@ def parse_native(argv: list[str], specs: dict) -> tuple[dict, list[str]]:
         if name in values:
             raise ConfigError(f"Specify --{name} only once")
         if root not in specs:
-            if name in {
+            if root in {
                 "config",
                 "kv-transfer-config",
                 "kv-offloading-backend",
                 "kv-offloading-size",
                 "enable-cumem-allocator",
+                "max-num-scheduled-tokens",
             }:
                 raise ConfigError(
                     f"--{name} requires the external-cache/config-file integration; it cannot bypass profile validation"

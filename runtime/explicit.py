@@ -193,6 +193,11 @@ def load_plan(
         for key, value in values.items()
         if not specs.get(key, {}).get("control")
     }
+    # Derived options must originate in this cache mode, not survive from an
+    # edited document or a different mode. Compare their regenerated presence
+    # and values against the materialized native arguments below.
+    for key in GENERATED_OPTIONS:
+        values.pop(key, None)
     env_before = dict(environment)
     if (
         data["profile"] == "glm53-flash"

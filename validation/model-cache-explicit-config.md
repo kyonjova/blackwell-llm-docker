@@ -38,6 +38,9 @@ Model defaults are not applied again. Runtime-specific JIT paths bind to the
 verified image contract; external-cache identity binds to verified checkpoint
 revisions before processes start. Cache controls must agree with the materialized
 native arguments and ENV. Credentials and conflicting managed aliases are rejected.
+Derived cache options are recomputed from an empty derived-option set before
+comparison. Values left over from another cache mode, missing generated values
+and native passthrough attempts cannot change the selected cache contract.
 
 `vllm_defaults` names options intentionally omitted from the native command;
 it is not an enumeration of every internal serving-library default. GLM DFlash
@@ -50,6 +53,10 @@ without adding speculative slots twice.
   model/speculation cases, two hardware profiles, GPU-only/CPU-L1/persistent-L2
   cache plans, invalid inputs, installed-runtime CLI parity and one bootstrap
   invocation at execution.
+- Generated-cache validation and the serving-probe contracts bring the combined
+  runtime/container suite to 409 passing CPU tests. The cache validator rejects
+  backend, size, allocator, connector and scheduled-token edits before execution;
+  valid materialized configurations preserve their native arguments.
 - Native vLLM CLI and scheduler validation passes 26 profile/mode/cache cases
   using the installed KK runtime image
   `sha256:79d8d57177e54435586a36f9e3ae5a609bf4e07d62f86ed7108f7cca192b7035`
