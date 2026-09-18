@@ -37,6 +37,28 @@ def alias_is_current(assembly: dict, repository: str, ref: str) -> bool:
     return True
 
 
+def runtime_smoke_command(image: str, gpu: str) -> list[str]:
+    """Check native imports and disk-table syscalls with the serving permissions."""
+    return [
+        "docker",
+        "run",
+        "--rm",
+        "--device",
+        f"nvidia.com/gpu={gpu}",
+        "--security-opt",
+        "seccomp=unconfined",
+        "--ulimit",
+        "memlock=-1",
+        image,
+        "python",
+        "/opt/venv/libexec/verify_qwen38_runtime.py",
+        "--foundation",
+        "ngc",
+        "--require-gpu",
+        "--require-io-uring",
+    ]
+
+
 def require_idle_gpu(gpu: str) -> None:
     """Reject active or unverifiable devices, not process-free VRAM accounting."""
     if not gpu.startswith("GPU-"):
@@ -258,21 +280,7 @@ def main() -> None:
             "runtime.native_cli_contract",
         ]
     )
-    execute(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--device",
-            f"nvidia.com/gpu={args.gpu}",
-            image,
-            "python",
-            "/opt/venv/libexec/verify_qwen38_runtime.py",
-            "--foundation",
-            "ngc",
-            "--require-gpu",
-        ]
-    )
+    execute(runtime_smoke_command(image, args.gpu))
     execute(
         [
             "docker",
