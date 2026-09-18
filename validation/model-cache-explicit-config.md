@@ -55,9 +55,13 @@ without adding speculative slots twice.
   cache plans, invalid inputs, installed-runtime CLI parity and one bootstrap
   invocation at execution.
 - Generated-cache validation and the serving-probe contracts bring the combined
-  runtime/container suite to 419 passing CPU tests. The cache validator rejects
+  runtime/container suite to 423 passing CPU tests. The cache validator rejects
   backend, size, allocator, connector and scheduled-token edits before execution;
   valid materialized configurations preserve their native arguments.
+- The native-prefix probe records GPU hits separately from an optional external
+  tail. DS4.1 can reuse 16,128 GPU tokens plus 256 external tokens on one image
+  request; that is a mixed restore, not an isolated GPU-cache latency result.
+  Cold and CPU/disk-only stages retain their strict zero-GPU-hit requirements.
 - Native vLLM CLI and scheduler validation passes 26 profile/mode/cache cases
   using the installed KK runtime image
   `sha256:79d8d57177e54435586a36f9e3ae5a609bf4e07d62f86ed7108f7cca192b7035`

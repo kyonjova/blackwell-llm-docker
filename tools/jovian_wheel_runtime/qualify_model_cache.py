@@ -5,6 +5,9 @@ GPU-prefix, and external-restore requests. ``restore`` reuses the saved request
 after the operator restarts both serving and its CPU cache process. This tool
 never starts/stops containers or clears external cache objects. Sampling uses
 temperature 1; output checks verify facts, not identical stochastic continuations.
+The native-prefix stage requires GPU hits and separately records any external
+tail. Non-recurrent connectors may extend a GPU prefix with a longer CPU prefix;
+that result is not an isolated GPU-cache latency measurement.
 The dedicated vLLM server must enable ``VLLM_SERVER_DEV_MODE=1`` for its GPU
 prefix-reset API. LMCache's HTTP application exposes metrics at
 ``http://CACHE_HTTP_HOST:CACHE_HTTP_PORT/metrics``; it disables the separate
@@ -118,6 +121,10 @@ def check_evidence(stage: str, before: dict, after: dict, minimum: int) -> dict:
         raise ValueError(
             f"Native GPU reuse was not isolated: GPU={gpu}, external={external}"
         )
+    if stage == "prefix" and gpu < minimum:
+        raise ValueError(
+            f"Native GPU prefix reuse was not proven: GPU={gpu}, external={external}"
+        )
     if stage in {"l1", "l2"} and (gpu != 0 or external < minimum):
         raise ValueError(
             f"External restore was not proven: GPU={gpu}, external={external}"
@@ -126,7 +133,7 @@ def check_evidence(stage: str, before: dict, after: dict, minimum: int) -> dict:
         raise ValueError("The CPU L1 test fetched objects from L2")
     if stage == "l2" and loaded <= 0:
         raise ValueError("Persistent restore did not load any L2 objects")
-    if stage not in {"cold", "apc", "l1", "l2"}:
+    if stage not in {"cold", "apc", "prefix", "l1", "l2"}:
         raise ValueError(f"Unknown cache stage {stage!r}")
     return {
         "gpu_hit_tokens": gpu,
@@ -359,7 +366,7 @@ def run(args, client: Client) -> dict:
         initial = client.snapshot()
         stages = [
             ("cold", "cold", "AX", "COBALT"),
-            ("apc", "apc", "AX", "COBALT"),
+            ("native_prefix", "prefix", "AX", "COBALT"),
             ("external_identical", "l1", "AX", "COBALT"),
             ("external_changed_suffix", "l1", "BY", "AMBER"),
         ]
@@ -383,7 +390,7 @@ def run(args, client: Client) -> dict:
             }
             report["stages"].append(entry)
             save()
-            if stage != "apc":
+            if stage != "prefix":
                 entry["gpu_reset"] = client.reset_gpu()
             before = client.snapshot()
             require_idle(before["vllm"])
@@ -414,6 +421,12 @@ def run(args, client: Client) -> dict:
             entry["evidence"] = check_evidence(
                 stage, before, after, state["minimum_reused_tokens"]
             )
+            if stage == "prefix":
+                entry["reuse_kind"] = (
+                    "native_gpu_with_external_tail"
+                    if entry["evidence"]["external_hit_tokens"]
+                    else "native_gpu_only"
+                )
             entry["status"] = "qualified"
             save()
             print(json.dumps({"stage": label, **entry["evidence"]}), flush=True)

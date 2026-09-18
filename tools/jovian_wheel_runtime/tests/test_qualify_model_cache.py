@@ -84,6 +84,8 @@ def test_missing_counters_are_not_evidence_of_zero_hits():
     [
         ("cold", {}),
         ("apc", {"gpu": 8192}),
+        ("prefix", {"gpu": 8192}),
+        ("prefix", {"gpu": 16128, "external": 256}),
         ("l1", {"external": 8192}),
         ("l2", {"external": 8192, "loaded": 4}),
     ],
@@ -103,6 +105,7 @@ def test_valid_isolated_cache_stages(stage, values):
         ("cold", {"external": 1}),
         ("apc", {"gpu": 8192, "external": 8192}),
         ("apc", {"gpu": 128}),
+        ("prefix", {"gpu": 128, "external": 16384}),
         ("l1", {"gpu": 8192, "external": 8192}),
         ("l1", {"external": 128}),
         ("l1", {"external": 8192, "loaded": 1}),
@@ -230,7 +233,9 @@ def args(directory, command="prime"):
     )
 
 
-def test_prime_records_cold_apc_external_and_changed_suffix(tmp_path, monkeypatch):
+def test_prime_records_cold_native_prefix_external_and_changed_suffix(
+    tmp_path, monkeypatch
+):
     monkeypatch.setattr(qualify, "container_identity", lambda _: identity())
     client = FakeClient()
     report = qualify.run(args(tmp_path / "receipts"), client)
@@ -238,7 +243,7 @@ def test_prime_records_cold_apc_external_and_changed_suffix(tmp_path, monkeypatc
     assert client.resets == 3
     assert [item["cache_stage"] for item in report["stages"]] == [
         "cold",
-        "apc",
+        "prefix",
         "l1",
         "l1",
     ]
@@ -247,9 +252,30 @@ def test_prime_records_cold_apc_external_and_changed_suffix(tmp_path, monkeypatc
     assert all(item[1]["temperature"] == 1 for item in client.calls)
     assert all(item[0].endswith("/v1/chat/completions") for item in client.calls)
     assert "persistent_publication" in report
+    assert report["stages"][1]["reuse_kind"] == "native_gpu_only"
     assert (tmp_path / "receipts/prime.json").exists()
     with pytest.raises(FileExistsError):
         qualify.run(args(tmp_path / "receipts"), client)
+
+
+def test_native_prefix_with_external_tail_is_not_reported_as_isolated(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(qualify, "container_identity", lambda _: identity())
+
+    class MixedPrefixClient(FakeClient):
+        def call(self, url, payload, *, post=False):
+            result = super().call(url, payload, post=post)
+            if len(self.calls) == 2:
+                self.values["vllm"]["vllm:external_prefix_cache_hits_total"] += 256
+            return result
+
+    report = qualify.run(args(tmp_path / "mixed"), MixedPrefixClient())
+    assert report["status"] == "qualified"
+    stage = report["stages"][1]
+    assert stage["reuse_kind"] == "native_gpu_with_external_tail"
+    assert stage["evidence"]["gpu_hit_tokens"] == 8192
+    assert stage["evidence"]["external_hit_tokens"] == 256
 
 
 @pytest.mark.parametrize("reverse", [False, True])
