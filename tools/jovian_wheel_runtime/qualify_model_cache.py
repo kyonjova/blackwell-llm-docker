@@ -157,8 +157,8 @@ def require_restart(before: dict, after: dict) -> None:
             raise ValueError(f"Persistent restore requires restarting {role}")
 
 
-def image_fixture() -> str:
-    """Encode an RGB image with a red left half and a blue right half."""
+def image_fixture(*, reverse: bool = False) -> str:
+    """Encode equal-sized red/blue halves, optionally swapping their positions."""
     width, height = 512, 256
 
     def chunk(kind: bytes, data: bytes) -> bytes:
@@ -169,7 +169,10 @@ def image_fixture() -> str:
             + struct.pack("!I", zlib.crc32(kind + data))
         )
 
-    row = b"\0" + bytes((255, 0, 0)) * (width // 2) + bytes((0, 0, 255)) * (width // 2)
+    left, right = bytes((255, 0, 0)), bytes((0, 0, 255))
+    if reverse:
+        left, right = right, left
+    row = b"\0" + left * (width // 2) + right * (width // 2)
     png = (
         b"\x89PNG\r\n\x1a\n"
         + chunk(b"IHDR", struct.pack("!2I5B", width, height, 8, 2, 0, 0, 0))
@@ -362,9 +365,15 @@ def run(args, client: Client) -> dict:
         ]
         if args.command == "restore":
             stages = [("persistent_changed_suffix", "l2", "BY", "AMBER")]
+        elif state.get("fixture") == "vision":
+            stages += [
+                ("external_changed_image", "cold", "AX", "BLUE"),
+                ("external_original_image", "l1", "AX", "RED"),
+            ]
         for label, stage, item, answer in stages:
             vision = state.get("fixture", "text") == "vision"
-            if vision:
+            changed_image = label == "external_changed_image"
+            if vision and not changed_image:
                 answer = "RED" if item == "AX" else "BLUE"
             entry = {
                 "name": label,
@@ -381,6 +390,10 @@ def run(args, client: Client) -> dict:
             entry["before"] = before
             save()
             payload = json.loads(json.dumps(state["request"]))
+            if changed_image:
+                payload["messages"][1]["content"][0]["image_url"]["url"] = (
+                    image_fixture(reverse=True)
+                )
             payload["messages"][-1]["content"] = (
                 f"What color is the {'left' if item == 'AX' else 'right'} half of the image? Return only the color name."
                 if vision

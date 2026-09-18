@@ -252,7 +252,8 @@ def test_prime_records_cold_apc_external_and_changed_suffix(tmp_path, monkeypatc
         qualify.run(args(tmp_path / "receipts"), client)
 
 
-def test_vision_prefix_preserves_the_image_before_long_shared_text():
+@pytest.mark.parametrize("reverse", [False, True])
+def test_vision_prefix_preserves_the_image_before_long_shared_text(reverse):
     import base64
     import struct
     import zlib
@@ -261,17 +262,22 @@ def test_vision_prefix_preserves_the_image_before_long_shared_text():
     content = payload["messages"][1]["content"]
     assert [item["type"] for item in content] == ["image_url", "text"]
     assert len(content[1]["text"]) > 100000
-    png = base64.b64decode(content[0]["image_url"]["url"].split(",", 1)[1])
+    image = qualify.image_fixture(reverse=reverse)
+    if not reverse:
+        assert image == content[0]["image_url"]["url"]
+    png = base64.b64decode(image.split(",", 1)[1])
     assert png.startswith(b"\x89PNG\r\n\x1a\n")
     assert struct.unpack("!2I", png[16:24]) == (512, 256)
     length = struct.unpack("!I", png[33:37])[0]
     pixels = zlib.decompress(png[41 : 41 + length])
-    assert pixels[1:4] == bytes((255, 0, 0))
-    assert pixels[1 + 256 * 3 : 4 + 256 * 3] == bytes((0, 0, 255))
+    left, right = ((0, 0, 255), (255, 0, 0)) if reverse else ((255, 0, 0), (0, 0, 255))
+    assert pixels[1:4] == bytes(left)
+    assert pixels[1 + 256 * 3 : 4 + 256 * 3] == bytes(right)
 
 
+@pytest.mark.parametrize("cross_image_fault", [None, "false_hit", "wrong_answer"])
 def test_vision_prime_and_persistent_restore_validate_image_dependent_answers(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, cross_image_fault
 ):
     monkeypatch.setattr(qualify, "container_identity", lambda _: identity())
     options = args(tmp_path / "vision")
@@ -289,16 +295,40 @@ def test_vision_prime_and_persistent_restore_validate_image_dependent_answers(
         )
         original_call(url, forwarded, post=post)
         assert payload["messages"][1]["content"][0]["type"] == "image_url"
+        reversed_image = payload["messages"][1]["content"][0]["image_url"][
+            "url"
+        ] == qualify.image_fixture(reverse=True)
+        if reversed_image and cross_image_fault != "false_hit":
+            client.values["vllm"]["vllm:external_prefix_cache_hits_total"] -= 8192
+        if reversed_image and cross_image_fault != "wrong_answer":
+            right = not right
         return json.dumps(response("BLUE" if right else "RED"))
 
     client.call = vision_call
+    if cross_image_fault:
+        message = (
+            "Cold request reused"
+            if cross_image_fault == "false_hit"
+            else "Expected factual answer"
+        )
+        with pytest.raises(ValueError, match=message):
+            qualify.run(options, client)
+        saved = json.loads((options.output_dir / "prime.json").read_text())
+        assert saved["status"] == "failed"
+        assert saved["stages"][-1]["name"] == "external_changed_image"
+        return
     prime = qualify.run(options, client)
     assert [stage["expected_answer"] for stage in prime["stages"]] == [
         "RED",
         "RED",
         "RED",
         "BLUE",
+        "BLUE",
+        "RED",
     ]
+    assert client.resets == 5
+    assert client.calls[2][1]["cache_salt"] == client.calls[4][1]["cache_salt"]
+    assert client.calls[2][1]["messages"][-1] == client.calls[4][1]["messages"][-1]
     monkeypatch.setattr(
         qualify, "container_identity", lambda _: identity(started="after-restart")
     )
