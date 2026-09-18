@@ -1,8 +1,8 @@
 # Model cache profiles and materialized launch configuration
 
 Status: implemented. Qwen text, DS4 text/image, DS4.1 disk-Engram and explicit
-Docker/Compose restore have model-serving evidence below. GLM qualification
-is pending.
+Docker/Compose restore have model-serving evidence below. GLM MTP3 and
+DFlash2 text CPU/persistent restores are also qualified.
 Configuration checks alone do not establish cache-hit correctness or speed.
 
 ## Profile behavior
@@ -94,7 +94,12 @@ without adding speculative slots twice.
   its hit count is not a regression comparison against a longer fixture.
 - Atomic recurrent checkpoints remain text-only; the runtime warns when vision
   is enabled with that connector. Image requests still use native GPU caching.
-  GLM MTP3 and DFlash2 text cache paths remain merge gates.
+- GLM TP4/DCP1 on stock GPUs4–7 with image `cfa0e5bbba3f` above passes text
+  cold/native-prefix/CPU/restart checks in both modes. MTP3 restores 16,286
+  tokens and reads 48 disk objects after restart; DFlash2 K7 restores 16,284
+  tokens and reads 36 objects. Changed-question requests return correct answers,
+  and every external stage has zero GPU-hit tokens. These are factual cache
+  checks, not throughput or unrestricted model-quality claims.
 
 ## Serving cache probe
 
