@@ -13,6 +13,16 @@ from publish_container_channel import verify_cache_test_report
 QUALIFICATION_GPU = "GPU-2faf5385-78f7-dab0-5528-dfaca9cc8eb8"
 
 
+def test_native_smoke_checks_disk_syscalls_with_serving_permissions():
+    image = "ghcr.io/local-inference-lab/vllm@sha256:" + "a" * 64
+    command = publisher.runtime_smoke_command(image, QUALIFICATION_GPU)
+    before, after = command[: command.index(image)], command[command.index(image) + 1 :]
+    assert before[before.index("--device") + 1] == f"nvidia.com/gpu={QUALIFICATION_GPU}"
+    assert before[before.index("--security-opt") + 1] == "seccomp=unconfined"
+    assert before[before.index("--ulimit") + 1] == "memlock=8388608:8388608"
+    assert "--require-gpu" in after and "--require-io-uring" in after
+
+
 @pytest.mark.parametrize(
     "name",
     [

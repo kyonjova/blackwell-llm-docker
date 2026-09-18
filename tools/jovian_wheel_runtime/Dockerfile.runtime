@@ -18,7 +18,10 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv,ro \
     --mount=type=bind,from=qwen-runtime-bundle,source=/,target=/runtime-bundle,ro \
     --mount=type=bind,from=runtime-build-metadata,source=/,target=/runtime-build-metadata,ro \
     --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    python /source/recipes/glm53/install_dependency_python_patches.py \
+    --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    bash /source/tools/jovian_wheel_runtime/install_runtime_liburing.sh \
+ && python /source/recipes/glm53/install_dependency_python_patches.py \
       --manifest /source/tools/jovian_wheel_runtime/ngc-python-patches.json \
  && python /source/tools/jovian_wheel_runtime/install_qwen38_ngc_runtime.py \
       --bundle /runtime-bundle \

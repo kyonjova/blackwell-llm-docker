@@ -9,9 +9,11 @@ import importlib.metadata
 import importlib.util
 import json
 import os
+import shlex
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
-
 
 EXPECTED_VERSIONS = {
     "huggingface-hub": "1.31.0",
@@ -40,6 +42,64 @@ NGC_VENV_CUTLASS = "nvidia_cutlass_dsl/dsl_packages/cutlass/base_dsl/jit_executo
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def verify_liburing(*, require_io_uring: bool = False) -> dict[str, object]:
+    """Compile/link the disk-table dependency, optionally testing host policy.
+
+    A package-only check can miss headers or link failures. Build-time checks
+    must not require io_uring syscalls because Docker's build sandbox may block
+    them. Serving qualification can request a queue probe under the deployment's
+    seccomp policy; this does not allocate a CUDA device.
+    """
+    try:
+        version = subprocess.check_output(
+            ["pkg-config", "--modversion", "liburing"], text=True
+        ).strip()
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise RuntimeError(
+            "Disk-backed Engram/PLE requires liburing2, liburing-dev and pkg-config"
+        ) from error
+    if version != "2.5":
+        raise RuntimeError(f"liburing reports {version!r}, expected '2.5'")
+    flags = shlex.split(
+        subprocess.check_output(
+            ["pkg-config", "--cflags", "--libs", "liburing"], text=True
+        )
+    )
+    source = r"""#include <liburing.h>
+#include <stdio.h>
+#include <string.h>
+int main(int argc, char **argv) {
+    (void)argv;
+    if (argc > 1) {
+        struct io_uring ring;
+        int error = io_uring_queue_init(2, &ring, 0);
+        if (error < 0) {
+            fprintf(stderr, "io_uring_queue_init: %s\n", strerror(-error));
+            return 1;
+        }
+        io_uring_queue_exit(&ring);
+    }
+    return 0;
+}
+"""
+    with tempfile.TemporaryDirectory(prefix="lil-liburing-") as temporary:
+        probe = str(Path(temporary) / "probe")
+        subprocess.run(
+            ["cc", "-Wall", "-Wextra", "-Werror", "-x", "c", "-", "-o", probe, *flags],
+            input=source,
+            text=True,
+            check=True,
+        )
+        subprocess.run([probe, *(["--queue"] if require_io_uring else [])], check=True)
+    receipt = {
+        "version": version,
+        "headers_and_link": "pass",
+        "queue_probe": "pass" if require_io_uring else "not-requested",
+    }
+    print("liburing=" + json.dumps(receipt, sort_keys=True))
+    return receipt
 
 
 def verify_b12x_package() -> None:
@@ -92,7 +152,15 @@ def main() -> int:
         action="store_true",
         help="verify native extension presence without loading the absent build-time driver",
     )
+    parser.add_argument(
+        "--require-io-uring",
+        action="store_true",
+        help="test disk-table syscalls under the host/container seccomp policy",
+    )
     args = parser.parse_args()
+
+    if args.foundation == "ngc" or args.require_io_uring:
+        verify_liburing(require_io_uring=args.require_io_uring)
 
     for package, expected in EXPECTED_VERSIONS.items():
         actual = importlib.metadata.version(package)
