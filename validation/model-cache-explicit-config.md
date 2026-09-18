@@ -94,7 +94,7 @@ without adding speculative slots twice.
   its hit count is not a regression comparison against a longer fixture.
 - Atomic recurrent checkpoints remain text-only; the runtime warns when vision
   is enabled with that connector. Image requests still use native GPU caching.
-- GLM TP4/DCP1 on stock GPUs4–7 with image `cfa0e5bbba3f` above passes text
+- GLM TP4/DCP1 on stock GPUs 4–7 with image `cfa0e5bbba3f` above passes text
   cold/native-prefix/CPU/restart checks in both modes. MTP3 restores 16,286
   tokens and reads 48 disk objects after restart; DFlash2 K7 restores 16,284
   tokens and reads 36 objects. Changed-question requests return correct answers,
