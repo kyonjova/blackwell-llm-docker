@@ -7,11 +7,40 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from publish_container_channel import verify_cache_test_report
 import publish_container_channel as publisher
-
+from publish_container_channel import verify_cache_test_report
 
 QUALIFICATION_GPU = "GPU-2faf5385-78f7-dab0-5528-dfaca9cc8eb8"
+
+
+def test_native_smoke_checks_disk_syscalls_with_serving_permissions():
+    image = "ghcr.io/local-inference-lab/vllm@sha256:" + "a" * 64
+    command = publisher.runtime_smoke_command(image, QUALIFICATION_GPU)
+    before, after = command[: command.index(image)], command[command.index(image) + 1 :]
+    assert before[before.index("--device") + 1] == f"nvidia.com/gpu={QUALIFICATION_GPU}"
+    assert before[before.index("--security-opt") + 1] == "seccomp=unconfined"
+    assert before[before.index("--ulimit") + 1] == "memlock=8388608:8388608"
+    assert "--require-gpu" in after and "--require-io-uring" in after
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "community-assembly-main.json",
+        "community-assembly-beta.json",
+        "community-assembly-karmic-kraken-beta.json",
+        "manual-lock.json",
+    ],
+)
+def test_publication_uses_canonical_assembly_asset_name(tmp_path, name):
+    source = tmp_path / name
+    payload = b'{"assembly_sha256":"example"}\n'
+    source.write_bytes(payload)
+    output = tmp_path / "publication"
+    output.mkdir()
+    staged = publisher.stage_assembly_lock(source, output)
+    assert staged == output / "community-assembly.json"
+    assert staged.read_bytes() == source.read_bytes() == payload
 
 
 def gpu_snapshot(*, memory_mib=2, utilization="0 %", process_type=None):
@@ -41,9 +70,7 @@ def test_process_free_gpu_does_not_require_zero_vram(monkeypatch, memory_mib):
 
     monkeypatch.setattr(publisher, "run", query)
     publisher.require_idle_gpu(QUALIFICATION_GPU)
-    assert calls == [
-        ["nvidia-smi", "-i", QUALIFICATION_GPU, "--query", "--xml-format"]
-    ]
+    assert calls == [["nvidia-smi", "-i", QUALIFICATION_GPU, "--query", "--xml-format"]]
 
 
 @pytest.mark.parametrize("process_type", ["C", "G", "C+G", "M"])

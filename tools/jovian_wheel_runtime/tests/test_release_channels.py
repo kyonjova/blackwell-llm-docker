@@ -35,8 +35,29 @@ def test_config_separates_only_vllm_and_b12x_branches():
     assert config == json.loads(CONFIG.read_text())
 
 
+def test_karmic_channels_share_dependencies_without_moving_jovian_branches():
+    config = json.loads(CONFIG.read_text())
+    jj = channel.channel_config(config, "main")
+    kk = channel.channel_config(config, "karmic-kraken")
+    beta = channel.channel_config(config, "karmic-kraken-beta")
+    assert kk["channel"] == beta["channel"] == "karmic-kraken"
+    assert kk["components"]["vllm"]["branch"] == "dev/karmic-kraken"
+    assert kk["components"]["b12x"]["branch"] == "master"
+    for role in ("vllm", "b12x"):
+        assert beta["components"][role]["branch"] == "integration/karmic-kraken-beta"
+    for role in ("flashinfer", "lmcache", "instanttensor", "nccl"):
+        assert (
+            jj["components"][role] == kk["components"][role] == beta["components"][role]
+        )
+    assert (
+        channel.channel_config(config, "beta")["components"]["vllm"]["branch"]
+        == "integration/beta"
+    )
+    assert config == json.loads(CONFIG.read_text())
+
+
 @pytest.mark.parametrize(
-    "fault", ["unknown", "duplicate_tag", "unsafe_tag", "unknown_role"]
+    "fault", ["unknown", "duplicate_tag", "unsafe_tag", "unknown_role", "unsafe_family"]
 )
 def test_invalid_channel_configuration_fails_closed(fault):
     config = json.loads(CONFIG.read_text())
@@ -48,12 +69,22 @@ def test_invalid_channel_configuration_fails_closed(fault):
         config["channels"]["beta"]["image_tag"] = "../untrusted"
     elif fault == "unknown_role":
         config["channels"]["beta"]["branches"]["untrusted"] = "main"
+    elif fault == "unsafe_family":
+        config["channels"]["beta"]["channel"] = "../untrusted"
     with pytest.raises(ValueError):
         channel.channel_config(config, "missing" if fault == "unknown" else "beta")
 
 
-@pytest.mark.parametrize("name,suffix", [("main", ""), ("beta", "-beta")])
-def test_resolved_image_uses_selected_channel(monkeypatch, tmp_path, name, suffix):
+@pytest.mark.parametrize(
+    "name,prefix",
+    [
+        ("main", "jovian-judgement"),
+        ("beta", "jovian-judgement-beta"),
+        ("karmic-kraken", "karmic-kraken"),
+        ("karmic-kraken-beta", "karmic-kraken-beta"),
+    ],
+)
+def test_resolved_image_uses_selected_channel(monkeypatch, tmp_path, name, prefix):
     monkeypatch.setattr(
         channel,
         "select_component",
@@ -67,13 +98,14 @@ def test_resolved_image_uses_selected_channel(monkeypatch, tmp_path, name, suffi
     monkeypatch.setattr(channel, "run", lambda args: b"b" * 40)
     assembly = channel.resolve(CONFIG, tmp_path / "assembly.json", name)
     assert assembly["release_channel"] == name
-    prefix = "jovian-judgement" + suffix
     assert assembly["alias"] == "ghcr.io/local-inference-lab/vllm:" + prefix
     assert assembly["image"].startswith(assembly["alias"] + "-")
     assert assembly["release_tag"] == prefix + "-" + assembly["assembly_sha256"]
 
 
-@pytest.mark.parametrize("pending", ["main", "beta", None])
+@pytest.mark.parametrize(
+    "pending", ["main", "beta", "karmic-kraken", "karmic-kraken-beta", None]
+)
 def test_one_pending_channel_does_not_block_the_other(monkeypatch, tmp_path, pending):
     def resolve(config, output, name):
         if name == pending:
@@ -85,7 +117,7 @@ def test_one_pending_channel_does_not_block_the_other(monkeypatch, tmp_path, pen
     matrix = channel.resolve_matrix(
         CONFIG, tmp_path, "local-inference-lab/blackwell-llm-docker"
     )
-    expected = {"main", "beta"} - {pending}
+    expected = {"main", "beta", "karmic-kraken", "karmic-kraken-beta"} - {pending}
     assert {row["channel"] for row in matrix["include"]} == expected
     for row in matrix["include"]:
         assert (

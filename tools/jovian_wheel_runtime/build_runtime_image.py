@@ -16,6 +16,30 @@ def run(argv: list[str], **kwargs) -> bytes:
     return subprocess.check_output(argv, **kwargs)
 
 
+def runtime_smoke_command(image: str, gpu: str) -> list[str]:
+    """Check native imports and disk-table syscalls with bounded locked memory."""
+    return [
+        "docker",
+        "run",
+        "--rm",
+        "--device",
+        f"nvidia.com/gpu={gpu}",
+        "--security-opt",
+        "seccomp=unconfined",
+        "--ulimit",
+        # The probe has two io_uring entries. A finite limit avoids requiring
+        # CAP_SYS_RESOURCE merely to raise a rootless daemon's inherited limit.
+        "memlock=8388608:8388608",
+        image,
+        "python",
+        "/opt/venv/libexec/verify_qwen38_runtime.py",
+        "--foundation",
+        "ngc",
+        "--require-gpu",
+        "--require-io-uring",
+    ]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("bundle", type=Path)
@@ -107,19 +131,7 @@ def main() -> None:
     )
     if os.environ.get("RUNTIME_GPU"):
         subprocess.run(
-            [
-                "docker",
-                "run",
-                "--rm",
-                "--device",
-                f"nvidia.com/gpu={os.environ['RUNTIME_GPU']}",
-                args.image,
-                "python",
-                "/opt/venv/libexec/verify_qwen38_runtime.py",
-                "--foundation",
-                "ngc",
-                "--require-gpu",
-            ],
+            runtime_smoke_command(args.image, os.environ["RUNTIME_GPU"]),
             check=True,
         )
 

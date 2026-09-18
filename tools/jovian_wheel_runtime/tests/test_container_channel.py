@@ -178,8 +178,22 @@ def test_lmcache_requires_community_receipt(monkeypatch):
 @pytest.mark.parametrize(
     "fault", [None, "missing", "uploading", "draft", "checksum", "identity"]
 )
-def test_published_assembly_requires_complete_matching_receipt(monkeypatch, fault):
-    assembly = {"release_tag": "beta-example", "assembly_sha256": "a" * 64}
+@pytest.mark.parametrize(
+    "lock_name",
+    [
+        "community-assembly.json",
+        "community-assembly-beta.json",
+        "community-assembly-main.json",
+    ],
+)
+def test_published_assembly_requires_complete_matching_receipt(
+    monkeypatch, fault, lock_name
+):
+    assembly = {
+        "release_tag": "beta-example",
+        "assembly_sha256": "a" * 64,
+        "release_channel": "beta",
+    }
     manifest = b'{"packages":[]}'
     receipt = {
         **assembly,
@@ -194,7 +208,7 @@ def test_published_assembly_requires_complete_matching_receipt(monkeypatch, faul
     payloads = {
         "container-release.json": json.dumps(receipt).encode(),
         "manifest.json": manifest,
-        "community-assembly.json": json.dumps(assembly).encode(),
+        lock_name: json.dumps(assembly).encode(),
     }
     assets = [
         {"name": name, "state": "uploaded", "size": len(data)}
@@ -216,7 +230,7 @@ def test_published_assembly_requires_complete_matching_receipt(monkeypatch, faul
     )
     assert channel.completed_publication(
         "local-inference-lab/blackwell-llm-docker", assembly
-    ) is (fault is None)
+    ) is (fault is None and lock_name != "community-assembly-main.json")
 
 
 def test_archive_cache_reuses_verified_bytes_without_network(monkeypatch, tmp_path):
