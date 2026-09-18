@@ -76,6 +76,28 @@ def test_qwen_external_cache_preserves_scheduler_and_exact_recurrent_state():
     assert plan.values["cache-gpu-workers"] == 1
 
 
+@pytest.mark.parametrize("identifier", ["glm53-flash", "qwen38-flash-next"])
+def test_image_serving_exposes_text_only_external_checkpoint_contract(identifier):
+    plan = resolve(
+        identifier,
+        env={"CACHE_MODE": "lmcache"},
+        config={"options": {"language-model-only": False}},
+    )
+    assert any("text requests only" in warning for warning in plan.warnings)
+    assert plan.values["language-model-only"] is False
+    text = resolve(
+        identifier,
+        env={"CACHE_MODE": "lmcache"},
+        config={"options": {"language-model-only": True}},
+    )
+    assert not any("text requests only" in warning for warning in text.warnings)
+
+
+def test_aligned_image_cache_has_no_recurrent_checkpoint_warning():
+    plan = resolve("ds4-vision", env={"CACHE_MODE": "lmcache"})
+    assert not any("text requests only" in warning for warning in plan.warnings)
+
+
 def test_ds41_external_cache_keeps_sliding_window_and_engram_independent():
     plan = resolve(
         "ds41-flash", env={"CACHE_MODE": "lmcache", "ENGRAM_TABLE_MEMORY": "ram"}
