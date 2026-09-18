@@ -10,14 +10,17 @@ temperature 1; output checks verify facts, not identical stochastic continuation
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import math
 import re
+import struct
 import subprocess
 import time
 import urllib.request
 import uuid
+import zlib
 from pathlib import Path
 
 SCHEMA = "lil-model-cache-qualification/v1"
@@ -149,7 +152,29 @@ def require_restart(before: dict, after: dict) -> None:
             raise ValueError(f"Persistent restore requires restarting {role}")
 
 
-def request_fixture(model: str, nonce: str, thinking: dict) -> dict:
+def image_fixture() -> str:
+    """Encode an RGB image with a red left half and a blue right half."""
+    width, height = 512, 256
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack("!I", len(data))
+            + kind
+            + data
+            + struct.pack("!I", zlib.crc32(kind + data))
+        )
+
+    row = b"\0" + bytes((255, 0, 0)) * (width // 2) + bytes((0, 0, 255)) * (width // 2)
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack("!2I5B", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(row * height))
+        + chunk(b"IEND", b"")
+    )
+    return "data:image/png;base64," + base64.b64encode(png).decode()
+
+
+def request_fixture(model: str, nonce: str, thinking: dict, fixture="text") -> dict:
     system = (
         f"Cache qualification document {nonce}.\n"
         "Read this catalog. Return only the mapped word for the requested item.\n"
@@ -158,7 +183,7 @@ def request_fixture(model: str, nonce: str, thinking: dict) -> dict:
         + "\nLookup table: item AX maps to COBALT; item BY maps to AMBER.\n"
         "Return only the mapped word, without an explanation."
     )
-    return {
+    request = {
         "model": model,
         "messages": [
             {"role": "system", "content": system},
@@ -171,6 +196,36 @@ def request_fixture(model: str, nonce: str, thinking: dict) -> dict:
         "cache_salt": nonce,
         "chat_template_kwargs": thinking,
     }
+    if fixture == "vision":
+        # The image precedes the long shared text: a hit beyond the minimum
+        # prefix length includes image-dependent attention/recurrent state.
+        request["messages"] = [
+            {
+                "role": "system",
+                "content": "Answer questions about the image. Return only the color name.",
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": image_fixture()}},
+                    {
+                        "type": "text",
+                        "text": f"Cache qualification document {nonce}.\n"
+                        + "This reference document contains ordinary fictional item identifiers. "
+                        * 1800
+                        + "\nKeep the image in mind for the following question.",
+                    },
+                ],
+            },
+            {"role": "assistant", "content": "Ready."},
+            {
+                "role": "user",
+                "content": "What color is the left half of the image? Return only the color name.",
+            },
+        ]
+    elif fixture != "text":
+        raise ValueError(f"Unknown request fixture {fixture!r}")
+    return request
 
 
 def fingerprint(value: dict) -> str:
@@ -249,9 +304,10 @@ def run(args, client: Client) -> dict:
             "schema": SCHEMA,
             "model": args.model,
             "persistent": args.persistent,
+            "fixture": args.fixture,
             "minimum_reused_tokens": args.minimum_reused_tokens,
             "request": request_fixture(
-                args.model, uuid.uuid4().hex, args.thinking_kwargs
+                args.model, uuid.uuid4().hex, args.thinking_kwargs, args.fixture
             ),
             "serving_container": args.container,
             "cache_container": args.cache_container or args.container,
@@ -293,6 +349,9 @@ def run(args, client: Client) -> dict:
         if args.command == "restore":
             stages = [("persistent_changed_suffix", "l2", "BY", "AMBER")]
         for label, stage, item, answer in stages:
+            vision = state.get("fixture", "text") == "vision"
+            if vision:
+                answer = "RED" if item == "AX" else "BLUE"
             entry = {
                 "name": label,
                 "cache_stage": stage,
@@ -308,7 +367,11 @@ def run(args, client: Client) -> dict:
             entry["before"] = before
             save()
             payload = json.loads(json.dumps(state["request"]))
-            payload["messages"][-1]["content"] = f"Look up item {item}"
+            payload["messages"][-1]["content"] = (
+                f"What color is the {'left' if item == 'AX' else 'right'} half of the image? Return only the color name."
+                if vision
+                else f"Look up item {item}"
+            )
             started = time.monotonic()
             response = json.loads(
                 client.call(client.base + "/v1/chat/completions", payload, post=True)
@@ -370,6 +433,12 @@ def main():
     )
     parser.add_argument("--model", help="Advertised model ID; required for prime")
     parser.add_argument("--persistent", action="store_true")
+    parser.add_argument(
+        "--fixture",
+        choices=("text", "vision"),
+        default="text",
+        help="Image-bearing reuse places the image before the long shared prefix",
+    )
     parser.add_argument("--minimum-reused-tokens", type=int, default=4096)
     parser.add_argument("--thinking-kwargs", type=json.loads, default={})
     parser.add_argument("--timeout", type=float, default=240)

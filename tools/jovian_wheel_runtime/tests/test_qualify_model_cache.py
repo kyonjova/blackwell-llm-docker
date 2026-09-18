@@ -205,6 +205,7 @@ def args(directory, command="prime"):
         container="dedicated",
         cache_container=None,
         thinking_kwargs={},
+        fixture="text",
     )
 
 
@@ -228,6 +229,71 @@ def test_prime_records_cold_apc_external_and_changed_suffix(tmp_path, monkeypatc
     assert (tmp_path / "receipts/prime.json").exists()
     with pytest.raises(FileExistsError):
         qualify.run(args(tmp_path / "receipts"), client)
+
+
+def test_vision_prefix_preserves_the_image_before_long_shared_text():
+    import base64
+    import struct
+    import zlib
+
+    payload = qualify.request_fixture("model", "vision-salt", {}, "vision")
+    content = payload["messages"][1]["content"]
+    assert [item["type"] for item in content] == ["image_url", "text"]
+    assert len(content[1]["text"]) > 100000
+    png = base64.b64decode(content[0]["image_url"]["url"].split(",", 1)[1])
+    assert png.startswith(b"\x89PNG\r\n\x1a\n")
+    assert struct.unpack("!2I", png[16:24]) == (512, 256)
+    length = struct.unpack("!I", png[33:37])[0]
+    pixels = zlib.decompress(png[41 : 41 + length])
+    assert pixels[1:4] == bytes((255, 0, 0))
+    assert pixels[1 + 256 * 3 : 4 + 256 * 3] == bytes((0, 0, 255))
+
+
+def test_vision_prime_and_persistent_restore_validate_image_dependent_answers(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(qualify, "container_identity", lambda _: identity())
+    options = args(tmp_path / "vision")
+    options.fixture = "vision"
+    client = FakeClient()
+    original_call = client.call
+
+    def vision_call(url, payload, *, post):
+        # Reuse the metric transitions, but derive the expected answer from
+        # the question rather than the text-only fixture's lookup table.
+        forwarded = copy.deepcopy(payload)
+        right = "right half" in payload["messages"][-1]["content"]
+        forwarded["messages"][-1]["content"] = (
+            "Look up item BY" if right else "Look up item AX"
+        )
+        original_call(url, forwarded, post=post)
+        assert payload["messages"][1]["content"][0]["type"] == "image_url"
+        return json.dumps(response("BLUE" if right else "RED"))
+
+    client.call = vision_call
+    prime = qualify.run(options, client)
+    assert [stage["expected_answer"] for stage in prime["stages"]] == [
+        "RED",
+        "RED",
+        "RED",
+        "BLUE",
+    ]
+    monkeypatch.setattr(
+        qualify, "container_identity", lambda _: identity(started="after-restart")
+    )
+    restored = FakeClient()
+
+    def restore_call(url, payload, *, post):
+        assert "right half" in payload["messages"][-1]["content"]
+        assert payload["messages"][1]["content"][0]["type"] == "image_url"
+        restored.values = snapshot(completed=1, external=8192, loaded=4)
+        return json.dumps(response("BLUE"))
+
+    restored.call = restore_call
+    options.command = "restore"
+    report = qualify.run(options, restored)
+    assert report["status"] == "qualified"
+    assert report["stages"][0]["expected_answer"] == "BLUE"
 
 
 def test_failure_keeps_response_and_metric_receipts(tmp_path, monkeypatch):

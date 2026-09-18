@@ -54,7 +54,7 @@ without adding speculative slots twice.
   cache plans, invalid inputs, installed-runtime CLI parity and one bootstrap
   invocation at execution.
 - Generated-cache validation and the serving-probe contracts bring the combined
-  runtime/container suite to 409 passing CPU tests. The cache validator rejects
+  runtime/container suite to 411 passing CPU tests. The cache validator rejects
   backend, size, allocator, connector and scheduled-token edits before execution;
   valid materialized configurations preserve their native arguments.
 - Native vLLM CLI and scheduler validation passes 26 profile/mode/cache cases
@@ -68,7 +68,7 @@ without adding speculative slots twice.
 
 ## Serving cache probe
 
-Status: implemented; the probe's 29 CPU contract tests pass. Model-serving cache
+Status: implemented; the probe's 31 CPU contract tests pass. Model-serving cache
 qualification remains pending.
 
 `tools/jovian_wheel_runtime/qualify_model_cache.py` sends a long catalog prompt
@@ -76,8 +76,12 @@ with an isolated cache salt at temperature 1. It verifies two catalog answers,
 including a changed user turn sharing the system prompt. It records responses,
 raw metric samples, elapsed time, GPU reset acknowledgements and container image
 identities. It does not compare stochastic output token sequences or infer cache
-reuse from latency alone. These are text-state checks; image-cache correctness
-requires separate image-bearing requests in the model's vision qualification.
+reuse from latency alone. The default fixture tests text state. `--fixture vision`
+places a red/blue image before a long shared text prefix, then asks for the left
+or right color. Reusing at least 4096 prefix tokens therefore includes the
+image-dependent attention/recurrent state. Both fixtures require factual answers
+after cold, GPU-prefix, CPU and persistent restores; the vision fixture has no
+external image URL or image-library dependency.
 
 Use a dedicated endpoint: this test clears its GPU prefix cache, but never clears
 external objects, aborts active requests, or starts/stops a container. It rejects
@@ -117,5 +121,6 @@ L2 object loads. Receipts are never overwritten, including failed runs.
 Run both stages separately for GLM MTP3 and DFlash2, DS4 text and Vision,
 DS4.1 DSpark, and Qwen MTP3. Use each profile's advertised model ID and native
 chat-template settings; `--thinking-kwargs` accepts an explicit JSON object.
-Do not replace model-specific vision or serving-speed qualification with this
-bounded cache probe.
+For a vision-capable deployment, run a separate `prime --fixture vision` receipt
+and its `restore` stage. Restore retains the saved fixture and request. These
+bounded checks do not replace serving-speed or general model-quality evaluation.
