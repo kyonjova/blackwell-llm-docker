@@ -17,7 +17,7 @@ def run(argv: list[str], **kwargs) -> bytes:
 
 
 def runtime_smoke_command(image: str, gpu: str) -> list[str]:
-    """Check native imports and disk-table syscalls with the serving permissions."""
+    """Check native imports and disk-table syscalls with bounded locked memory."""
     return [
         "docker",
         "run",
@@ -27,7 +27,9 @@ def runtime_smoke_command(image: str, gpu: str) -> list[str]:
         "--security-opt",
         "seccomp=unconfined",
         "--ulimit",
-        "memlock=-1",
+        # The probe has two io_uring entries. A finite limit avoids requiring
+        # CAP_SYS_RESOURCE merely to raise a rootless daemon's inherited limit.
+        "memlock=8388608:8388608",
         image,
         "python",
         "/opt/venv/libexec/verify_qwen38_runtime.py",

@@ -6,10 +6,13 @@ their library, headers and pkg-config metadata to compile its io_uring reader.
 The application remains one filesystem layer over the 67-layer foundation.
 
 The build verifier compiles and links a C program including `liburing.h`.
-Publication additionally initializes an io_uring queue under the DS4.1 serving
-permissions (`seccomp=unconfined`, unlimited memlock). Build-time validation
+Publication additionally initializes a two-entry io_uring queue with
+`seccomp=unconfined` and an 8 MiB memlock limit. Build-time validation
 does not require syscalls blocked by the build sandbox.
 The standalone builder's optional GPU smoke uses the same queue-check command.
+The probe's finite memlock limit permits execution by a rootless Docker daemon
+without elevating its host privileges. It is a smoke-test budget, not a limit
+on a deployed model server; serving launchers retain their deployment settings.
 
 ## Validation
 
@@ -31,6 +34,12 @@ A CPU container using Docker's default seccomp policy rejected
 `io_uring_setup` with `EPERM`. Therefore NGC foundation selection alone must
 not force queue creation during the Docker build; runtime qualification opts
 in explicitly with the documented serving permissions.
+
+On the publication daemon at `unix:///run/lil-flashinfer-docker/docker.sock`,
+container creation with unlimited memlock fails before execution with
+`error setting rlimit type 8: operation not permitted`. Using the 8 MiB limit
+with the assembled runtime image passes header/link and queue initialization
+checks. The io_uring test remains mandatory; the limit does not bypass it.
 
 This qualifies dependency discovery, compilation, dynamic linking and host
 syscall access. DS4.1 end-to-end disk-table serving remains a separate pending
