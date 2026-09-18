@@ -27,6 +27,10 @@ The RTX PRO PCIe hardware profile disables two-shot all-reduce for GLM and
 DS4.1, matching the qualification commands. One-shot and other collective paths
 remain available.
 
+GLM selects B12X KDA prefill independently of the sparse-MLA backend. This
+applies to no speculation, MTP and DFlash. Explicit `flashkda`, `triton` or
+`auto` overrides remain available through `additional-config.kda_prefill_backend`.
+
 ## Explicit execution interface
 
 `python -m runtime.explicit --config FILE` accepts a YAML/JSON document with
@@ -51,10 +55,18 @@ without adding speculative slots twice.
 
 ## Evidence
 
-- The shared runtime suite passes 225 CPU tests. Coverage includes seven
+- The shared runtime suite passes 228 CPU tests. Coverage includes seven
   model/speculation cases, two hardware profiles, GPU-only/CPU-L1/persistent-L2
   cache plans, invalid inputs, installed-runtime CLI parity and one bootstrap
   invocation at execution.
+- With source-built image `63d5f8b28253`, stock RTX PRO 6000 WS GPUs,
+  GLM NVFP4 TP4/DCP1 MTP3, 4096-token batch budget and a shared tuning cache,
+  B12X KDA prefill measures 15,601 tok/s versus 15,462 for CTA-corrected FlashKDA
+  across three warmed, uncached 32K windows. A B12X restart measures 15,586.
+  All arithmetic, prefix and 1/2/8/16-image checks pass. The matched return-run
+  C1 results are 255.82 versus 255.42 tok/s; no decode speedup is established.
+  These measurements qualify the backend choice, not a published image built
+  with this profile revision or a repeated external-cache matrix.
 - Generated-cache validation and the serving-probe contracts bring the combined
   runtime/container suite to 423 passing CPU tests. The cache validator rejects
   backend, size, allocator, connector and scheduled-token edits before execution;

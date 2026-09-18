@@ -115,11 +115,15 @@ def test_glm_speculation_and_cache_layout_are_independent(mode, depth, dcp):
 @pytest.mark.parametrize("backend", ["flashkda", "triton", "auto"])
 def test_glm_explicit_kda_prefill_override_preserves_decode_selection(backend):
     plan = resolve(
-        "glm53-flash", env={},
+        "glm53-flash",
+        env={},
         argv=["--additional-config.kda_prefill_backend", backend],
     )
     config = plan.values["additional-config"]
-    assert config == {"glm53_kda_decode_backend": "auto", "kda_prefill_backend": backend}
+    assert config == {
+        "glm53_kda_decode_backend": "auto",
+        "kda_prefill_backend": backend,
+    }
     position = plan.argv.index("--additional-config") + 1
     assert json.loads(plan.argv[position]) == config
 
