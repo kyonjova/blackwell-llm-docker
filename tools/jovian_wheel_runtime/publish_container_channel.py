@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import quote
 
+from build_runtime_image import runtime_smoke_command
 from container_channel import api, digest, download, run
 from prepare_runtime_auxiliary import prepare as prepare_auxiliary
 
@@ -35,28 +36,6 @@ def alias_is_current(assembly: dict, repository: str, ref: str) -> bool:
         if component["observed_branch_commit"] != head["sha"]:
             return False
     return True
-
-
-def runtime_smoke_command(image: str, gpu: str) -> list[str]:
-    """Check native imports and disk-table syscalls with the serving permissions."""
-    return [
-        "docker",
-        "run",
-        "--rm",
-        "--device",
-        f"nvidia.com/gpu={gpu}",
-        "--security-opt",
-        "seccomp=unconfined",
-        "--ulimit",
-        "memlock=-1",
-        image,
-        "python",
-        "/opt/venv/libexec/verify_qwen38_runtime.py",
-        "--foundation",
-        "ngc",
-        "--require-gpu",
-        "--require-io-uring",
-    ]
 
 
 def require_idle_gpu(gpu: str) -> None:

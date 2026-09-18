@@ -9,6 +9,7 @@ The build verifier compiles and links a C program including `liburing.h`.
 Publication additionally initializes an io_uring queue under the DS4.1 serving
 permissions (`seccomp=unconfined`, unlimited memlock). Build-time validation
 does not require syscalls blocked by the build sandbox.
+The standalone builder's optional GPU smoke uses the same queue-check command.
 
 ## Validation
 
@@ -25,6 +26,11 @@ installer added both packages. Header/link validation and
 `io_uring_queue_init(2, ..., 0)` passed. The installed B12X loader compiled and
 loaded successfully; its native extension resolved `io_uring_queue_init`.
 No model weights or serving source files were modified.
+
+A CPU container using Docker's default seccomp policy rejected
+`io_uring_setup` with `EPERM`. Therefore NGC foundation selection alone must
+not force queue creation during the Docker build; runtime qualification opts
+in explicitly with the documented serving permissions.
 
 This qualifies dependency discovery, compilation, dynamic linking and host
 syscall access. DS4.1 end-to-end disk-table serving remains a separate pending
