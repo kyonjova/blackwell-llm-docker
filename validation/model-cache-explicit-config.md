@@ -68,7 +68,7 @@ without adding speculative slots twice.
   These measurements qualify the backend choice, not a published image built
   with this profile revision or a repeated external-cache matrix.
 - Generated-cache validation and the serving-probe contracts bring the combined
-  runtime/container suite to 423 passing CPU tests. The cache validator rejects
+  runtime/container suite to 426 passing CPU tests. The cache validator rejects
   backend, size, allocator, connector and scheduled-token edits before execution;
   valid materialized configurations preserve their native arguments.
 - The native-prefix probe records GPU hits separately from an optional external
