@@ -66,8 +66,11 @@ performance measurements. Source references are recorded inside each profile.
   proposals from `local-inference-lab/GLM-5.3-Flash-DFlash2`, FLASH_ATTN draft
   attention and `auto` draft KV, retaining the MXFP8 checkpoint policy.
   Target KV defaults to FP8; `nvfp4_ds_mla` remains an explicit GLM option.
-  FlashKDA prefill is retained; selecting B12X MoE
-  does not imply replacing recurrent prefill with B12X.
+  KDA recurrent prefill explicitly defaults to B12X in every speculation mode,
+  independently of sparse MLA and MoE selection. Use the native override
+  `--additional-config.kda_prefill_backend flashkda` for FlashKDA; `triton` and
+  `auto` remain explicit alternatives. The `auto` policy belongs to vLLM and
+  does not mean B12X.
 - DS4 text/Vision: fixed DSpark K5/K3, B12X W4A8 MoE, and native dense
   selection corresponding to `BACKEND=b12x-a8-dglin`. That source launcher
   **omits** `--linear-backend`; the profile preserves the omission rather than

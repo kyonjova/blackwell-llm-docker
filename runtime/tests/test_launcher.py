@@ -109,6 +109,19 @@ def test_glm_speculation_and_cache_layout_are_independent(mode, depth, dcp):
     )
     assert plan.environment["VLLM_B12X_MLA_CKV_GATHER"] == str(int(dcp > 1))
     assert plan.environment["VLLM_PCIE_DMA_MIN_BYTES"] == ("off" if dcp > 1 else "6MB")
+    assert plan.values["additional-config"]["kda_prefill_backend"] == "b12x"
+
+
+@pytest.mark.parametrize("backend", ["flashkda", "triton", "auto"])
+def test_glm_explicit_kda_prefill_override_preserves_decode_selection(backend):
+    plan = resolve(
+        "glm53-flash", env={},
+        argv=["--additional-config.kda_prefill_backend", backend],
+    )
+    config = plan.values["additional-config"]
+    assert config == {"glm53_kda_decode_backend": "auto", "kda_prefill_backend": backend}
+    position = plan.argv.index("--additional-config") + 1
+    assert json.loads(plan.argv[position]) == config
 
 
 def test_mtp_depth_does_not_require_cache_environment():
@@ -471,6 +484,9 @@ def test_glm_base_recipe_semantic_parity_for_model_arguments():
             "NUM_SPECULATIVE_TOKENS": "3",
             "MAX_CUDAGRAPH_CAPTURE_SIZE": "256",
             "PREFILL_SCHEDULE_INTERVAL": "1",
+            # The historical recipe defaults to FlashKDA; compare the same
+            # explicit recurrent prefill route as the unified profile.
+            "GLM53_KDA_PREFILL_BACKEND": "b12x",
         },
         text=True,
         capture_output=True,
