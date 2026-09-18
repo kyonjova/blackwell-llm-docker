@@ -1,7 +1,8 @@
 # Model cache profiles and materialized launch configuration
 
-Status: implemented. Qwen text and DS4 text/image restore have model-serving
-evidence below. DS4.1, GLM and cross-image isolation qualification are pending.
+Status: implemented. Qwen text, DS4 text/image, DS4.1 disk-Engram and explicit
+Docker/Compose restore have model-serving evidence below. GLM qualification
+is pending.
 Configuration checks alone do not establish cache-hit correctness or speed.
 
 ## Profile behavior
@@ -75,16 +76,29 @@ without adding speculative slots twice.
   restore with 14/17 disk objects. External checks have zero GPU-hit tokens and
   correct factual answers. Image:
   `sha256:4995c9b881810f9d3ab3ee05a8804f21bca7bb0b4b84d5e3cc2b225549a9540d`.
-  These receipts do not yet cover the different-image negative control. LMCache
-  PR79 ports upstream media-key collision fixes for that gate.
+  The image-key isolation checks below use the PR79 wheel separately.
+- DS4.1 TP4/DCP1 with DSpark K7, disk Engram and a 1,048,576-token model limit
+  restores 12,288 text and 16,384 image-bearing tokens from CPU and after both
+  processes restart, reading 19/23 disk objects. Changed-image misses and
+  original-image restores return correct answers. Image:
+  `sha256:704e15036d987a8bf5f376bfd54edaf79be790742b8399404e38b5388aaaf9f5`.
+  These factual prefix checks do not measure 1M-context throughput.
+- DS4 Vision TP2 with LMCache PR73/76/77/78/79 restores 12,288 text and image
+  tokens from CPU and from 14 disk objects after Docker-to-Compose recreation.
+  Swapping the image with unchanged dimensions, prompt and cache salt gives
+  zero cache hits and the changed answer; the original image restores again.
+  Native arguments, runtime ENV, GPU allocation and NCCL library hashes match
+  across explicit Docker and Compose exports. Image:
+  `sha256:cfa0e5bbba3faa85a26180b300c4752c9f9717d7fa7b724179574ebc801c5dcb`.
+  The 16,383-token image prompt contains three complete 4096-token chunks;
+  its hit count is not a regression comparison against a longer fixture.
 - Atomic recurrent checkpoints remain text-only; the runtime warns when vision
   is enabled with that connector. Image requests still use native GPU caching.
-  DS4.1 disk Engram, GLM cache paths and explicit Docker/Compose serving parity
-  remain merge gates.
+  GLM MTP3 and DFlash2 text cache paths remain merge gates.
 
 ## Serving cache probe
 
-Status: implemented; the probe's 36 CPU contract tests pass. Per-model evidence
+Status: implemented; the probe's 40 CPU contract tests pass. Per-model evidence
 is listed above; untested serving combinations are not qualified by these tests.
 
 `tools/jovian_wheel_runtime/qualify_model_cache.py` sends a long catalog prompt
