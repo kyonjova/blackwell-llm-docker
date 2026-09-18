@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import quote
 
+from build_runtime_image import runtime_smoke_command
 from container_channel import api, digest, download, run
 from prepare_runtime_auxiliary import prepare as prepare_auxiliary
 
@@ -258,21 +259,7 @@ def main() -> None:
             "runtime.native_cli_contract",
         ]
     )
-    execute(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--device",
-            f"nvidia.com/gpu={args.gpu}",
-            image,
-            "python",
-            "/opt/venv/libexec/verify_qwen38_runtime.py",
-            "--foundation",
-            "ngc",
-            "--require-gpu",
-        ]
-    )
+    execute(runtime_smoke_command(image, args.gpu))
     execute(
         [
             "docker",
