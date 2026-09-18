@@ -696,10 +696,10 @@ def resolve(
     cache_service = configure_cache(
         values, origins, environment, env_origins, identifier, runtime_identity
     )
-    if (
-        values.get("kv-transfer-config", {}).get("kv_connector")
-        == "LMCacheRecurrentCheckpointConnector"
-        and not values.get("language-model-only", False)
+    if values.get("kv-transfer-config", {}).get(
+        "kv_connector"
+    ) == "LMCacheRecurrentCheckpointConnector" and not values.get(
+        "language-model-only", False
     ):
         warnings.append(
             "External recurrent checkpoints support text requests only. "
