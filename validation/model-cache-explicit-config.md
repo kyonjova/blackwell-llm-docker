@@ -1,7 +1,8 @@
 # Model cache profiles and materialized launch configuration
 
-Status: implemented. Full model-serving and external-cache restore qualification
-is pending; configuration checks do not establish cache-hit correctness or speed.
+Status: implemented. Qwen text and DS4 text/image restore have model-serving
+evidence below. DS4.1, GLM and cross-image isolation qualification are pending.
+Configuration checks alone do not establish cache-hit correctness or speed.
 
 ## Profile behavior
 
@@ -49,12 +50,12 @@ without adding speculative slots twice.
 
 ## Evidence
 
-- The shared runtime suite passes 198 CPU tests. Coverage includes seven
+- The shared runtime suite passes 225 CPU tests. Coverage includes seven
   model/speculation cases, two hardware profiles, GPU-only/CPU-L1/persistent-L2
   cache plans, invalid inputs, installed-runtime CLI parity and one bootstrap
   invocation at execution.
 - Generated-cache validation and the serving-probe contracts bring the combined
-  runtime/container suite to 411 passing CPU tests. The cache validator rejects
+  runtime/container suite to 419 passing CPU tests. The cache validator rejects
   backend, size, allocator, connector and scheduled-token edits before execution;
   valid materialized configurations preserve their native arguments.
 - Native vLLM CLI and scheduler validation passes 26 profile/mode/cache cases
@@ -62,14 +63,25 @@ without adding speculative slots twice.
   `sha256:79d8d57177e54435586a36f9e3ae5a609bf4e07d62f86ed7108f7cca192b7035`
   with the profile source mounted read-only. GPU0 was exposed for CUDA platform
   discovery; no model weights or inference workload were loaded.
-- Before deployment qualification, run cold requests, native-prefix reuse,
-  external restore after clearing GPU prefix state, and persistent-L2 restore
-  across server restart for each model. These checks remain pending.
+- With LMCache PR76, Qwen TP1/MTP3 restores 16,301 text tokens from CPU and after
+  a restart of both serving/cache processes; disk restore reads 116 objects.
+  The image is `sha256:b9559737ab2cca9ef4c9fb555b62f8764db9846f3a964d49727ebd5874b6c3ae`.
+- DS4 text/Vision TP2 restore passes with LMCache PR73/76/77/78 composed at
+  `64e948ed23b2`: 12,288 text and 16,384 image-bearing tokens, including restart
+  restore with 14/17 disk objects. External checks have zero GPU-hit tokens and
+  correct factual answers. Image:
+  `sha256:4995c9b881810f9d3ab3ee05a8804f21bca7bb0b4b84d5e3cc2b225549a9540d`.
+  These receipts do not yet cover the different-image negative control. LMCache
+  PR79 ports upstream media-key collision fixes for that gate.
+- Atomic recurrent checkpoints remain text-only; the runtime warns when vision
+  is enabled with that connector. Image requests still use native GPU caching.
+  DS4.1 disk Engram, GLM cache paths and explicit Docker/Compose serving parity
+  remain merge gates.
 
 ## Serving cache probe
 
-Status: implemented; the probe's 31 CPU contract tests pass. Model-serving cache
-qualification remains pending.
+Status: implemented; the probe's 36 CPU contract tests pass. Per-model evidence
+is listed above; untested serving combinations are not qualified by these tests.
 
 `tools/jovian_wheel_runtime/qualify_model_cache.py` sends a long catalog prompt
 with an isolated cache salt at temperature 1. It verifies two catalog answers,
@@ -82,18 +94,22 @@ or right color. Reusing at least 4096 prefix tokens therefore includes the
 image-dependent attention/recurrent state. Both fixtures require factual answers
 after cold, GPU-prefix, CPU and persistent restores; the vision fixture has no
 external image URL or image-library dependency.
+It also swaps the image's colors without changing its dimensions, prompt or
+cache salt, requires zero cached-token reuse and the changed answer, then checks
+that the original image still restores. This catches incorrect cross-image reuse
+that a repeated-image test alone cannot detect.
 
 Use a dedicated endpoint: this test clears its GPU prefix cache, but never clears
 external objects, aborts active requests, or starts/stops a container. It rejects
 busy endpoints, absent evidence counters, metric resets and additional completed
 requests inside a measurement. The minimum reusable prefix is 4096 tokens.
 
-For a server on port 5058 with the profile's derived cache metrics port 15060:
+For a server on port 5058 with the profile's cache HTTP API on port 15059:
 
 ```bash
 python tools/jovian_wheel_runtime/qualify_model_cache.py prime \
   --dedicated-endpoint --base-url http://127.0.0.1:5058 \
-  --cache-metrics-url http://127.0.0.1:15060/metrics \
+  --cache-metrics-url http://127.0.0.1:15059/metrics \
   --container cache-qualification --model GLM-5.3-Flash \
   --persistent --output-dir /tmp/glm-cache-qualification
 ```
@@ -108,7 +124,7 @@ their persistent directory, run:
 ```bash
 python tools/jovian_wheel_runtime/qualify_model_cache.py restore \
   --dedicated-endpoint --base-url http://127.0.0.1:5058 \
-  --cache-metrics-url http://127.0.0.1:15060/metrics \
+  --cache-metrics-url http://127.0.0.1:15059/metrics \
   --output-dir /tmp/glm-cache-qualification
 ```
 
