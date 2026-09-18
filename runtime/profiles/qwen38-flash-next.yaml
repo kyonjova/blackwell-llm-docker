@@ -65,5 +65,5 @@ modes:
     config: {method: mtp, moe_backend: b12x}
 cache:
   gpu: implemented
-  external: unsupported
-  migration_contract: qwen-external-unqualified
+  external: implemented
+  migration_contract: qwen-atomic-recurrent

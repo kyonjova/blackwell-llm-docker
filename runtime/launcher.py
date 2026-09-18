@@ -685,6 +685,13 @@ def resolve(
         )
     from runtime.cache import configure as configure_cache
 
+    if (
+        values["cache-mode"] != "vram"
+        and model.get("cache", {}).get("external") != "implemented"
+    ):
+        raise ConfigError(
+            f"{identifier}: external cache is unsupported by this image's profile"
+        )
     cache_service = configure_cache(
         values, origins, environment, env_origins, identifier, runtime_identity
     )

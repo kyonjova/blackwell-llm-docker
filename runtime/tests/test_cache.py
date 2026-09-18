@@ -61,10 +61,64 @@ def test_ds4_ram_and_disk_use_one_cpu_only_service(identifier):
     assert ram.cache_service.environment["CUDA_VISIBLE_DEVICES"] == ""
 
 
+def test_qwen_external_cache_preserves_scheduler_and_exact_recurrent_state():
+    plan = resolve("qwen38-flash-next", env={"CACHE_MODE": "lmcache"})
+    assert plan.values["max-num-batched-tokens"] == 6019
+    assert plan.values["max-model-len"] == 262144
+    assert plan.values["recurrent-checkpoint-policy"] == "request_boundaries"
+    assert plan.values["prefix-cache-retention-interval"] == 0
+    assert (
+        plan.values["kv-transfer-config"]["kv_connector"]
+        == "LMCacheRecurrentCheckpointConnector"
+    )
+    assert plan.cache_service.identity_required
+    assert plan.cache_service.environment["CUDA_VISIBLE_DEVICES"] == ""
+    assert plan.values["cache-gpu-workers"] == 1
+
+
+def test_ds41_external_cache_keeps_sliding_window_and_engram_independent():
+    plan = resolve(
+        "ds41-flash", env={"CACHE_MODE": "lmcache", "ENGRAM_TABLE_MEMORY": "ram"}
+    )
+    assert plan.values["engram-table-memory"] == "ram"
+    assert plan.values["block-size"] == 256
+    assert plan.values["swa-block-size"] == 128
+    assert plan.values["max-num-batched-tokens"] == 4096
+    assert plan.values["kv-transfer-config"]["kv_connector"] == "LMCacheMPConnector"
+    assert plan.values["gpu-memory-utilization"] == 0.95
+    assert plan.cache_service.environment["CUDA_VISIBLE_DEVICES"] == ""
+    assert plan.values["cache-gpu-workers"] == 4
+    disk = resolve("ds41-flash", env={"LMCACHE_MODE": "disk"})
+    assert "--l2-adapter" in disk.cache_service.argv
+    assert disk.cache_service.identity_required
+
+
 @pytest.mark.parametrize("identifier", ["qwen38-flash-next", "ds41-flash"])
-def test_unqualified_external_cache_is_explicitly_rejected(identifier):
-    with pytest.raises(ConfigError, match="external cache is unsupported"):
-        resolve(identifier, env={"CACHE_MODE": "lmcache"})
+def test_cache_transfer_modes_require_the_model_contract(identifier):
+    with pytest.raises(ConfigError, match="engine-driven"):
+        resolve(
+            identifier,
+            env={"CACHE_MODE": "lmcache", "LMCACHE_TRANSFER_MODE": "lmcache_driven"},
+        )
+    with pytest.raises(ConfigError, match="only.*GLM"):
+        resolve(identifier, env={"CACHE_MODE": "native"})
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"recurrent-checkpoint-policy": "aligned"},
+        {"prefix-cache-retention-interval": 4096},
+        {"tensor-parallel-size": 2, "decode-context-parallel-size": 2},
+    ],
+)
+def test_qwen_rejects_incompatible_checkpoint_contract(extra):
+    with pytest.raises(ConfigError, match="Qwen external cache"):
+        resolve(
+            "qwen38-flash-next",
+            env={},
+            config={"options": {"cache-mode": "lmcache", **extra}},
+        )
 
 
 @pytest.mark.parametrize(
