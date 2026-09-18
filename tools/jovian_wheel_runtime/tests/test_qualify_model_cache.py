@@ -3,6 +3,7 @@
 import copy
 import importlib.util
 import json
+import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -128,6 +129,26 @@ def test_unrelated_traffic_invalidates_request_metrics(completed):
 def test_missing_or_busy_endpoint_metrics_prevent_reset(values):
     with pytest.raises(ValueError, match="demonstrably idle"):
         qualify.require_idle(values)
+
+
+@pytest.mark.parametrize("status", [404, 500])
+def test_reset_endpoint_errors_do_not_become_cache_misses(status, monkeypatch):
+    client = qualify.Client("http://127.0.0.1:8000", "http://127.0.0.1:8001/metrics", 1)
+    monkeypatch.setattr(client, "snapshot", snapshot)
+
+    def fail(url, *, post):
+        assert post
+        assert "reset_external=false" in url
+        assert "reset_running_requests=false" in url
+        raise urllib.error.HTTPError(url, status, "test", {}, None)
+
+    monkeypatch.setattr(client, "call", fail)
+    if status == 404:
+        with pytest.raises(ValueError, match="VLLM_SERVER_DEV_MODE=1"):
+            client.reset_gpu()
+    else:
+        with pytest.raises(urllib.error.HTTPError):
+            client.reset_gpu()
 
 
 def test_same_process_or_changed_image_is_not_a_restart_control():

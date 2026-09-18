@@ -5,6 +5,10 @@ GPU-prefix, and external-restore requests. ``restore`` reuses the saved request
 after the operator restarts both serving and its CPU cache process. This tool
 never starts/stops containers or clears external cache objects. Sampling uses
 temperature 1; output checks verify facts, not identical stochastic continuations.
+The dedicated vLLM server must enable ``VLLM_SERVER_DEV_MODE=1`` for its GPU
+prefix-reset API. LMCache's HTTP application exposes metrics at
+``http://CACHE_HTTP_HOST:CACHE_HTTP_PORT/metrics``; it disables the separate
+Prometheus listener.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ import re
 import struct
 import subprocess
 import time
+import urllib.error
 import urllib.request
 import uuid
 import zlib
@@ -270,13 +275,22 @@ class Client:
         attempts = 0
         while time.monotonic() < deadline:
             require_idle(self.snapshot()["vllm"])
-            response = json.loads(
-                self.call(
-                    self.base
-                    + "/reset_prefix_cache?reset_external=false&reset_running_requests=false",
-                    post=True,
+            try:
+                response = json.loads(
+                    self.call(
+                        self.base
+                        + "/reset_prefix_cache?reset_external=false&reset_running_requests=false",
+                        post=True,
+                    )
                 )
-            )
+            except urllib.error.HTTPError as error:
+                if error.code == 404:
+                    raise ValueError(
+                        "Dedicated cache qualification requires "
+                        "VLLM_SERVER_DEV_MODE=1 for the GPU prefix-reset API; "
+                        "do not enable development endpoints on a public server."
+                    ) from error
+                raise
             attempts += 1
             if response.get("success") is True:
                 return {"response": response, "attempts": attempts}
