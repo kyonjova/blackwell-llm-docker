@@ -49,6 +49,47 @@ def test_aligned_direct_transport_retains_interposer_and_checkpoints():
     assert not plan.cache_service.environment
 
 
+@pytest.mark.parametrize("dcp", [1, 2])
+def test_glm_tp2_atomic_cache_preserves_3072_token_budget(dcp):
+    plan = resolve(
+        "glm53-flash",
+        env={
+            "CACHE_MODE": "lmcache",
+            "TP": "2",
+            "DCP": str(dcp),
+            "SPECULATOR": "mtp",
+            "MTP_DEPTH": "3",
+            "MAX_NUM_BATCHED_TOKENS": "3072",
+            "LMCACHE_CHUNK_SIZE": "3072",
+            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,large_segment_size_mb:12",
+        },
+    )
+    assert plan.values["max-num-batched-tokens"] == 3072
+    assert plan.values["max-num-scheduled-tokens"] == 3072
+    assert plan.values["recurrent-checkpoint-policy"] == "request_boundaries"
+    assert (
+        plan.values["kv-transfer-config"]["kv_connector"]
+        == "LMCacheRecurrentCheckpointConnector"
+    )
+    assert (
+        plan.environment["PYTORCH_CUDA_ALLOC_CONF"]
+        == "expandable_segments:True,large_segment_size_mb:12"
+    )
+    assert plan.cache_service.environment["CUDA_VISIBLE_DEVICES"] == ""
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"LMCACHE_TRANSFER_MODE": "lmcache_driven"},
+        {"RECURRENT_CHECKPOINT_POLICY": "aligned"},
+    ],
+)
+def test_glm_tp2_external_cache_requires_atomic_engine_transport(extra):
+    with pytest.raises(ConfigError, match="TP2.*engine-driven.*request-boundary"):
+        resolve("glm53-flash", env={"CACHE_MODE": "lmcache", "TP": "2", **extra})
+
+
 @pytest.mark.parametrize("identifier", ["ds4-flash", "ds4-vision"])
 def test_ds4_ram_and_disk_use_one_cpu_only_service(identifier):
     ram = resolve(identifier, env={"LMCACHE_MODE": "ram"})

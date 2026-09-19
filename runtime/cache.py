@@ -126,8 +126,13 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
 
     semantic = False
     if glm:
-        if values["tensor-parallel-size"] not in {4, 8}:
-            raise ConfigError("The GLM external-cache profile supports TP4 or TP8")
+        tp = values["tensor-parallel-size"]
+        if tp not in {2, 4, 8}:
+            raise ConfigError("The GLM external-cache profile supports TP2, TP4 or TP8")
+        if tp == 2 and not engine:
+            raise ConfigError(
+                "GLM TP2 requires engine-driven request-boundary cache transfer"
+            )
         target_budget = values.get(
             "cache-target-tokens", values["max-num-batched-tokens"]
         )
@@ -139,6 +144,10 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
         if origins[policy_key].startswith("model:") or values[policy_key] == "auto":
             put(policy_key, "request_boundaries" if engine else "aligned")
         semantic = values[policy_key] == "request_boundaries"
+        if tp == 2 and not semantic:
+            raise ConfigError(
+                "GLM TP2 requires engine-driven request-boundary cache transfer"
+            )
         if semantic and not engine:
             raise ConfigError(
                 "Request-boundary checkpoint bundles require engine-driven transfer"
