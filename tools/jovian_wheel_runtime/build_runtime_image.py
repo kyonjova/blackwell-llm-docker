@@ -11,6 +11,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from prepare_runtime_foundation import prepare
+
 
 def run(argv: list[str], **kwargs) -> bytes:
     return subprocess.check_output(argv, **kwargs)
@@ -66,22 +68,38 @@ def main() -> None:
     if present.returncode:
         subprocess.run(["docker", "pull", source_image], check=True)
     inspection = json.loads(run(["docker", "image", "inspect", source_image]))
+    builder = os.environ.get("BUILDX_BUILDER", "lil-wheel-cu134-sm120")
+    foundation, neutral_inspection = prepare(
+        source_image,
+        inspection[0],
+        root / "runtime/platform-environment.json",
+        Path(
+            os.environ.get(
+                "LIL_FOUNDATION_CACHE", Path.home() / ".cache/lil-foundation"
+            )
+        ),
+        builder,
+    )
     with tempfile.TemporaryDirectory(prefix="lil-runtime-build-metadata-") as tmp:
         metadata = Path(tmp)
-        (metadata / "foundation.inspect.json").write_text(json.dumps(inspection))
+        (metadata / "foundation.inspect.json").write_text(
+            json.dumps([neutral_inspection])
+        )
         subprocess.run(
             [
                 "docker",
                 "buildx",
                 "build",
                 "--builder",
-                os.environ.get("BUILDX_BUILDER", "lil-wheel-cu134-sm120"),
+                builder,
                 "--file",
                 str(tools / "Dockerfile.runtime"),
                 "--build-context",
                 f"qwen-runtime-bundle={bundle}",
                 "--build-context",
                 f"runtime-build-metadata={metadata}",
+                "--build-context",
+                f"model-neutral-foundation={foundation}",
                 "--build-arg",
                 f"SOURCE_IMAGE={source_image}",
                 "--build-arg",

@@ -42,7 +42,7 @@ defaults:
   max-cudagraph-capture-size: 256
   cudagraph-capture-sizes: [1, 2, 4, 8, 16, 32, 40, 48, 64, 96, 128, 192, 256]
   compilation-config: {cudagraph_mode: FULL_AND_PIECEWISE}
-  additional-config: {glm53_kda_decode_backend: auto, kda_prefill_backend: flashkda}
+  additional-config: {glm53_kda_decode_backend: auto, kda_prefill_backend: b12x}
   reasoning-parser: glm45
   tool-call-parser: glm47
   default-chat-template-kwargs: {reasoning_effort: high, clear_thinking: false}

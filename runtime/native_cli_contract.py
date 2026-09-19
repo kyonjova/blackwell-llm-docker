@@ -36,10 +36,11 @@ def main():
     for path in sorted((ROOT / "profiles").glob("*.yaml")):
         if path.stem == "common":
             continue
-        for mode in profile("model", path.stem)["modes"]:
+        model = profile("model", path.stem)
+        for mode in model["modes"]:
             for cache in (
                 ("vram", "lmcache")
-                if path.stem in {"glm53-flash", "ds4-flash", "ds4-vision"}
+                if model.get("cache", {}).get("external") == "implemented"
                 else ("vram",)
             ):
                 plan = resolve(

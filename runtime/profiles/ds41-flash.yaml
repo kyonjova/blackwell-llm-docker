@@ -15,8 +15,8 @@ defaults:
   prefill-compute-share: 0.4
   prefill-schedule-interval: 1
   max-parallel-prefills: 1
-  max-model-len: 131072
-  max-num-seqs: 4
+  max-model-len: -1
+  max-num-seqs: 32
   max-num-batched-tokens: 4096
   gpu-memory-utilization: 0.95
   block-size: 256
@@ -63,5 +63,5 @@ modes:
     config: {method: dspark, attention_backend: B12X, draft_sample_method: greedy, rejection_sample_method: standard}
 cache:
   gpu: implemented
-  external: unsupported
-  migration_contract: ds41-cache-qualification
+  external: implemented
+  migration_contract: ds41-engine-driven

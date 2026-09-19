@@ -8,7 +8,14 @@ import json
 import re
 from pathlib import Path
 
-from runtime.launcher import JIT_PATHS, ROOT, ConfigError, read_yaml
+from runtime.launcher import (
+    JIT_PATHS,
+    ROOT,
+    ConfigError,
+    deployment_presets,
+    platform_environment,
+    read_yaml,
+)
 
 
 def owned_environment() -> set[str]:
@@ -19,6 +26,9 @@ def owned_environment() -> set[str]:
         for alias in item["env"]
     }
     names.update(JIT_PATHS)
+    names.update(platform_environment())
+    for preset in deployment_presets().values():
+        names.update(preset["environment"])
     for directory in (ROOT / "profiles", ROOT / "hardware"):
         for path in directory.glob("*.yaml"):
             data = read_yaml(path)
@@ -36,6 +46,7 @@ def owned_environment() -> set[str]:
             "MODE",
             "BACKEND",
             "VLLM_DEFAULT_MOE_BACKEND",
+            "PRESET",
         }
     )
     return names

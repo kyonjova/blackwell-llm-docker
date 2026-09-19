@@ -4,6 +4,12 @@ id: single-node-vllm
 status: implemented
 defaults:
   cache-transfer-mode: engine_driven
+  cache-l1-gib: 24
+  cache-l1-init-gib: 2
+  cache-l2-gib: 256
+  cache-l2-enabled: false
+  cache-cpu-workers: 4
+  cache-l2-workers: 4
   cache-directory: /cache/lmcache
   cache-object-tokens: 4096
   cache-native-gib: 64
@@ -25,6 +31,8 @@ defaults:
   enable-auto-tool-choice: true
   cache-mode: vram
 environment:
+  # Checkpoints and saved credentials must not inherit the runtime-keyed JIT root.
+  HF_HOME: /root/.cache/huggingface
   CUDA_DEVICE_ORDER: PCI_BUS_ID
   VLLM_WORKER_MULTIPROC_METHOD: spawn
   VLLM_USE_V2_MODEL_RUNNER: "1"

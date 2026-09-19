@@ -1,10 +1,9 @@
 # Model runtime configuration
 
-Status: **implemented**, with CPU configuration-contract and cache-service
-lifecycle tests. The CUDA 13.4 image recipe installs this interface over its
-CUDA/NCCL bootstrap. GPU model serving, throughput and external-cache restore
-are separate qualification gates; CPU tests do not qualify those operations.
-Published community images and wiki commands are not changed by this source tree.
+Status: **implemented** in the shared CUDA 13.4 image. Model profiles select
+serving, memory and cache defaults through one interface. The image's CUDA/NCCL
+bootstrap prepares the native runtime before launching the selected service.
+Model-level test records are kept in `runtime/validation/` and the model wiki.
 
 ## One image, explicit model selection
 
@@ -26,6 +25,51 @@ With no profile or command the container prints help, not an implicit model.
 Explicit commands such as `python`, `bash` or `vllm serve` retain the ABI
 bootstrap and bypass profile defaults.
 
+Profiles keep downloaded checkpoints and saved HF credentials in
+`/root/.cache/huggingface` (`HF_HOME`), independently of the runtime-keyed JIT
+cache under `/cache/jit`. Updating an image therefore does not move the model
+cache. To use another location, mount that directory and set `-e HF_HOME=/path`.
+`XDG_CACHE_HOME` controls the profile's JIT root; it does not relocate HF data.
+
+## Named deployment settings
+
+`PRESET` selects a data-only overlay from `presets.yaml`. Model defaults remain
+separate from deployment-specific memory constraints. The Spark TP2 preset uses
+the Spark checkpoint on two 96-GB RTX PRO GPUs; it does not select DGX Spark
+hardware or replace GLM TP4 defaults.
+
+```bash
+docker run -d --name glm-spark-tp2 --init --gpus '"device=0,1"' \
+  --network host --ipc host --shm-size 32g \
+  --ulimit memlock=-1 --ulimit stack=67108864:67108864 \
+  -v model-cache:/root/.cache/huggingface -v glm-spark-runtime:/cache \
+  -e PRESET=glm53-spark-tp2 -e PORT=8000 "$LIL_IMAGE"
+```
+
+This selects TP2/DCP2, MTP3 with B12X draft experts, four request slots, a
+3,072-token prefill budget, 3,996 MiB fixed KV per rank and sparse full/piecewise
+captures through 16 verifier rows. The allocator uses 12 MiB large segments;
+NCCL uses two channels and 1 MiB buffers. No image-count limit is imposed.
+Only this bounded configuration is qualified; other slot, context or speculation
+choices may need less KV memory. Long mixed vision/text traffic can still cause
+allocator retries with this tight memory budget.
+
+- CPU/disk LMCache: add `-e CACHE_MODE=lmcache`. GPU-only cache is the default.
+  Text recurrent checkpoints can be restored externally; vision requests
+  recompute. LMCache retains fewer KV tokens than the GPU-only configuration.
+- Smaller KV allocation: add `-e KV_CACHE_MEMORY_BYTES=3758096384` for 3.5 GiB.
+- Change serving choices with the same `SPECULATOR`, `MTP_DEPTH`, `TP`, `DCP`,
+  `MAX_NUM_SEQS`, and `MAX_NUM_BATCHED_TOKENS` controls as other profiles.
+  GLM cache object size follows a changed prefill budget unless explicitly set.
+  Automatic capture capacity follows request slots and effective proposal width.
+- Native form: `lil-serve --preset glm53-spark-tp2 -- --port 8000`.
+- Qwen TP2: `PRESET=qwen38-tp2`; CPU PLE placement and MTP defaults still come
+  from the Qwen model profile. `PROFILE=qwen38-flash-next TP=2` is equivalent.
+
+Explicit settings, environment and native arguments take precedence over preset
+defaults. A preset cannot be combined with a different architecture's profile.
+Credentials and host GPU selection are never stored in presets.
+
 ## Ownership
 
 Keep deployment policy in `blackwell-llm-docker`. A separate Docker repository
@@ -34,12 +78,13 @@ entrypoints, CI, and model documentation without removing a configuration
 owner. The LIL client can consume the versioned launch interface; it should
 not maintain another copy of kernel settings.
 
-The configuration has three independent identities:
+The configuration has four independent identities:
 
 | Artifact | Owns | Does not own |
 |---|---|---|
 | Model profile, `profiles/*.yaml` | Checkpoint name, model-specific precision, speculation, cache layout, native CLI defaults | GPU selection, clocks, library builds |
 | Hardware profile, `hardware/*.yaml` | Explicitly selected communication and platform tuning | Model architecture or speculation method |
+| Deployment preset, `presets.yaml` | Named checkpoint/TP/memory settings layered over a model and hardware profile | Credentials, host GPU IDs or kernel implementations |
 | Image contract, `image-contract.json` | Runtime-lock digest, installed profile/launcher hashes, CUDA/NCCL bootstrap executable | Mutable benchmark results or credentials |
 
 `hardware/native.yaml` leaves communication crossovers and NCCL channels to
@@ -50,9 +95,9 @@ GB10, or multi-node systems. Neither hardware profile changes GPU clocks.
 
 `schema.json` validates profile structure. `options.yaml` owns the mapping
 between managed native CLI options, typed values, and environment aliases.
-There is one common layer, one model layer, and one hardware layer, not an
-unbounded inheritance chain. A settings file and explicit user arguments are
-applied after these layers.
+There is one common layer, one model layer, one hardware layer and an optional
+deployment preset. A settings file and explicit user arguments are applied
+after these layers. Presets cannot inherit from other presets.
 
 ## Model policies
 
@@ -66,8 +111,11 @@ performance measurements. Source references are recorded inside each profile.
   proposals from `local-inference-lab/GLM-5.3-Flash-DFlash2`, FLASH_ATTN draft
   attention and `auto` draft KV, retaining the MXFP8 checkpoint policy.
   Target KV defaults to FP8; `nvfp4_ds_mla` remains an explicit GLM option.
-  FlashKDA prefill is retained; selecting B12X MoE
-  does not imply replacing recurrent prefill with B12X.
+  KDA recurrent prefill explicitly defaults to B12X in every speculation mode,
+  independently of sparse MLA and MoE selection. Use the native override
+  `--additional-config.kda_prefill_backend flashkda` for FlashKDA; `triton` and
+  `auto` remain explicit alternatives. The `auto` policy belongs to vLLM and
+  does not mean B12X.
 - DS4 text/Vision: fixed DSpark K5/K3, B12X W4A8 MoE, and native dense
   selection corresponding to `BACKEND=b12x-a8-dglin`. That source launcher
   **omits** `--linear-backend`; the profile preserves the omission rather than
@@ -235,6 +283,20 @@ layer count. Removing `ENV` in a child Dockerfile cannot clear inherited model
 policy, so foundation and final image metadata are both audited. Profile edits
 do not recompile native component wheels.
 
+Foundation defaults that overlap with profile settings are declared in
+`runtime/platform-environment.json`. The build verifies their values against
+the pinned source image, removes those names from a cached OCI configuration,
+and uses that exact configuration as the Dockerfile's named foundation context.
+All 67 filesystem layers remain unchanged. The cache key includes the source
+image ID and environment policy; repeated builds reuse the layout and the same
+resource-limited BuildKit builder. `LIL_FOUNDATION_CACHE` can select its directory.
+
+Profile serving applies these platform defaults before model, hardware, preset
+and explicit user settings. An explicit `-e NCCL_NET_PLUGIN=spcx` therefore still
+overrides a preset selecting `none`. Raw commands intentionally bypass profile
+resolution; use the generated native environment or set their NCCL policy
+explicitly. Both interfaces retain the CUDA/NCCL ABI bootstrap.
+
 ## Generated Compose and wiki material
 
 ```bash
@@ -266,16 +328,17 @@ configuration implementation stays here.
 
 `CACHE_MODE=vram` starts no external service. `CACHE_MODE=native` selects
 GLM native KV offload. `CACHE_MODE=lmcache` constructs an explicit service plan
-for GLM or DS4. `LMCACHE_MODE=ram|disk|off` preserves the DS4 tier selection.
+for GLM, Qwen, DS4 text/Vision, or DS4.1. `LMCACHE_MODE=ram|disk|off` selects
+RAM, RAM with persistent disk storage, or VRAM-only caching.
 The model and cache use distinct ports, defaulting to API port plus
 10000/10001/10002 for cache RPC/HTTP/metrics. Overflow and collisions are errors.
 
 | Contract | Required preserved behavior | Resolver disposition |
 |---|---|---|
-| GLM atomic recurrent cache | Target/recurrent/draft all-rank bundles, request/SYSTEM boundaries, aligned exports, DCP-derived object geometry, identity checks, cancellation and restart restore | Adapter implemented; model restore qualification required |
-| DS4 engine-driven cache | Worker-owned async pinned SHM, CPU-only sidecar, RAM/disk modes, health gating, coordinated shutdown, memory admission | CPU service lifecycle qualified; model transfer qualification required |
-| Qwen external cache | Separate model/cache correctness qualification | Unsupported, matching the published recipe's qualification limit |
-| DS4.1 external cache | Model-specific cache qualification | Not inferred from Engram RAM support |
+| GLM atomic recurrent cache | Target/recurrent/draft all-rank bundles, request/SYSTEM boundaries, identity checks and restart restore | Implemented for text; TP2 requires engine-driven request-boundary transfer. TP4/TP8 also accept aligned transfer. |
+| DS4 engine-driven cache | Worker-owned pinned SHM, CPU-only service, RAM/disk storage and coordinated shutdown | Implemented for text and authenticated image-bearing prefixes. |
+| Qwen atomic recurrent cache | Complete target/GDN/draft checkpoint bundles | Implemented for text with engine-driven transfer; external image-bearing checkpoint reuse is unsupported. |
+| DS4.1 engine-driven cache | Target and auxiliary cache groups with independent Engram placement | Implemented; RAM/disk Engram placement is separate from prefix offload. |
 
 Typed settings include `cache-mode`, `cache-transfer-mode`, `cache-l1-gib`,
 `cache-l2-gib`, `cache-directory` and `cache-object-tokens`. Both
@@ -289,6 +352,23 @@ HF revisions are resolved and pinned before opening persistent storage, not
 during `--print-config`. GLM DFlash preserves the target scheduler budget while
 reserving additional input rows for draft verification. Existing LMCache
 transport, allocation and checkpoint implementations remain authoritative.
+
+For the GLM Spark TP2/DCP2 recipe with a 3072-token scheduling budget, replace
+`CACHE_MODE=vram` with the following environment arguments:
+
+```bash
+-e LMCACHE_MODE=disk -e LMCACHE_CHUNK_SIZE=3072 \
+-e LMCACHE_L1_GB=16 -e LMCACHE_L1_INIT_GB=2 -e LMCACHE_L2_GB=64
+```
+
+Use `LMCACHE_MODE=ram` to omit disk storage. Keep `/cache` on a persistent
+Docker volume for disk restore. The engine-driven service uses CPU memory,
+not a separate GPU. The profile selects request-boundary checkpoints and a
+matching target scheduling budget. It does not enable aligned/direct transfer
+for TP2. GLM vision remains available, but image-bearing requests recompute
+instead of restoring external recurrent checkpoints. The auto-fit context
+limit can differ from the VRAM-only recipe because external-cache geometry
+and transfer buffers differ; inspect the reported capacity at startup.
 
 GLM direct cuMem transfer requires a helper library built from the **same
 LMCache commit** as the wheel. Its source hashes, license and compiled-library

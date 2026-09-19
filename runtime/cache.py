@@ -41,7 +41,14 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
     if cache_mode == "vram":
         return None
     glm = identifier == "glm53-flash"
-    if not glm and identifier not in {"ds4-flash", "ds4-vision"}:
+    qwen = identifier == "qwen38-flash-next"
+    ds41 = identifier == "ds41-flash"
+    if (
+        not glm
+        and not qwen
+        and not ds41
+        and identifier not in {"ds4-flash", "ds4-vision"}
+    ):
         raise ConfigError(
             f"{identifier}: external cache is unsupported by this profile; Engram/PLE placement is independent"
         )
@@ -59,6 +66,10 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
 
     transfer = values["cache-transfer-mode"]
     engine = transfer == "engine_driven"
+    if (qwen or ds41) and not engine:
+        raise ConfigError(
+            "Qwen and DS4.1 external cache require engine-driven transfer"
+        )
     chunk = values["cache-object-tokens"]
     for key in (
         "cache-object-tokens",
@@ -115,8 +126,13 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
 
     semantic = False
     if glm:
-        if values["tensor-parallel-size"] not in {4, 8}:
-            raise ConfigError("The GLM external-cache profile supports TP4 or TP8")
+        tp = values["tensor-parallel-size"]
+        if tp not in {2, 4, 8}:
+            raise ConfigError("The GLM external-cache profile supports TP2, TP4 or TP8")
+        if tp == 2 and not engine:
+            raise ConfigError(
+                "GLM TP2 requires engine-driven request-boundary cache transfer"
+            )
         target_budget = values.get(
             "cache-target-tokens", values["max-num-batched-tokens"]
         )
@@ -128,6 +144,10 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
         if origins[policy_key].startswith("model:") or values[policy_key] == "auto":
             put(policy_key, "request_boundaries" if engine else "aligned")
         semantic = values[policy_key] == "request_boundaries"
+        if tp == 2 and not semantic:
+            raise ConfigError(
+                "GLM TP2 requires engine-driven request-boundary cache transfer"
+            )
         if semantic and not engine:
             raise ConfigError(
                 "Request-boundary checkpoint bundles require engine-driven transfer"
@@ -159,11 +179,29 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
         put("prefix-cache-retention-interval", retention)
         if engine and origins["gpu-memory-utilization"].startswith("model:"):
             put("gpu-memory-utilization", 0.950)
+    elif qwen:
+        # GDN state must be restored with its exact attention/PLE boundary.
+        # Independent aligned chunks are not a substitute for that bundle.
+        policy = values.get("recurrent-checkpoint-policy", "auto")
+        if policy not in {"auto", "request_boundaries"}:
+            raise ConfigError(
+                "Qwen external cache requires request-boundary checkpoints"
+            )
+        if values["decode-context-parallel-size"] != 1:
+            raise ConfigError("Qwen external cache requires DCP1")
+        if values.get("prefix-cache-retention-interval", 0) not in {0, "auto"}:
+            raise ConfigError(
+                "Qwen external cache uses exact boundaries, not periodic retention"
+            )
+        semantic = True
+        put("recurrent-checkpoint-policy", "request_boundaries")
+        put("prefix-cache-retention-interval", 0)
     else:
         if chunk % (values["block-size"] * values["decode-context-parallel-size"]):
             raise ConfigError("Cache object tokens must align to DS4 DCP cache pages")
         if (
-            engine
+            not ds41
+            and engine
             and values["tensor-parallel-size"] == 2
             and (values["max-model-len"] == -1 or values["max-model-len"] >= 1048576)
             and origins["gpu-memory-utilization"].startswith("model:")
@@ -296,6 +334,18 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
             if key in values
         }
     )
+    if qwen or ds41:
+        layout.update(
+            {
+                key: values[key]
+                for key in (
+                    "swa-block-size",
+                    "mamba-cache-mode",
+                    "mamba-ssm-cache-dtype",
+                )
+                if key in values
+            }
+        )
     layout["runtime"] = runtime_identity or "UNBOUND-RUNTIME"
     layout_digest = hashlib.sha256(
         json.dumps(layout, sort_keys=True).encode()

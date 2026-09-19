@@ -37,6 +37,10 @@
       "KV_CACHE_QUANT"
     ]
   },
+  "kv-cache-memory-bytes": {
+    "type": "integer",
+    "env": ["KV_CACHE_MEMORY_BYTES"]
+  },
   "attention-backend": {
     "type": "string",
     "env": [

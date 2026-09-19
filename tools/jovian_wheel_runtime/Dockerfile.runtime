@@ -5,7 +5,7 @@ ARG SOURCE_IMAGE=nvcr.io/nvidia/pytorch@sha256:33ef5fc15e8937602d64022209cdb2777
 
 FROM ${UV_IMAGE} AS uv
 
-FROM ${SOURCE_IMAGE} AS runtime
+FROM model-neutral-foundation AS runtime
 ARG SOURCE_IMAGE
 ARG RUNTIME_SOURCE_COMMIT
 LABEL org.opencontainers.image.title="LIL multi-model CUDA 13.4 runtime" \

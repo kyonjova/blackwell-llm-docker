@@ -6,7 +6,7 @@ from pathlib import Path
 
 def test_application_stage_has_one_filesystem_instruction():
     recipe = (Path(__file__).resolve().parents[1] / "Dockerfile.runtime").read_text()
-    application = recipe.split("FROM ${SOURCE_IMAGE} AS runtime", 1)[1]
+    application = recipe.split("FROM model-neutral-foundation AS runtime", 1)[1]
     # WORKDIR can create a directory layer even when a preceding RUN populated
     # that path. Runtime imports use a .pth entry and need no working directory.
     assert re.findall(r"^(RUN|COPY|ADD|WORKDIR)\b", application, re.MULTILINE) == [
