@@ -1,10 +1,9 @@
 # Model runtime configuration
 
-Status: **implemented**, with CPU configuration-contract and cache-service
-lifecycle tests. The CUDA 13.4 image recipe installs this interface over its
-CUDA/NCCL bootstrap. GPU model serving, throughput and external-cache restore
-are separate qualification gates; CPU tests do not qualify those operations.
-Published community images and wiki commands are not changed by this source tree.
+Status: **implemented** in the shared CUDA 13.4 image. Model profiles select
+serving, memory and cache defaults through one interface. The image's CUDA/NCCL
+bootstrap prepares the native runtime before launching the selected service.
+Model-level test records are kept in `runtime/validation/` and the model wiki.
 
 ## One image, explicit model selection
 
@@ -283,6 +282,20 @@ flattened CUDA 13.3 community recipe has two layers; that is not this recipe's
 layer count. Removing `ENV` in a child Dockerfile cannot clear inherited model
 policy, so foundation and final image metadata are both audited. Profile edits
 do not recompile native component wheels.
+
+Foundation defaults that overlap with profile settings are declared in
+`runtime/platform-environment.json`. The build verifies their values against
+the pinned source image, removes those names from a cached OCI configuration,
+and uses that exact configuration as the Dockerfile's named foundation context.
+All 67 filesystem layers remain unchanged. The cache key includes the source
+image ID and environment policy; repeated builds reuse the layout and the same
+resource-limited BuildKit builder. `LIL_FOUNDATION_CACHE` can select its directory.
+
+Profile serving applies these platform defaults before model, hardware, preset
+and explicit user settings. An explicit `-e NCCL_NET_PLUGIN=spcx` therefore still
+overrides a preset selecting `none`. Raw commands intentionally bypass profile
+resolution; use the generated native environment or set their NCCL policy
+explicitly. Both interfaces retain the CUDA/NCCL ABI bootstrap.
 
 ## Generated Compose and wiki material
 

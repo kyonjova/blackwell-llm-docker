@@ -80,6 +80,27 @@ def read_yaml(path: Path) -> dict:
     return result
 
 
+def platform_environment() -> dict[str, str]:
+    """Read foundation defaults below model policy and explicit user settings."""
+    try:
+        data = json.loads((ROOT / "platform-environment.json").read_text())
+    except (OSError, ValueError) as error:
+        raise ConfigError("Cannot read platform-environment.json") from error
+    if (
+        not isinstance(data, dict)
+        or set(data) != {"schema_version", "source_image", "environment"}
+        or data["schema_version"] != 1
+        or not isinstance(data["source_image"], str)
+        or not isinstance(data["environment"], dict)
+        or any(
+            not NAME.fullmatch(key) or not isinstance(value, str) or "\x00" in value
+            for key, value in data["environment"].items()
+        )
+    ):
+        raise ConfigError("Invalid platform environment policy")
+    return data["environment"]
+
+
 def profile(kind: str, identifier: str) -> dict:
     if not re.fullmatch(r"[a-z][a-z0-9-]*", identifier):
         raise ConfigError(
@@ -393,6 +414,9 @@ def resolve(
         environment[key] = value
         env_origins[key] = source
 
+    platform = platform_environment()
+    for key, value in platform.items():
+        set_env(key, value, "platform:foundation")
     for layer in (common, model, hw):
         source = f"{layer['kind']}:{layer['id']}"
         for key, value in layer["defaults"].items():
@@ -736,7 +760,8 @@ def resolve(
         env_origins.pop("NCCL_GRAPH_FILE")
     policy_digest = hashlib.sha256(
         json.dumps(
-            [common, model, hw, *([deployment] if deployment else [])], sort_keys=True
+            [platform, common, model, hw, *([deployment] if deployment else [])],
+            sort_keys=True,
         ).encode()
     ).hexdigest()[:16]
     jit_root = environment.get(
