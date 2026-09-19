@@ -32,6 +32,45 @@ cache under `/cache/jit`. Updating an image therefore does not move the model
 cache. To use another location, mount that directory and set `-e HF_HOME=/path`.
 `XDG_CACHE_HOME` controls the profile's JIT root; it does not relocate HF data.
 
+## Named deployment settings
+
+`PRESET` selects a data-only overlay from `presets.yaml`. Model defaults remain
+separate from deployment-specific memory constraints. The Spark TP2 preset uses
+the Spark checkpoint on two 96-GB RTX PRO GPUs; it does not select DGX Spark
+hardware or replace GLM TP4 defaults.
+
+```bash
+docker run -d --name glm-spark-tp2 --init --gpus '"device=0,1"' \
+  --network host --ipc host --shm-size 32g \
+  --ulimit memlock=-1 --ulimit stack=67108864:67108864 \
+  -v model-cache:/root/.cache/huggingface -v glm-spark-runtime:/cache \
+  -e PRESET=glm53-spark-tp2 -e PORT=8000 "$LIL_IMAGE"
+```
+
+This selects TP2/DCP2, MTP3 with B12X draft experts, four request slots, a
+3,072-token prefill budget, 3,996 MiB fixed KV per rank and sparse full/piecewise
+captures through 16 verifier rows. The allocator uses 12 MiB large segments;
+NCCL uses two channels and 1 MiB buffers. No image-count limit is imposed.
+Only this bounded configuration is qualified; other slot, context or speculation
+choices may need less KV memory. Long mixed vision/text traffic can still cause
+allocator retries with this tight memory budget.
+
+- CPU/disk LMCache: add `-e CACHE_MODE=lmcache`. GPU-only cache is the default.
+  Text recurrent checkpoints can be restored externally; vision requests
+  recompute. LMCache retains fewer KV tokens than the GPU-only configuration.
+- Smaller KV allocation: add `-e KV_CACHE_MEMORY_BYTES=3758096384` for 3.5 GiB.
+- Change serving choices with the same `SPECULATOR`, `MTP_DEPTH`, `TP`, `DCP`,
+  `MAX_NUM_SEQS`, and `MAX_NUM_BATCHED_TOKENS` controls as other profiles.
+  GLM cache object size follows a changed prefill budget unless explicitly set.
+  Automatic capture capacity follows request slots and effective proposal width.
+- Native form: `lil-serve --preset glm53-spark-tp2 -- --port 8000`.
+- Qwen TP2: `PRESET=qwen38-tp2`; CPU PLE placement and MTP defaults still come
+  from the Qwen model profile. `PROFILE=qwen38-flash-next TP=2` is equivalent.
+
+Explicit settings, environment and native arguments take precedence over preset
+defaults. A preset cannot be combined with a different architecture's profile.
+Credentials and host GPU selection are never stored in presets.
+
 ## Ownership
 
 Keep deployment policy in `blackwell-llm-docker`. A separate Docker repository
@@ -40,12 +79,13 @@ entrypoints, CI, and model documentation without removing a configuration
 owner. The LIL client can consume the versioned launch interface; it should
 not maintain another copy of kernel settings.
 
-The configuration has three independent identities:
+The configuration has four independent identities:
 
 | Artifact | Owns | Does not own |
 |---|---|---|
 | Model profile, `profiles/*.yaml` | Checkpoint name, model-specific precision, speculation, cache layout, native CLI defaults | GPU selection, clocks, library builds |
 | Hardware profile, `hardware/*.yaml` | Explicitly selected communication and platform tuning | Model architecture or speculation method |
+| Deployment preset, `presets.yaml` | Named checkpoint/TP/memory settings layered over a model and hardware profile | Credentials, host GPU IDs or kernel implementations |
 | Image contract, `image-contract.json` | Runtime-lock digest, installed profile/launcher hashes, CUDA/NCCL bootstrap executable | Mutable benchmark results or credentials |
 
 `hardware/native.yaml` leaves communication crossovers and NCCL channels to
@@ -56,9 +96,9 @@ GB10, or multi-node systems. Neither hardware profile changes GPU clocks.
 
 `schema.json` validates profile structure. `options.yaml` owns the mapping
 between managed native CLI options, typed values, and environment aliases.
-There is one common layer, one model layer, and one hardware layer, not an
-unbounded inheritance chain. A settings file and explicit user arguments are
-applied after these layers.
+There is one common layer, one model layer, one hardware layer and an optional
+deployment preset. A settings file and explicit user arguments are applied
+after these layers. Presets cannot inherit from other presets.
 
 ## Model policies
 

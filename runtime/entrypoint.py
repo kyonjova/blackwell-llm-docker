@@ -43,7 +43,7 @@ def command(argv: list[str], environment: dict[str, str], contract: dict) -> lis
         # Explicit python/bash/vllm commands retain CUDA/NCCL preparation, but
         # intentionally do not inherit model policy from PROFILE.
         return [*contract.get("bootstrap", []), *args]
-    if not args and not environment.get("PROFILE"):
+    if not args and not environment.get("PROFILE") and not environment.get("PRESET"):
         args = ["--help"]
     return ["/opt/venv/bin/python", "-m", "runtime.launcher", *args]
 

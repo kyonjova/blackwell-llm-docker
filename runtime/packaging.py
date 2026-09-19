@@ -36,6 +36,7 @@ def owned_environment() -> set[str]:
             "MODE",
             "BACKEND",
             "VLLM_DEFAULT_MOE_BACKEND",
+            "PRESET",
         }
     )
     return names
