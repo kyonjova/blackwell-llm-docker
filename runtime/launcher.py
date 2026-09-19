@@ -166,12 +166,13 @@ def parse_native(argv: list[str], specs: dict) -> tuple[dict, list[str]]:
         if name in values:
             raise ConfigError(f"Specify --{name} only once")
         if root not in specs:
-            if name in {
+            if root in {
                 "config",
                 "kv-transfer-config",
                 "kv-offloading-backend",
                 "kv-offloading-size",
                 "enable-cumem-allocator",
+                "max-num-scheduled-tokens",
             }:
                 raise ConfigError(
                     f"--{name} requires the external-cache/config-file integration; it cannot bypass profile validation"
@@ -685,9 +686,26 @@ def resolve(
         )
     from runtime.cache import configure as configure_cache
 
+    if (
+        values["cache-mode"] != "vram"
+        and model.get("cache", {}).get("external") != "implemented"
+    ):
+        raise ConfigError(
+            f"{identifier}: external cache is unsupported by this image's profile"
+        )
     cache_service = configure_cache(
         values, origins, environment, env_origins, identifier, runtime_identity
     )
+    if values.get("kv-transfer-config", {}).get(
+        "kv_connector"
+    ) == "LMCacheRecurrentCheckpointConnector" and not values.get(
+        "language-model-only", False
+    ):
+        warnings.append(
+            "External recurrent checkpoints support text requests only. "
+            "Image/video requests can use native GPU prefix caching but do not "
+            "restore their recurrent state from CPU or disk."
+        )
     validate(values, environment, identifier)
     command = make_argv(values, passthrough)
     return LaunchPlan(
