@@ -26,6 +26,12 @@ With no profile or command the container prints help, not an implicit model.
 Explicit commands such as `python`, `bash` or `vllm serve` retain the ABI
 bootstrap and bypass profile defaults.
 
+Profiles keep downloaded checkpoints and saved HF credentials in
+`/root/.cache/huggingface` (`HF_HOME`), independently of the runtime-keyed JIT
+cache under `/cache/jit`. Updating an image therefore does not move the model
+cache. To use another location, mount that directory and set `-e HF_HOME=/path`.
+`XDG_CACHE_HOME` controls the profile's JIT root; it does not relocate HF data.
+
 ## Ownership
 
 Keep deployment policy in `blackwell-llm-docker`. A separate Docker repository
