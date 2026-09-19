@@ -1,0 +1,48 @@
+schema_version: 1
+presets:
+  glm53-spark-tp2:
+    profile: glm53-flash
+    hardware: rtx-pro-6000-pcie
+    description: GLM Spark checkpoint on two 96-GB RTX PRO GPUs, with TP2/DCP2 MTP3, four request slots and a 3072-token prefill budget. Spark identifies the checkpoint, not DGX Spark hardware.
+    options:
+      model: local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+      served-model-name: GLM-5.3-Flash
+      tensor-parallel-size: 2
+      decode-context-parallel-size: 2
+      mode: mtp
+      max-model-len: -1
+      max-num-seqs: 4
+      max-num-batched-tokens: 3072
+      cache-object-tokens: 3072
+      kv-cache-memory-bytes: 4190109696
+      gpu-memory-utilization: 0.985
+      max-cudagraph-capture-size: auto
+      cudagraph-capture-sizes: [1, 2, 4, 8, 12, 16]
+      load-format: safetensors
+    environment:
+      VLLM_PCIE_TWOSHOT_ALLREDUCE_MAX_SIZE: "off"
+      NCCL_SOCKET_IFNAME: lo
+      GLOO_SOCKET_IFNAME: lo
+      NCCL_MIN_NCHANNELS: "2"
+      NCCL_MAX_NCHANNELS: "2"
+      NCCL_BUFFSIZE: "1048576"
+      NCCL_NET_PLUGIN: none
+      NCCL_TUNER_PLUGIN: none
+      CUBLAS_WORKSPACE_CONFIG: ":4096:1"
+      OMP_NUM_THREADS: "1"
+      VLLM_B12X_MLA_CKV_GATHER_MAX_TOKENS: "65536"
+      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True,large_segment_size_mb:12
+    modes:
+      mtp:
+        config: {moe_backend: b12x}
+    linked_options:
+      cache-object-tokens: max-num-batched-tokens
+  qwen38-tp2:
+    profile: qwen38-flash-next
+    hardware: rtx-pro-6000-pcie
+    description: Qwen3.8 Flash Next on two GPUs, retaining the model profile's MTP, table-offload and attention defaults.
+    options:
+      tensor-parallel-size: 2
+    environment: {}
+    modes: {}
+    linked_options: {}

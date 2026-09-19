@@ -96,6 +96,48 @@ def profile(kind: str, identifier: str) -> dict:
     return result
 
 
+def deployment_presets() -> dict:
+    """Read data-only deployment overlays owned by the container recipe."""
+    data = read_yaml(ROOT / "presets.yaml")
+    if set(data) != {"schema_version", "presets"} or data["schema_version"] != 1:
+        raise ConfigError("Unsupported deployment preset schema")
+    presets = data["presets"]
+    if not isinstance(presets, dict):
+        raise ConfigError("Deployment presets must be a mapping")
+    for name, item in presets.items():
+        if not re.fullmatch(r"[a-z][a-z0-9-]*", name) or not isinstance(item, dict):
+            raise ConfigError("Invalid deployment preset identity")
+        required = {
+            "profile",
+            "hardware",
+            "description",
+            "options",
+            "environment",
+            "modes",
+            "linked_options",
+        }
+        if set(item) != required:
+            raise ConfigError(f"Invalid deployment preset fields: {name}")
+        for key in ("profile", "hardware"):
+            if not isinstance(item[key], str) or not re.fullmatch(
+                r"[a-z][a-z0-9-]*", item[key]
+            ):
+                raise ConfigError(f"Invalid preset {key}: {name}")
+        if not isinstance(item["description"], str) or not all(
+            isinstance(item[key], dict)
+            for key in ("options", "environment", "modes", "linked_options")
+        ):
+            raise ConfigError(f"Invalid deployment preset values: {name}")
+    return presets
+
+
+def deployment_preset(identifier: str) -> dict:
+    presets = deployment_presets()
+    if identifier not in presets:
+        raise ConfigError(f"Unknown deployment preset: {identifier}")
+    return copy.deepcopy(presets[identifier])
+
+
 def convert(name: str, value: Any, spec: dict) -> Any:
     kind = spec["type"]
     try:
@@ -293,6 +335,7 @@ def resolve(
     argv: list[str] | None = None,
     cli_env: dict[str, str] | None = None,
     runtime_identity: str | None = None,
+    preset: str | None = None,
 ) -> LaunchPlan:
     incoming = dict(os.environ if env is None else env)
     config = config or {}
@@ -312,6 +355,26 @@ def resolve(
         profile("model", identifier),
         profile("hardware", hardware),
     )
+    deployment = deployment_preset(preset) if preset else None
+    if deployment and deployment["profile"] != identifier:
+        raise ConfigError("The deployment preset belongs to a different model profile")
+    if deployment:
+        model = copy.deepcopy(model)
+        for mode_name, overrides in deployment["modes"].items():
+            if (
+                mode_name not in model["modes"]
+                or not isinstance(overrides, dict)
+                or set(overrides) - {"draft_tokens", "config"}
+            ):
+                raise ConfigError(f"Invalid preset mode: {mode_name}")
+            if "draft_tokens" in overrides:
+                model["modes"][mode_name]["draft_tokens"] = overrides["draft_tokens"]
+            if "config" in overrides:
+                if not isinstance(overrides["config"], dict):
+                    raise ConfigError("Preset mode config must be a mapping")
+                model["modes"][mode_name].setdefault("config", {}).update(
+                    overrides["config"]
+                )
     cli, passthrough = parse_native(argv or [], specs)
     values, origins = {}, {}
     environment, env_origins = {}, {}
@@ -338,6 +401,11 @@ def resolve(
             set_env(key, value, source)
     for key, value in hw.get("model_environment", {}).get(identifier, {}).items():
         set_env(key, value, f"hardware:{hardware}/{identifier}")
+    if deployment:
+        for key, value in deployment["options"].items():
+            set_value(key, value, f"preset:{preset}")
+        for key, value in deployment["environment"].items():
+            set_env(key, value, f"preset:{preset}")
 
     explicit_env = {**incoming, **config.get("environment", {}), **(cli_env or {})}
     for key, value in config.get("options", {}).items():
@@ -479,6 +547,13 @@ def resolve(
     def derive(key, value, reason):
         values[key] = value
         origins[key] = f"derived:{reason}"
+
+    if deployment:
+        for target, source in deployment["linked_options"].items():
+            if target not in specs or source not in values:
+                raise ConfigError("Preset option dependency is not declared")
+            if origins.get(target, "").startswith(("preset:", "model:", "common:")):
+                set_value(target, values[source], f"derived:preset link to {source}")
 
     # A repository-specific code revision must not leak to an operator's model.
     if (
@@ -643,9 +718,9 @@ def resolve(
         )
     if "cudagraph-capture-sizes" in values and origins.get(
         "cudagraph-capture-sizes", ""
-    ).startswith("model:"):
+    ).startswith(("model:", "preset:")):
         cap = values["max-cudagraph-capture-size"]
-        if cap != model["defaults"].get("max-cudagraph-capture-size"):
+        if cap != model["defaults"].get("max-cudagraph-capture-size") or deployment:
             derive(
                 "cudagraph-capture-sizes",
                 sorted(
@@ -660,7 +735,9 @@ def resolve(
         environment.pop("NCCL_GRAPH_FILE")
         env_origins.pop("NCCL_GRAPH_FILE")
     policy_digest = hashlib.sha256(
-        json.dumps([common, model, hw], sort_keys=True).encode()
+        json.dumps(
+            [common, model, hw, *([deployment] if deployment else [])], sort_keys=True
+        ).encode()
     ).hexdigest()[:16]
     jit_root = environment.get(
         "XDG_CACHE_HOME",
@@ -779,6 +856,8 @@ def validate(values: dict, environment: dict, identifier: str) -> None:
         raise ConfigError("DCP must divide TP")
     if not 0 < values["gpu-memory-utilization"] <= 1:
         raise ConfigError("gpu-memory-utilization must be in (0, 1]")
+    if "kv-cache-memory-bytes" in values and values["kv-cache-memory-bytes"] <= 0:
+        raise ConfigError("kv-cache-memory-bytes must be positive")
     if not 1 <= values["port"] <= 65535:
         raise ConfigError("port must be in [1, 65535]")
     share = values.get("prefill-compute-share")
@@ -934,8 +1013,11 @@ def main() -> int:
         default=os.environ.get("PROFILE"),
         help="Model profile (or PROFILE): glm53-flash, qwen38-flash-next, ds4-flash, ds4-vision, ds41-flash",
     )
+    parser.add_argument("--hardware", default=os.environ.get("HARDWARE_PROFILE"))
     parser.add_argument(
-        "--hardware", default=os.environ.get("HARDWARE_PROFILE", "native")
+        "--preset",
+        default=os.environ.get("PRESET"),
+        help="Named model/deployment defaults; settings, environment and native arguments can override them",
     )
     parser.add_argument("--settings", type=Path)
     parser.add_argument("--env", action="append", default=[], metavar="NAME=VALUE")
@@ -944,11 +1026,14 @@ def main() -> int:
         "--image-contract", type=Path, default=ROOT / "image-contract.json"
     )
     args, native = parser.parse_known_args()
-    if not args.profile:
-        parser.error(
-            "Select a model with PROFILE or --profile; use an explicit vllm command for models without a profile"
-        )
     try:
+        deployment = deployment_preset(args.preset) if args.preset else {}
+        identifier = args.profile or deployment.get("profile")
+        hardware = args.hardware or deployment.get("hardware", "native")
+        if not identifier:
+            raise ConfigError(
+                "Select a model with --profile/PROFILE or --preset/PRESET"
+            )
         explicit_env = {}
         for item in args.env:
             name, separator, value = item.partition("=")
@@ -963,12 +1048,13 @@ def main() -> int:
             contract = verify_contract(args.image_contract)
             runtime_identity = contract["runtime_lock_sha256"]
         plan = resolve(
-            args.profile,
-            args.hardware,
+            identifier,
+            hardware,
             config=read_yaml(args.settings) if args.settings else None,
             argv=native,
             cli_env=explicit_env,
             runtime_identity=runtime_identity,
+            preset=args.preset,
         )
         if args.print_config:
             public = plan.public()
