@@ -275,16 +275,17 @@ configuration implementation stays here.
 
 `CACHE_MODE=vram` starts no external service. `CACHE_MODE=native` selects
 GLM native KV offload. `CACHE_MODE=lmcache` constructs an explicit service plan
-for GLM or DS4. `LMCACHE_MODE=ram|disk|off` preserves the DS4 tier selection.
+for GLM, Qwen, DS4 text/Vision, or DS4.1. `LMCACHE_MODE=ram|disk|off` selects
+RAM, RAM with persistent disk storage, or VRAM-only caching.
 The model and cache use distinct ports, defaulting to API port plus
 10000/10001/10002 for cache RPC/HTTP/metrics. Overflow and collisions are errors.
 
 | Contract | Required preserved behavior | Resolver disposition |
 |---|---|---|
-| GLM atomic recurrent cache | Target/recurrent/draft all-rank bundles, request/SYSTEM boundaries, aligned exports, DCP-derived object geometry, identity checks, cancellation and restart restore | Adapter implemented; model restore qualification required |
-| DS4 engine-driven cache | Worker-owned async pinned SHM, CPU-only sidecar, RAM/disk modes, health gating, coordinated shutdown, memory admission | CPU service lifecycle qualified; model transfer qualification required |
-| Qwen external cache | Separate model/cache correctness qualification | Unsupported, matching the published recipe's qualification limit |
-| DS4.1 external cache | Model-specific cache qualification | Not inferred from Engram RAM support |
+| GLM atomic recurrent cache | Target/recurrent/draft all-rank bundles, request/SYSTEM boundaries, identity checks and restart restore | Implemented for text; TP2 requires engine-driven request-boundary transfer. TP4/TP8 also accept aligned transfer. |
+| DS4 engine-driven cache | Worker-owned pinned SHM, CPU-only service, RAM/disk storage and coordinated shutdown | Implemented for text and authenticated image-bearing prefixes. |
+| Qwen atomic recurrent cache | Complete target/GDN/draft checkpoint bundles | Implemented for text with engine-driven transfer; external image-bearing checkpoint reuse is unsupported. |
+| DS4.1 engine-driven cache | Target and auxiliary cache groups with independent Engram placement | Implemented; RAM/disk Engram placement is separate from prefix offload. |
 
 Typed settings include `cache-mode`, `cache-transfer-mode`, `cache-l1-gib`,
 `cache-l2-gib`, `cache-directory` and `cache-object-tokens`. Both
@@ -298,6 +299,23 @@ HF revisions are resolved and pinned before opening persistent storage, not
 during `--print-config`. GLM DFlash preserves the target scheduler budget while
 reserving additional input rows for draft verification. Existing LMCache
 transport, allocation and checkpoint implementations remain authoritative.
+
+For the GLM Spark TP2/DCP2 recipe with a 3072-token scheduling budget, replace
+`CACHE_MODE=vram` with the following environment arguments:
+
+```bash
+-e LMCACHE_MODE=disk -e LMCACHE_CHUNK_SIZE=3072 \
+-e LMCACHE_L1_GB=16 -e LMCACHE_L1_INIT_GB=2 -e LMCACHE_L2_GB=64
+```
+
+Use `LMCACHE_MODE=ram` to omit disk storage. Keep `/cache` on a persistent
+Docker volume for disk restore. The engine-driven service uses CPU memory,
+not a separate GPU. The profile selects request-boundary checkpoints and a
+matching target scheduling budget. It does not enable aligned/direct transfer
+for TP2. GLM vision remains available, but image-bearing requests recompute
+instead of restoring external recurrent checkpoints. The auto-fit context
+limit can differ from the VRAM-only recipe because external-cache geometry
+and transfer buffers differ; inspect the reported capacity at startup.
 
 GLM direct cuMem transfer requires a helper library built from the **same
 LMCache commit** as the wheel. Its source hashes, license and compiled-library
