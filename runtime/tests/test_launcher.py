@@ -439,6 +439,23 @@ def test_cache_namespaces_follow_runtime_and_profile_not_a_release_string():
     assert explicit.environment["TRITON_CACHE_DIR"] == "/explicit"
 
 
+@pytest.mark.parametrize("model", MODELS)
+def test_checkpoint_cache_does_not_follow_jit_namespace(model):
+    first = resolve(model, env={}, runtime_identity="a" * 64)
+    second = resolve(model, env={}, runtime_identity="b" * 64)
+    assert first.environment["XDG_CACHE_HOME"] != second.environment["XDG_CACHE_HOME"]
+    assert first.environment["HF_HOME"] == "/root/.cache/huggingface"
+    assert second.environment["HF_HOME"] == first.environment["HF_HOME"]
+
+
+def test_explicit_hf_cache_root_is_independent_of_explicit_jit_root():
+    plan = resolve(
+        "glm53-flash", env={"HF_HOME": "/models/hf", "XDG_CACHE_HOME": "/kernels"}
+    )
+    assert plan.environment["HF_HOME"] == "/models/hf"
+    assert plan.environment["XDG_CACHE_HOME"] == "/kernels"
+
+
 def test_duplicate_yaml_and_path_traversal_are_rejected(tmp_path):
     duplicate = tmp_path / "duplicate.yaml"
     duplicate.write_text("options: {}\noptions: {}\n")
