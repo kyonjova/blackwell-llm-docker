@@ -347,13 +347,7 @@ def run(args, client: Client) -> dict:
         if fingerprint(state["request"]) != state["request_sha256"]:
             raise ValueError("The saved request was modified after the prime run")
     state["request_sha256"] = fingerprint(state["request"])
-    identity = {
-        role: container_identity(state[f"{role}_container"])
-        for role in ("serving", "cache")
-    }
-    if args.command == "restore":
-        require_restart(state["containers"], identity)
-    report = dict(state, containers=identity, status="in_progress", stages=[])
+    report = dict(state, containers={}, status="in_progress", stages=[])
     path = out / f"{args.command}.json"
     if path.exists():
         raise FileExistsError(f"Refusing to overwrite evidence: {path}")
@@ -363,6 +357,13 @@ def run(args, client: Client) -> dict:
 
     save()
     try:
+        report["containers"] = {
+            role: container_identity(state[f"{role}_container"])
+            for role in ("serving", "cache")
+        }
+        if args.command == "restore":
+            require_restart(state["containers"], report["containers"])
+        save()
         initial = client.snapshot()
         stages = [
             ("cold", "cold", "AX", "COBALT"),

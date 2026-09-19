@@ -400,6 +400,32 @@ def test_restore_requires_unchanged_prompt_and_both_processes_restarted(
         qualify.run(args(tmp_path / "receipts", "restore"), FakeClient())
 
 
+@pytest.mark.parametrize("failure", ["identity", "restart"])
+def test_restore_identity_failure_preserves_failed_receipt(
+    tmp_path, monkeypatch, failure
+):
+    monkeypatch.setattr(qualify, "container_identity", lambda _: identity())
+    directory = tmp_path / "receipts"
+    qualify.run(args(directory), FakeClient())
+    if failure == "identity":
+
+        def unavailable(_):
+            raise RuntimeError("Container identity is unavailable")
+
+        monkeypatch.setattr(qualify, "container_identity", unavailable)
+    with pytest.raises((RuntimeError, ValueError)):
+        qualify.run(args(directory, "restore"), FakeClient())
+    receipt = directory / "restore.json"
+    saved = json.loads(receipt.read_text())
+    assert saved["status"] == "failed"
+    assert saved["stages"] == []
+    assert "error" in saved
+    before = receipt.read_bytes()
+    with pytest.raises(FileExistsError):
+        qualify.run(args(directory, "restore"), FakeClient())
+    assert receipt.read_bytes() == before
+
+
 def test_persistent_restore_requires_observed_external_tokens_and_l2_reads(
     tmp_path, monkeypatch
 ):
