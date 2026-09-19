@@ -9,7 +9,7 @@ import pytest
 
 from runtime.entrypoint import command
 from runtime.launcher import ROOT, ConfigError, deployment_presets, resolve
-from runtime.packaging import payload_sources
+from runtime.packaging import audit_image_metadata, owned_environment, payload_sources
 
 
 def spark(**kwargs):
@@ -149,6 +149,32 @@ def test_profile_cli_and_entrypoint_accept_preset_selection():
 def test_presets_are_packaged_and_schema_checked():
     assert "presets.yaml" in payload_sources()
     assert deployment_presets()["glm53-spark-tp2"]["profile"] == "glm53-flash"
+
+
+def test_foundation_defaults_are_below_presets_and_user_environment():
+    default = resolve("glm53-flash", env={})
+    assert default.environment["NCCL_NET_PLUGIN"] == "spcx"
+    assert default.environment_origins["NCCL_NET_PLUGIN"] == "platform:foundation"
+    assert spark().environment["NCCL_NET_PLUGIN"] == "none"
+    for value in ("spcx", "none", "operator-plugin"):
+        plan = resolve(
+            "glm53-flash",
+            "rtx-pro-6000-pcie",
+            preset="glm53-spark-tp2",
+            env={"NCCL_NET_PLUGIN": value},
+        )
+        assert plan.environment["NCCL_NET_PLUGIN"] == value
+        assert plan.environment_origins["NCCL_NET_PLUGIN"] == "environment"
+
+
+def test_image_audit_covers_every_preset_environment_name():
+    for preset in deployment_presets().values():
+        for name in preset["environment"]:
+            assert name in owned_environment()
+            with pytest.raises(ConfigError, match="profile-owned"):
+                audit_image_metadata(
+                    {"Id": "sha256:" + "1" * 64, "Config": {"Env": [f"{name}=baked"]}}
+                )
 
 
 @pytest.mark.parametrize("amount", ["0", "-1"])

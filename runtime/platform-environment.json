@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "source_image": "nvcr.io/nvidia/pytorch@sha256:33ef5fc15e8937602d64022209cdb2777b32dadf742f41332023d946041b3c14",
+  "environment": {
+    "NCCL_NET_PLUGIN": "spcx"
+  }
+}

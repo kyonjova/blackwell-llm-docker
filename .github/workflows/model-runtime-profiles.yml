@@ -4,12 +4,22 @@ on:
   pull_request:
     paths:
       - runtime/**
+      - tools/jovian_wheel_runtime/prepare_runtime_foundation.py
+      - tools/jovian_wheel_runtime/build_runtime_image.py
+      - tools/jovian_wheel_runtime/Dockerfile.runtime
+      - tools/jovian_wheel_runtime/tests/test_runtime_foundation.py
+      - tools/jovian_wheel_runtime/tests/test_runtime_dockerfile.py
       - recipes/glm53/serve-*.sh
       - .github/workflows/model-runtime-profiles.yml
   push:
     branches: [main]
     paths:
       - runtime/**
+      - tools/jovian_wheel_runtime/prepare_runtime_foundation.py
+      - tools/jovian_wheel_runtime/build_runtime_image.py
+      - tools/jovian_wheel_runtime/Dockerfile.runtime
+      - tools/jovian_wheel_runtime/tests/test_runtime_foundation.py
+      - tools/jovian_wheel_runtime/tests/test_runtime_dockerfile.py
       - recipes/glm53/serve-*.sh
       - .github/workflows/model-runtime-profiles.yml
 
@@ -28,6 +38,7 @@ jobs:
           python -m venv .venv-profile-tests
           .venv-profile-tests/bin/pip install -r runtime/requirements.txt pytest ruff
           .venv-profile-tests/bin/python -m pytest -q runtime/tests
+          .venv-profile-tests/bin/python -m pytest -q tools/jovian_wheel_runtime/tests/test_runtime_foundation.py tools/jovian_wheel_runtime/tests/test_runtime_dockerfile.py
           .venv-profile-tests/bin/ruff check runtime
           .venv-profile-tests/bin/ruff format --check runtime
           bash -n runtime/lil-serve runtime/install.sh
