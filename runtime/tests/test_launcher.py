@@ -85,6 +85,8 @@ def test_all_profiles_are_cpu_resolvable(model, hardware):
     assert plan.values["host"] == "0.0.0.0"
     assert plan.values["moe-backend"] == "b12x"
     assert plan.values["kv-cache-dtype"] == "fp8"
+    assert plan.values["enable-prompt-tokens-details"] is True
+    assert "--enable-prompt-tokens-details" in plan.argv
     assert plan.environment["VLLM_USE_V2_MODEL_RUNNER"] == "1"
     assert plan.argv[:5] == [
         "/opt/venv/bin/python",
