@@ -18,7 +18,7 @@ defaults:
   model: local-inference-lab/GLM-5.3-Flash-NVFP4
   served-model-name: GLM-5.3-Flash-NVFP4
   tensor-parallel-size: 4
-  mode: off
+  mode: mtp
   prefill-compute-share: 0.4
   prefill-schedule-interval: 1
   max-parallel-prefills: 1

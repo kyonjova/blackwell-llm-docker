@@ -20,7 +20,7 @@ services:
       PORT: ${PORT:-8000}
       TP: '4'
       DCP: ${DCP:-1}
-      SPECULATOR: ${SPECULATOR:-off}
+      SPECULATOR: ${SPECULATOR:-mtp}
     volumes:
     - model-cache:/root/.cache/huggingface
     - runtime-cache:/cache

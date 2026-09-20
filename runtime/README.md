@@ -105,9 +105,10 @@ The [generated parameter table](generated/parameters.md) is rendered from the
 same profiles as the launch command. Its values describe configuration, not
 performance measurements. Source references are recorded inside each profile.
 
-- GLM: NVFP4 target; target MoE and dense backends explicitly B12X. Optional
-  MTP defaults to three proposals with the private NVFP4 draft vocabulary
-  head, Marlin draft MoE, and B12X draft attention. DFlash2 defaults to seven
+- GLM: NVFP4 target; target MoE and dense backends explicitly B12X. Serving
+  defaults to MTP with three proposals and the private NVFP4 draft vocabulary
+  head, Marlin draft MoE, and B12X draft attention. Use `--mode off` for
+  non-speculative serving. DFlash2 defaults to seven
   proposals from `local-inference-lab/GLM-5.3-Flash-DFlash2`, FLASH_ATTN draft
   attention and `auto` draft KV, retaining the MXFP8 checkpoint policy.
   Target KV defaults to FP8; `nvfp4_ds_mla` remains an explicit GLM option.
@@ -137,7 +138,9 @@ performance measurements. Source references are recorded inside each profile.
   require complete warmup with `-e JIT_MONITOR_MODE=error` or the native
   `--jit-monitor-mode error` argument.
 - Qwen: TP1 by default; TP2 is an explicit override. Preserve CPU PLE tables,
-  the BF16 target vocabulary head and private NVFP4 MTP copy. The 6,019-token
+  the BF16 target vocabulary head and private NVFP4 MTP copy. Image input is
+  enabled by default; use `--language-model-only` to omit the vision encoder
+  and reserve more memory for text serving. The 6,019-token
   scheduler budget is intentional preservation of the published Qwen recipe,
   not a replacement of the 4,096-token GLM/DeepSeek budget. Native generation
   configuration remains authoritative; benchmark temperature 1/top-p 0.95/
