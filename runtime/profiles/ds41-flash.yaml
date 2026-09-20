@@ -42,7 +42,6 @@ defaults:
   tokenizer-mode: deepseek_v41
   reasoning-parser: deepseek_v41
   tool-call-parser: deepseek_v41
-  enable-prompt-tokens-details: true
   enable-force-include-usage: true
   enable-request-id-headers: true
   default-chat-template-kwargs: {thinking: true, reasoning_effort: high}
