@@ -27,7 +27,7 @@ defaults:
   enable-flashinfer-autotune: false
   mm-encoder-tp-mode: data
   mm-processor-cache-gb: 0
-  language-model-only: true
+  language-model-only: false
   reasoning-parser: qwen3
   tool-call-parser: qwen3_xml
 environment:
