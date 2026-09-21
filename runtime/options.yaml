@@ -259,6 +259,12 @@
       "PREFILL_COMPUTE_HALF_LIFE"
     ]
   },
+  "max-num-prefill-tokens-per-step": {
+    "type": "integer",
+    "env": [
+      "MAX_NUM_PREFILL_TOKENS_PER_STEP"
+    ]
+  },
   "prefill-schedule-interval": {
     "type": "integer",
     "env": [

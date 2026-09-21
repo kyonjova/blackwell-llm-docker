@@ -946,6 +946,19 @@ def validate(values: dict, environment: dict, identifier: str) -> None:
                 ) from error
             if not math.isfinite(seconds) or seconds <= 0:
                 raise ConfigError("half-life must be positive and finite")
+    prefill_step_tokens = values.get("max-num-prefill-tokens-per-step")
+    if prefill_step_tokens is not None:
+        if not isinstance(prefill_step_tokens, int) or prefill_step_tokens < 0:
+            raise ConfigError("max-num-prefill-tokens-per-step must be nonnegative")
+        if prefill_step_tokens > values["max-num-batched-tokens"]:
+            raise ConfigError(
+                "max-num-prefill-tokens-per-step cannot exceed "
+                "max-num-batched-tokens"
+            )
+        if prefill_step_tokens > 0 and share is None:
+            raise ConfigError(
+                "max-num-prefill-tokens-per-step requires prefill-compute-share"
+            )
     for key in ("max-parallel-prefills", "decode-refill-target"):
         if (
             key in values
