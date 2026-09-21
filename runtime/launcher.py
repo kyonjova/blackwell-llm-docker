@@ -599,6 +599,37 @@ def resolve(
             "remote code follows selected checkpoint",
         )
 
+    if identifier == "qwen38-flash-next":
+        context_length = values["max-model-len"]
+        base_context_length = 262144
+        if context_length > base_context_length and "hf-overrides" not in values:
+            if context_length > 1048576:
+                raise ConfigError(
+                    "Qwen3.8 Flash Next contexts above 1048576 tokens require "
+                    "an explicit HF_OVERRIDES configuration"
+                )
+            # The checkpoint advertises 262144 positions. Extend its text
+            # config before vLLM constructs both target and MTP draft models.
+            factor = 2 if context_length <= 524288 else 4
+            derive(
+                "hf-overrides",
+                {
+                    "text_config": {
+                        "max_position_embeddings": context_length,
+                        "rope_parameters": {
+                            "mrope_interleaved": True,
+                            "mrope_section": [11, 11, 10],
+                            "partial_rotary_factor": 0.25,
+                            "rope_theta": 10000000,
+                            "rope_type": "yarn",
+                            "factor": factor,
+                            "original_max_position_embeddings": base_context_length,
+                        },
+                    }
+                },
+                f"Qwen3.8 YaRN for {context_length} tokens",
+            )
+
     if explicit_env.get("EXTRA_VLLM_ARGS"):
         raise ConfigError(
             "EXTRA_VLLM_ARGS is ambiguous shell text; pass native CLI arguments after --"
