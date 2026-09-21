@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # build-spark-cu133.sh -- aarch64/sm_121 (DGX Spark) builder for the CUDA 13.3
-# Jovian Judgement runtime, retargeting upstream's cu133 lineage in place:
+# Jovian Judgement / Karmic Kraken runtime, retargeting upstream's cu133
+# lineage in place:
 #
 #   phase 1  foundation   Dockerfile.kimi-k3-cu133-torch213-base
 #                         NGC PyTorch container -> patched NCCL 2.31.2, torch
@@ -22,6 +23,11 @@
 #
 # STATUS: DRAFT. --dry-run (patch application + shape guards) is validated;
 # the docker phases have not yet run on a Spark. First cold build is hours.
+#
+# Karmic Kraken (2026-09-19): profiles pinning vllm dev/karmic-kraken or
+# integration/karmic-kraken-beta need PATCH_DEEPGEMM_LIBDW=on (KK vendors
+# vllm-project/DeepGEMM, whose python_api.cpp includes elfutils/libdwfl.h and
+# the cu133 overlay runs no apt-get). See build-kk-cu133-example.env.
 set -euo pipefail
 
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
@@ -73,7 +79,7 @@ if [[ -z "${ENV_FILE}" ]]; then
   _default_env="${SCRIPT_DIR}/build.env"
   [[ -f "${_default_env}" ]] && ENV_FILE="${_default_env}"
 fi
-ALLOWED_KEYS=" ALLOW_FOREIGN_ARCH LOGGING PATCH_NCCL_GENCODE PATCH_VLLM_FA_LAYERS PATCH_VLLM_WHEEL_TAGS RUNTIME_FOUNDATION BASE_IMAGE LMCACHE_BUILD_VERSION NCCL4PY_VERSION VLLM_PRS VLLM_UPSTREAM_BASE VLLM_MERGE_HEADS VLLM_INTEGRATION_LOCK_SHA256 B12X_PRS B12X_UPSTREAM_BASE B12X_MERGE_HEADS B12X_INTEGRATION_LOCK_SHA256 LMCACHE_PRS LMCACHE_UPSTREAM_BASE LMCACHE_MERGE_HEADS LMCACHE_INTEGRATION_LOCK_SHA256 B12X_COMMIT B12X_INTEGRATION_TREE B12X_PATCH_FILE B12X_PATCH_SHA256 B12X_PIN B12X_REF B12X_REPO CUTLASS_DSL_VERSION DEEPGEMM_COMMIT DEEPGEMM_REPO DOCKER_COMMIT EXLLAMAV3_COMMIT EXLLAMAV3_REPO FLASHINFER_COMMIT FLASHINFER_REF FLASHINFER_REPO FLASHINFER_VERSION FLASHINFER_WHEEL_IMAGE FOUNDATION_IMAGE GH_TOKEN IMAGE IMAGE_REPO IMAGE_TAG INSTANTTENSOR_COMMIT INSTANTTENSOR_LIBAIO_COMMIT INSTANTTENSOR_LIBAIO_REPO INSTANTTENSOR_LIBAIO_TREE INSTANTTENSOR_REPO INSTANTTENSOR_VERSION LMCACHE_COMMIT LMCACHE_INTEGRATION_TREE LMCACHE_PATCH_FILE LMCACHE_PATCH_SHA256 LMCACHE_REF LMCACHE_REPO MAX_JOBS NCCL_COMMIT NCCL_REF NCCL_REPO NCCL_VERSION NVCC_THREADS NVIDIA_PYTORCH_IMAGE PATCH_EXLLAMAV3_AVX PATCH_GPU_ARCH PATCH_MAX_JOBS PIN_PREFLIGHT PROFILE_NAME PYTORCH_COMMIT PYTORCH_REF PYTORCH_REPO PYTORCH_VERSION RELEASE_DATE TORCHVISION_COMMIT TORCHVISION_REF TORCHVISION_REPO TORCHVISION_VERSION TRITON_KERNELS_COMMIT TRITON_KERNELS_REPO VLLM_COMMIT VLLM_INTEGRATION_TREE VLLM_PACKAGE_VERSION VLLM_PATCH_FILE VLLM_PATCH_SHA256 VLLM_PIN VLLM_REF VLLM_REPO VLLM_REQUIRED_LAUNCHERS XGRAMMAR_COMMIT XGRAMMAR_REF XGRAMMAR_REPO XGRAMMAR_VERSION "
+ALLOWED_KEYS=" ALLOW_FOREIGN_ARCH LOGGING PATCH_DEEPGEMM_LIBDW PATCH_NCCL_GENCODE PATCH_VLLM_FA_LAYERS PATCH_VLLM_WHEEL_TAGS RUNTIME_FOUNDATION BASE_IMAGE LMCACHE_BUILD_VERSION NCCL4PY_VERSION VLLM_PRS VLLM_UPSTREAM_BASE VLLM_MERGE_HEADS VLLM_INTEGRATION_LOCK_SHA256 B12X_PRS B12X_UPSTREAM_BASE B12X_MERGE_HEADS B12X_INTEGRATION_LOCK_SHA256 LMCACHE_PRS LMCACHE_UPSTREAM_BASE LMCACHE_MERGE_HEADS LMCACHE_INTEGRATION_LOCK_SHA256 B12X_COMMIT B12X_INTEGRATION_TREE B12X_PATCH_FILE B12X_PATCH_SHA256 B12X_PIN B12X_REF B12X_REPO CUTLASS_DSL_VERSION DEEPGEMM_COMMIT DEEPGEMM_REPO DOCKER_COMMIT EXLLAMAV3_COMMIT EXLLAMAV3_REPO FLASHINFER_COMMIT FLASHINFER_REF FLASHINFER_REPO FLASHINFER_VERSION FLASHINFER_WHEEL_IMAGE FOUNDATION_IMAGE GH_TOKEN IMAGE IMAGE_REPO IMAGE_TAG INSTANTTENSOR_COMMIT INSTANTTENSOR_LIBAIO_COMMIT INSTANTTENSOR_LIBAIO_REPO INSTANTTENSOR_LIBAIO_TREE INSTANTTENSOR_REPO INSTANTTENSOR_VERSION LMCACHE_COMMIT LMCACHE_INTEGRATION_TREE LMCACHE_PATCH_FILE LMCACHE_PATCH_SHA256 LMCACHE_REF LMCACHE_REPO MAX_JOBS NCCL_COMMIT NCCL_REF NCCL_REPO NCCL_VERSION NVCC_THREADS NVIDIA_PYTORCH_IMAGE PATCH_EXLLAMAV3_AVX PATCH_GPU_ARCH PATCH_MAX_JOBS PIN_PREFLIGHT PROFILE_NAME PYTORCH_COMMIT PYTORCH_REF PYTORCH_REPO PYTORCH_VERSION RELEASE_DATE TORCHVISION_COMMIT TORCHVISION_REF TORCHVISION_REPO TORCHVISION_VERSION TRITON_KERNELS_COMMIT TRITON_KERNELS_REPO VLLM_COMMIT VLLM_INTEGRATION_TREE VLLM_PACKAGE_VERSION VLLM_PATCH_FILE VLLM_PATCH_SHA256 VLLM_PIN VLLM_REF VLLM_REPO VLLM_REQUIRED_LAUNCHERS XGRAMMAR_COMMIT XGRAMMAR_REF XGRAMMAR_REPO XGRAMMAR_VERSION "
 if [[ -n "${ENV_FILE}" ]]; then
   [[ -f "${ENV_FILE}" ]] || die "env file not found: ${ENV_FILE}"
   grep -qU $'\r' "${ENV_FILE}" && die "env file has CRLF line endings"
@@ -135,10 +141,13 @@ export XGRAMMAR_REPO="${XGRAMMAR_REPO:-https://github.com/mlc-ai/xgrammar.git}"
 export XGRAMMAR_REF="${XGRAMMAR_REF:-v0.2.5}"
 export XGRAMMAR_COMMIT="${XGRAMMAR_COMMIT:-2ea71da4ccb997a06928c9fb69b99f330da56697}"
 export XGRAMMAR_VERSION="${XGRAMMAR_VERSION:-0.2.5}"
-# FlashInfer wheels
-export FLASHINFER_REPO="${FLASHINFER_REPO:-https://github.com/voipmonitor/flashinfer.git}"
-export FLASHINFER_REF="${FLASHINFER_REF:-integration/main-pr4393-pcie-ipc-qualified-20260807}"
-export FLASHINFER_COMMIT="${FLASHINFER_COMMIT:-1ac6942776b383c6b03c7a5805a22e72a3e3349f}"
+# FlashInfer wheels. local-inference-lab/flashinfer carries the historical
+# voipmonitor pin (1ac6942) and the LIL cu133 community branch
+# (community/jovian-judgement-cu133-sm120 = 1ac6942 + DSV4 Vision sm120 fixes);
+# the published cu134 channel uses community/jovian-judgement-cu134-sm120.
+export FLASHINFER_REPO="${FLASHINFER_REPO:-https://github.com/local-inference-lab/flashinfer.git}"
+export FLASHINFER_REF="${FLASHINFER_REF:-community/jovian-judgement-cu133-sm120}"
+export FLASHINFER_COMMIT="${FLASHINFER_COMMIT:-803c4664f4771ddc418f20a57f752469a237a825}"
 export FLASHINFER_VERSION="${FLASHINFER_VERSION:-0.6.18+cu133}"
 export CUTLASS_DSL_VERSION="${CUTLASS_DSL_VERSION:-4.6.2}"
 # Overlay sources (release pins go in the profile; these are fallbacks)
@@ -150,8 +159,12 @@ export LMCACHE_REPO="${LMCACHE_REPO:-https://github.com/local-inference-lab/LMCa
 export LMCACHE_REF="${LMCACHE_REF:-${LMCACHE_COMMIT:-}}"; export LMCACHE_COMMIT="${LMCACHE_COMMIT:-}"
 export LMCACHE_BUILD_VERSION="${LMCACHE_BUILD_VERSION:-0.5.2+jj.${PROFILE_NAME//-/.}}"
 for c in VLLM B12X LMCACHE; do for t in PATCH_FILE PATCH_SHA256 INTEGRATION_TREE PRS UPSTREAM_BASE MERGE_HEADS INTEGRATION_LOCK_SHA256; do k="${c}_${t}"; export "${k}=${!k:-}"; done; done
-export INSTANTTENSOR_REPO="${INSTANTTENSOR_REPO:-https://github.com/voipmonitor/InstantTensor.git}"
-export INSTANTTENSOR_COMMIT="${INSTANTTENSOR_COMMIT:-49b4010afc1cae0441e71fe0b0bffc24fa05e932}"
+# InstantTensor: local-inference-lab/InstantTensor main (the published cu134
+# channel's pin, 0.1.9). The historical voipmonitor pin 49b4010 is also on
+# this repo; both carry libaio submodule 1b18bfa, so the LIBAIO pins below
+# hold for either.
+export INSTANTTENSOR_REPO="${INSTANTTENSOR_REPO:-https://github.com/local-inference-lab/InstantTensor.git}"
+export INSTANTTENSOR_COMMIT="${INSTANTTENSOR_COMMIT:-95d4729b6d6a991bb8de61877147a9d9d9100b23}"
 export INSTANTTENSOR_VERSION="${INSTANTTENSOR_VERSION:-}"
 export INSTANTTENSOR_LIBAIO_REPO="${INSTANTTENSOR_LIBAIO_REPO:-https://github.com/sailfishos-mirror/libaio.git}"
 export INSTANTTENSOR_LIBAIO_COMMIT="${INSTANTTENSOR_LIBAIO_COMMIT:-1b18bfafc6a2f7b9fa2c6be77a95afed8b7be448}"
@@ -185,7 +198,7 @@ export BASE_IMAGE="${BASE_IMAGE:-${FOUNDATION_IMAGE}}"
 export VLLM_PACKAGE_VERSION="${VLLM_PACKAGE_VERSION:-0.26.1rc0+${PROFILE_NAME//-/.}.cu133.sm121.${stamp}}"
 
 # --------------------------------------------------------------- patch toggles
-for t in PATCH_GPU_ARCH PATCH_MAX_JOBS PATCH_EXLLAMAV3_AVX PATCH_NCCL_GENCODE PATCH_VLLM_FA_LAYERS PATCH_VLLM_WHEEL_TAGS; do
+for t in PATCH_GPU_ARCH PATCH_MAX_JOBS PATCH_EXLLAMAV3_AVX PATCH_NCCL_GENCODE PATCH_VLLM_FA_LAYERS PATCH_VLLM_WHEEL_TAGS PATCH_DEEPGEMM_LIBDW; do
   v="${!t:-auto}"; case "${v}" in on|off|auto) ;; *) die "${t} must be on, off, or auto: ${v}" ;; esac
   printf -v "${t}" '%s' "${v}"; export "${t}"
 done
@@ -197,6 +210,7 @@ done
 for f in "${D_FOUND}" "${D_FI}" "${D_OVER}"; do
   ls "${f}".pre-spark.* >/dev/null 2>&1 && die "leftover backup(s) for ${f} from an interrupted run; restore with: git checkout -- ${f} && rm -f ${f}.pre-spark.*"
   grep -q "exllamav3: CPU all-reduce is x86-only" "${f}" && die "${f} is already patched (interrupted run); restore with: git checkout -- ${f}"
+  grep -q "karmic-kraken: DeepGEMM DWARF headers" "${f}" && die "${f} already carries the libdw-dev injection (interrupted run); restore with: git checkout -- ${f}"
   grep -qE "12\.1a|=121a\b|12\.1f" "${f}" && die "${f} already carries sm_121 rewrites (interrupted run); restore with: git checkout -- ${f}"
 done
 ls "${A_PIP}".pre-spark.* >/dev/null 2>&1 && die "leftover backup for ${A_PIP}; restore with: git checkout -- ${A_PIP} && rm -f ${A_PIP}.pre-spark.*"
@@ -379,6 +393,37 @@ else:
     print("injected vllm-jovian wheel-tag cleanup into compose_source", file=sys.stderr)
 PYEOF
 
+# libdw-dev for DeepGEMM: karmic-kraken's cmake/external_projects/deepgemm.cmake
+# vendors vllm-project/DeepGEMM @ ad1f172 (jovian-judgement used deepseek-ai @
+# 8b1392b), whose csrc/python_api.cpp includes elfutils/libdwfl.h. Luke's cu134
+# wheel builder gained `apt-get install libdw-dev` for exactly this (vLLM
+# 6027a37, KK wheel run 35269892481 failed on the missing header). The cu133
+# overlay runs no apt-get at all, so inject one RUN before the DeepGEMM stage;
+# that precedes both the standalone `pip install .` of DEEPGEMM_COMMIT and the
+# vLLM extension cmake (which compiles the vendored copy too, then drops it via
+# the _deps filter). Harmless on JJ pins (auto) -- one small apt layer.
+python3 - "${D_OVER}" "${PATCH_DEEPGEMM_LIBDW}" "${PATCH_REPORT}" <<'PYEOF'
+import pathlib, sys
+path, tog, report = pathlib.Path(sys.argv[1]), sys.argv[2], pathlib.Path(sys.argv[3])
+text = path.read_text()
+anchor = "# DeepGEMM is the qualified dense linear backend for DeepSeek W4A8 serving.\n"
+inject = ("# karmic-kraken: DeepGEMM DWARF headers (elfutils/libdwfl.h)\n"
+          "RUN apt-get update \\\n"
+          " && apt-get install --yes --no-install-recommends libdw-dev \\\n"
+          " && rm -rf /var/lib/apt/lists/*\n\n")
+cnt = text.count(anchor)
+if tog == "off":
+    print("PATCH_DEEPGEMM_LIBDW=off: skipped", file=sys.stderr)
+elif cnt == 0 and tog == "auto":
+    print("PATCH_DEEPGEMM_LIBDW(auto): DeepGEMM stage anchor absent in overlay; skipping", file=sys.stderr)
+else:
+    assert cnt == 1, f"DeepGEMM stage anchor found {cnt} times"
+    path.write_text(text.replace(anchor, inject + anchor))
+    print("injected libdw-dev apt step before the DeepGEMM stage (overlay)", file=sys.stderr)
+    with report.open("a") as fh:
+        fh.write(f"PATCH_DEEPGEMM_LIBDW: 1 RUN injected in {path}\n")
+PYEOF
+
 # ------------------------------------------------------------- pin pre-flight
 # The overlay verifies each source's git TREE hash (write-tree after checkout
 # and patch). For an unpatched pin that is the commit's tree, which the GitHub
@@ -529,14 +574,39 @@ if [[ "${PHASE}" == all || "${PHASE}" == overlay ]]; then
   build "${args[@]}"
 
   # ------------------------------------------------------------ verification
-  docker run --rm --entrypoint python "${IMAGE}" - <<'PY'
-import platform, torch, importlib.util
+  # FlashKDA (vllm._flashkda_C) is the GLM KDA prefill/decode extension on the
+  # KK line and an optional CMake target: a build that silently skipped it
+  # would still "pass" but fall back to triton at serve time. b12x.comm.roce is
+  # RoCEnante; deep_gemm must resolve either from site-packages (the overlay's
+  # standalone DEEPGEMM_COMMIT install) or the vendored fallback.
+  # -i is required: without it docker does not attach the heredoc to the
+  # container's stdin, `python -` reads EOF, runs NOTHING, and exits 0 -- the
+  # asserts would silently never execute (false-green gate). Belt and braces:
+  # capture stdout and require the 'image OK' marker so a silently-skipped
+  # verification can never read as success. stderr (assert tracebacks) passes
+  # straight through to the console; set -e + the if-guard catch failure.
+  _verify_log="$(mktemp)"
+  if ! docker run -i --rm --entrypoint python "${IMAGE}" - > "${_verify_log}" <<'PY'
+import platform, torch, importlib, importlib.util
 assert platform.machine() == "aarch64", platform.machine()
 assert torch.__version__.startswith("2.13.0"), torch.__version__
 assert torch.version.cuda.startswith("13.3"), torch.version.cuda
 assert importlib.util.find_spec("b12x") is not None, "b12x missing"
-print("image OK: aarch64, torch", torch.__version__, "cuda", torch.version.cuda)
+importlib.import_module("vllm._flashkda_C")
+importlib.import_module("b12x.comm.roce")
+try:
+    importlib.import_module("deep_gemm")
+except ImportError:
+    importlib.import_module("vllm.third_party.deep_gemm")
+print("image OK: aarch64, torch", torch.__version__, "cuda", torch.version.cuda,
+      "| flashkda, b12x.comm.roce, deep_gemm importable")
 PY
+  then
+    die "in-image python verification failed (see traceback above)"
+  fi
+  grep -q 'image OK' "${_verify_log}" || die "in-image python verification produced no 'image OK' line (asserts skipped or failed)"
+  sed 's/^/  /' "${_verify_log}"
+  rm -f "${_verify_log}"
   for launcher in ${VLLM_REQUIRED_LAUNCHERS}; do
     docker run --rm --entrypoint test "${IMAGE}" -f "/usr/local/bin/${launcher}" || die "required launcher missing from image: ${launcher}"
   done
@@ -595,7 +665,7 @@ PY
       printf 'exllamav3 aarch64 source stub: injected into the overlay build\n'
       printf 'pip-check allowlist: lmcache version token rewritten to %s\n' "${LMCACHE_BUILD_VERSION}"
       printf '```\n\n## Verification (executed by this wrapper, all passed)\n\n'
-      printf -- '- In-image python asserts: aarch64, torch 2.13.0, CUDA 13.3, `b12x` importable\n'
+      printf -- '- In-image python asserts: aarch64, torch 2.13.0, CUDA 13.3, `b12x`, `vllm._flashkda_C`, `b12x.comm.roce`, `deep_gemm` importable\n'
       printf -- '- Upstream runtime contract (in-build): verify_deepseek_infernal_cu133_runtime.py PASS; pip-check allowlist matched\n'
       printf -- '- Required launchers present: `%s`\n' "${VLLM_REQUIRED_LAUNCHERS:-none configured}"
       printf -- '- Patched NCCL: `/opt/local-inference/nccl/lib/libnccl.so.%s`\n' "${NCCL_VERSION}"
