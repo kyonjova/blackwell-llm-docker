@@ -102,6 +102,21 @@ def test_ds4_ram_and_disk_use_one_cpu_only_service(identifier):
     assert ram.cache_service.environment["CUDA_VISIBLE_DEVICES"] == ""
 
 
+def test_native_filesystem_cache_exposes_explicit_direct_io_control():
+    default = resolve("qwen38-flash-next", env={"LMCACHE_MODE": "disk"})
+    direct = resolve(
+        "qwen38-flash-next",
+        env={"LMCACHE_MODE": "disk", "LMCACHE_L2_ODIRECT": "1"},
+    )
+
+    def adapter(plan):
+        index = plan.cache_service.argv.index("--l2-adapter")
+        return json.loads(plan.cache_service.argv[index + 1])
+
+    assert adapter(default)["use_odirect"] is False
+    assert adapter(direct)["use_odirect"] is True
+
+
 def test_qwen_external_cache_preserves_scheduler_and_exact_recurrent_state():
     plan = resolve("qwen38-flash-next", env={"CACHE_MODE": "lmcache"})
     assert plan.values["max-num-batched-tokens"] == 6019
@@ -115,6 +130,26 @@ def test_qwen_external_cache_preserves_scheduler_and_exact_recurrent_state():
     assert plan.cache_service.identity_required
     assert plan.cache_service.environment["CUDA_VISIBLE_DEVICES"] == ""
     assert plan.values["cache-gpu-workers"] == 1
+
+
+@pytest.mark.parametrize(
+    ("tp", "dcp"), [(2, 1), (2, 2), (4, 1), (4, 2), (4, 4)]
+)
+def test_qwen_atomic_cache_supports_tp_dcp_topologies(tp, dcp):
+    plan = resolve(
+        "qwen38-flash-next",
+        env={
+            "CACHE_MODE": "lmcache",
+            "TP": str(tp),
+            "DCP": str(dcp),
+        },
+    )
+    assert plan.values["recurrent-checkpoint-policy"] == "request_boundaries"
+    assert (
+        plan.values["kv-transfer-config"]["kv_connector"]
+        == "LMCacheRecurrentCheckpointConnector"
+    )
+    assert plan.values["cache-gpu-workers"] == tp
 
 
 @pytest.mark.parametrize("identifier", ["glm53-flash", "qwen38-flash-next"])
@@ -209,7 +244,6 @@ def test_qwen_native_cpu_cache_rejects_incompatible_contract(extra, error):
     [
         {"recurrent-checkpoint-policy": "aligned"},
         {"prefix-cache-retention-interval": 4096},
-        {"tensor-parallel-size": 2, "decode-context-parallel-size": 2},
     ],
 )
 def test_qwen_rejects_incompatible_checkpoint_contract(extra):

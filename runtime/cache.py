@@ -202,8 +202,6 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
             raise ConfigError(
                 "Qwen external cache requires request-boundary checkpoints"
             )
-        if values["decode-context-parallel-size"] != 1:
-            raise ConfigError("Qwen external cache requires DCP1")
         if values.get("prefix-cache-retention-interval", 0) not in {0, "auto"}:
             raise ConfigError(
                 "Qwen external cache uses exact boundaries, not periodic retention"
@@ -375,7 +373,7 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
             "type": "fs_native",
             "base_path": namespace,
             "num_workers": values["cache-l2-workers"],
-            "use_odirect": False,
+            "use_odirect": values["cache-l2-odirect"],
             "max_capacity_gb": values["cache-l2-gib"],
         }
         if glm:
