@@ -356,6 +356,16 @@ during `--print-config`. GLM DFlash preserves the target scheduler budget while
 reserving additional input rows for draft verification. Existing LMCache
 transport, allocation and checkpoint implementations remain authoritative.
 
+For a local model directory, the first external-cache start hashes the weight
+and configuration files to keep stored cache objects tied to their exact
+checkpoint. Later starts reuse those file digests from
+`/cache/checkpoint-identities` when the file list, sizes, inodes and modification
+metadata are unchanged. Mount `/cache` persistently to avoid repeating the
+full read after a container restart. Set
+`LIL_CHECKPOINT_IDENTITY_CACHE_DIR=/path/to/writable/cache` to place the small
+identity records elsewhere. Missing, invalid or stale records cause a full
+content hash; they never disable checkpoint identity checks.
+
 For the GLM Spark TP2/DCP2 recipe with a 3072-token scheduling budget, replace
 `CACHE_MODE=vram` with the following environment arguments:
 

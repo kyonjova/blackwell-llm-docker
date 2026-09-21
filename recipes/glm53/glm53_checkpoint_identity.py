@@ -13,16 +13,100 @@ import argparse
 import hashlib
 import json
 import os
+import tempfile
 from pathlib import Path
 
 
-def local_checkpoint_identity(directory: Path) -> str:
-    """Hash local safetensors weights and model/tokenizer configuration.
+_IDENTITY_CACHE_FORMAT = "local-checkpoint-identity/v1"
 
-    JSON, Jinja and tokenizer assets are included conservatively. Reading does
-    not modify the checkpoint. A checkpoint that changes during this operation
-    is rejected; callers must also keep it immutable during model loading and
-    serving. Missing weights or unsupported weight formats are errors.
+
+def _identity_cache_path(directory: Path) -> Path | None:
+    """Use the persistent runtime cache when one is available and writable."""
+    configured = os.environ.get("LIL_CHECKPOINT_IDENTITY_CACHE_DIR")
+    root = Path(configured) if configured else Path("/cache/checkpoint-identities")
+    if root.resolve() == directory:
+        return None
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    key = hashlib.sha256(os.fsencode(directory)).hexdigest()
+    return root / f"{key}.json"
+
+
+def _cached_digests(
+    cache_path: Path | None, directory: Path, metadata: list[list[object]]
+) -> list[str] | None:
+    if cache_path is None:
+        return None
+    try:
+        cached = json.loads(cache_path.read_text())
+    except (OSError, ValueError):
+        return None
+    if (
+        not isinstance(cached, dict)
+        or cached.get("format") != _IDENTITY_CACHE_FORMAT
+        or cached.get("directory") != str(directory)
+        or cached.get("metadata") != metadata
+    ):
+        return None
+    digests = cached.get("digests")
+    if not isinstance(digests, list) or len(digests) != len(metadata):
+        return None
+    if any(
+        not isinstance(digest, str)
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+        for digest in digests
+    ):
+        return None
+    return digests
+
+
+def _write_cached_digests(
+    cache_path: Path | None,
+    directory: Path,
+    metadata: list[list[object]],
+    digests: list[str],
+) -> None:
+    if cache_path is None:
+        return
+    payload = {
+        "format": _IDENTITY_CACHE_FORMAT,
+        "directory": str(directory),
+        "metadata": metadata,
+        "digests": digests,
+    }
+    temporary_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", dir=cache_path.parent, prefix="identity-", delete=False
+        ) as stream:
+            temporary_path = stream.name
+            json.dump(payload, stream, separators=(",", ":"))
+        os.replace(temporary_path, cache_path)
+        temporary_path = None
+    except OSError:
+        # Cache persistence is an optimization; identity verification still
+        # succeeds by hashing the checkpoint on the next process start.
+        pass
+    finally:
+        if temporary_path is not None:
+            try:
+                os.unlink(temporary_path)
+            except OSError:
+                pass
+
+
+def local_checkpoint_identity(directory: Path) -> str:
+    """Identify local safetensors weights and model/tokenizer configuration.
+
+    JSON, Jinja and tokenizer assets are included conservatively. File digests
+    are reused only when the selected file list and metadata still match a
+    previously verified checkpoint. Reading does not modify the checkpoint. A
+    checkpoint that changes during this operation is rejected; callers must
+    also keep it immutable during model loading and serving. Missing weights
+    or unsupported weight formats are errors.
     """
     directory = directory.resolve(strict=True)
     if not directory.is_dir():
@@ -59,16 +143,26 @@ def local_checkpoint_identity(directory: Path) -> str:
         )
 
     before = {path: path.stat() for path in selected}
-    manifest: list[tuple[str, int, str]] = []
-    for path in selected:
-        with path.open("rb") as stream:
-            digest = hashlib.file_digest(stream, "sha256").hexdigest()
-        manifest.append((path.name, before[path].st_size, digest))
+    metadata = [[path.name, list(content_metadata(before[path]))] for path in selected]
+    cache_path = _identity_cache_path(directory)
+    digests = _cached_digests(cache_path, directory, metadata)
+    cache_hit = digests is not None
+    if digests is None:
+        digests = []
+        for path in selected:
+            with path.open("rb") as stream:
+                digests.append(hashlib.file_digest(stream, "sha256").hexdigest())
     if files() != selected or any(
         content_metadata(path.stat()) != content_metadata(before[path])
         for path in selected
     ):
         raise ValueError("Checkpoint files changed while their identity was computed")
+    if not cache_hit:
+        _write_cached_digests(cache_path, directory, metadata, digests)
+    manifest = [
+        (path.name, before[path].st_size, digest)
+        for path, digest in zip(selected, digests)
+    ]
     encoded = json.dumps(manifest, separators=(",", ":")).encode()
     return hashlib.sha256(b"glm53-local-checkpoint-v1\0" + encoded).hexdigest()
 
