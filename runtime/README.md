@@ -66,6 +66,21 @@ allocator retries with this tight memory budget.
 - Qwen TP2: `PRESET=qwen38-tp2`; CPU PLE placement and MTP defaults still come
   from the Qwen model profile. `PROFILE=qwen38-flash-next TP=2` is equivalent.
 
+For the Qwen checkpoint's 524,288-token context, set
+`MAX_MODEL_LEN=524288`. The Qwen profile then supplies the YaRN factor-two
+text configuration to both the target and MTP draft model. The ordinary
+262,144-token setting keeps the checkpoint's original positional configuration.
+An explicit `HF_OVERRIDES` JSON value takes precedence over the derived YaRN
+settings; use it only when the selected checkpoint needs different RoPE values.
+
+```bash
+docker run -d --name qwen38-yarn512k --init --gpus '"device=0,1"' \
+  --network host --ipc host --shm-size 32g \
+  -v model-cache:/root/.cache/huggingface -v qwen38-runtime:/cache \
+  -e PRESET=qwen38-tp2 -e MAX_MODEL_LEN=524288 -e PORT=8000 \
+  ghcr.io/local-inference-lab/vllm:karmic-kraken-beta
+```
+
 Explicit settings, environment and native arguments take precedence over preset
 defaults. A preset cannot be combined with a different architecture's profile.
 Credentials and host GPU selection are never stored in presets.
