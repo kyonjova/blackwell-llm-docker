@@ -27,6 +27,7 @@ defaults:
   kv-cache-dtype: fp8
   load-format: instanttensor
   enable-prefix-caching: true
+  enable-prompt-tokens-details: true
   enable-chunked-prefill: true
   enable-auto-tool-choice: true
   cache-mode: vram
