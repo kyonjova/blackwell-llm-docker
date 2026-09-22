@@ -282,7 +282,7 @@ def channel_config(config: dict, name: str) -> dict:
     return selected
 
 
-def resolve(config_path: Path, output: Path, name: str = "main") -> dict:
+def resolve(config_path: Path, output: Path, name: str = "karmic-kraken") -> dict:
     config = channel_config(json.loads(config_path.read_text()), name)
     if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", config["channel"]):
         raise ValueError("invalid channel name")
@@ -436,7 +436,7 @@ def main() -> None:
     resolver = commands.add_parser("resolve")
     resolver.add_argument("--config", type=Path, required=True)
     resolver.add_argument("--output", type=Path, required=True)
-    resolver.add_argument("--channel", default="main")
+    resolver.add_argument("--channel", default="karmic-kraken")
     matrix_parser = commands.add_parser("resolve-matrix")
     matrix_parser.add_argument("--config", type=Path, required=True)
     matrix_parser.add_argument("--output", type=Path, required=True)
