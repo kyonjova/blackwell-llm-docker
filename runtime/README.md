@@ -66,6 +66,21 @@ allocator retries with this tight memory budget.
 - Qwen TP2: `PRESET=qwen38-tp2`; CPU PLE placement and MTP defaults still come
   from the Qwen model profile. `PROFILE=qwen38-flash-next TP=2` is equivalent.
 
+For the Qwen checkpoint's 524,288-token context, set
+`MAX_MODEL_LEN=524288`. The Qwen profile then supplies the YaRN factor-two
+text configuration to both the target and MTP draft model. The ordinary
+262,144-token setting keeps the checkpoint's original positional configuration.
+An explicit `HF_OVERRIDES` JSON value takes precedence over the derived YaRN
+settings; use it only when the selected checkpoint needs different RoPE values.
+
+```bash
+docker run -d --name qwen38-yarn512k --init --gpus '"device=0,1"' \
+  --network host --ipc host --shm-size 32g \
+  -v model-cache:/root/.cache/huggingface -v qwen38-runtime:/cache \
+  -e PRESET=qwen38-tp2 -e MAX_MODEL_LEN=524288 -e PORT=8000 \
+  ghcr.io/local-inference-lab/vllm:karmic-kraken-beta
+```
+
 Explicit settings, environment and native arguments take precedence over preset
 defaults. A preset cannot be combined with a different architecture's profile.
 Credentials and host GPU selection are never stored in presets.
@@ -355,6 +370,16 @@ HF revisions are resolved and pinned before opening persistent storage, not
 during `--print-config`. GLM DFlash preserves the target scheduler budget while
 reserving additional input rows for draft verification. Existing LMCache
 transport, allocation and checkpoint implementations remain authoritative.
+
+For a local model directory, the first external-cache start hashes the weight
+and configuration files to keep stored cache objects tied to their exact
+checkpoint. Later starts reuse those file digests from
+`/cache/checkpoint-identities` when the file list, sizes, inodes and modification
+metadata are unchanged. Mount `/cache` persistently to avoid repeating the
+full read after a container restart. Set
+`LIL_CHECKPOINT_IDENTITY_CACHE_DIR=/path/to/writable/cache` to place the small
+identity records elsewhere. Missing, invalid or stale records cause a full
+content hash; they never disable checkpoint identity checks.
 
 For the GLM Spark TP2/DCP2 recipe with a 3072-token scheduling budget, replace
 `CACHE_MODE=vram` with the following environment arguments:

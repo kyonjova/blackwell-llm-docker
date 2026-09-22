@@ -113,6 +113,12 @@
       "MODEL_REVISION"
     ]
   },
+  "hf-overrides": {
+    "type": "object",
+    "env": [
+      "HF_OVERRIDES"
+    ]
+  },
   "safetensors-load-strategy": {
     "type": "string",
     "env": [

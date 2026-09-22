@@ -20,6 +20,50 @@ from runtime.packaging import (
 MODELS = ["glm53-flash", "ds4-flash", "ds4-vision", "ds41-flash", "qwen38-flash-next"]
 
 
+def test_qwen_extended_context_sets_target_and_draft_yarn_config():
+    default = resolve("qwen38-flash-next", env={})
+    assert default.values["max-model-len"] == 262144
+    assert "hf-overrides" not in default.values
+
+    extended = resolve("qwen38-flash-next", env={"MAX_MODEL_LEN": "524288"})
+    assert extended.values["hf-overrides"] == {
+        "text_config": {
+            "max_position_embeddings": 524288,
+            "rope_parameters": {
+                "mrope_interleaved": True,
+                "mrope_section": [11, 11, 10],
+                "partial_rotary_factor": 0.25,
+                "rope_theta": 10000000,
+                "rope_type": "yarn",
+                "factor": 2,
+                "original_max_position_embeddings": 262144,
+            },
+        }
+    }
+    assert "--hf-overrides" in extended.argv
+    assert extended.origins["hf-overrides"].startswith("derived:Qwen3.8 YaRN")
+
+    million = resolve("qwen38-flash-next", env={"MAX_MODEL_LEN": "1048576"})
+    assert (
+        million.values["hf-overrides"]["text_config"]["rope_parameters"]["factor"] == 4
+    )
+
+
+def test_qwen_extended_context_preserves_explicit_hf_overrides():
+    override = {"text_config": {"max_position_embeddings": 524288}}
+    plan = resolve(
+        "qwen38-flash-next",
+        env={"MAX_MODEL_LEN": "524288", "HF_OVERRIDES": json.dumps(override)},
+    )
+    assert plan.values["hf-overrides"] == override
+    assert plan.origins["hf-overrides"].startswith("environment:")
+
+
+def test_qwen_context_beyond_supported_yarn_factor_requires_override():
+    with pytest.raises(ConfigError, match="above 1048576"):
+        resolve("qwen38-flash-next", env={"MAX_MODEL_LEN": "1048577"})
+
+
 def test_generated_files_match_the_profile_registry():
     for model in MODELS:
         expected = (
@@ -321,6 +365,13 @@ def test_qwen_private_head_and_ple_are_preserved_without_glm_environment():
 def test_ds4_keeps_native_dense_selection_and_accepts_explicit_deepgemm():
     default = resolve("ds4-flash", env={})
     assert "linear-backend" not in default.values
+    assert default.environment["INSTANTTENSOR_BACKEND"] == "URING,AIO"
+    assert (
+        resolve("ds4-flash", env={"INSTANTTENSOR_BACKEND": "BUFFERED"}).environment[
+            "INSTANTTENSOR_BACKEND"
+        ]
+        == "BUFFERED"
+    )
     explicit = resolve("ds4-flash", env={}, argv=["--linear-backend", "deep_gemm"])
     assert explicit.values["linear-backend"] == "deep_gemm"
     assert explicit.environment["VLLM_B12X_MOE_FP4_FORCE_A16"] == "0"
