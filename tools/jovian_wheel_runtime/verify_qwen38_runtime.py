@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 EXPECTED_VERSIONS = {
     "huggingface-hub": "1.31.0",
@@ -134,6 +135,39 @@ def verify_b12x_package() -> None:
     print(f"b12x_source={contract['source']['commit']} payload=PASS")
 
 
+def verify_b12x_tuning_exchange() -> None:
+    """Exercise the installed vLLM/B12X host protocol without CUDA or a model."""
+    from b12x.preparation import TuningRequirement
+    from vllm.v1.worker.b12x_startup import (
+        B12xPreparationCoordinator,
+        _authorize_tuning,
+    )
+
+    rows = []
+    for rank in (0, 1):
+        contribution = TuningRequirement(
+            "package-probe", (0, 1), {"width": rank + 1}, float(rank + 1), rank
+        )
+        coordinator = SimpleNamespace(
+            _last_progress=SimpleNamespace(ready_tuning=(contribution,))
+        )
+        rows.append(
+            {
+                "global_rank": rank,
+                "tuning": B12xPreparationCoordinator._ready_tuning(coordinator),
+            }
+        )
+    (authorized,) = _authorize_tuning(rows, (0, 1))
+    winner = TuningRequirement(*authorized)
+    if (
+        winner.assignment.to_dict() != {"width": 1}
+        or winner.latency_us != 1.0
+        or winner.candidate_index != 0
+    ):
+        raise RuntimeError("vLLM/B12X tuning exchange changed the selected candidate")
+    print("b12x_tuning_exchange=PASS")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -170,6 +204,7 @@ def main() -> int:
             )
 
     verify_b12x_package()
+    verify_b12x_tuning_exchange()
     import flashinfer  # noqa: F401
     import flashinfer_jit_cache  # noqa: F401
     import lmcache  # noqa: F401
