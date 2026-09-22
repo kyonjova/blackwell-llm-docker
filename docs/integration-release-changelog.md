@@ -123,3 +123,8 @@ once later in the corresponding stable channel without maintaining two texts.
 The channel policy is defined alongside branch selection in
 `tools/jovian_wheel_runtime/community-channel.json`. vLLM and B12X fragments are
 mandatory for the `beta` and `karmic-kraken-beta` release channels.
+
+The runtime package verifier also exercises a two-rank tuning-result exchange
+between the installed vLLM and B12X packages. This CPU-only check rejects
+incompatible result schemas before image publication; it does not replace
+model startup, CUDA-graph or generation tests.
