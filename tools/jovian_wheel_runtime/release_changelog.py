@@ -164,39 +164,49 @@ def _uploaded_assets(release: dict) -> dict[str, dict]:
 
 def previous_publication(repository: str, assembly: dict) -> dict | None:
     """Find the most recent complete publication for the same release channel."""
+    releases = []
     page = 1
     while True:
-        releases = api(f"repos/{repository}/releases?per_page=100&page={page}")
-        for release in releases:
-            if (
-                release.get("draft")
-                or release.get("tag_name") == assembly["release_tag"]
-            ):
-                continue
-            assets = _uploaded_assets(release)
-            lock = assets.get("community-assembly.json") or assets.get(
-                f"community-assembly-{assembly['release_channel']}.json"
-            )
-            receipt_asset = assets.get("container-release.json")
-            if lock is None or receipt_asset is None:
-                continue
-            candidate = json.loads(asset_bytes(repository, lock))
-            receipt = json.loads(asset_bytes(repository, receipt_asset))
-            if (
-                candidate.get("release_channel") == assembly["release_channel"]
-                and receipt.get("status") == "qualified"
-                and receipt.get("assembly_sha256") == candidate.get("assembly_sha256")
-            ):
-                return {
-                    "tag": release["tag_name"],
-                    "url": release["html_url"],
-                    "image": candidate["image"],
-                    "digest": receipt.get("digest"),
-                    "assembly": candidate,
-                }
-        if len(releases) < 100:
-            return None
+        batch = api(f"repos/{repository}/releases?per_page=100&page={page}")
+        releases.extend(batch)
+        if len(batch) < 100:
+            break
         page += 1
+    # API listing order is not publication order, including across pages.
+    # GitHub's UTC published_at timestamps share the same sortable format.
+    releases.sort(
+        key=lambda release: (release.get("published_at") or "", release.get("id", 0)),
+        reverse=True,
+    )
+    for release in releases:
+        if (
+            release.get("draft")
+            or not release.get("published_at")
+            or release.get("tag_name") == assembly["release_tag"]
+        ):
+            continue
+        assets = _uploaded_assets(release)
+        lock = assets.get("community-assembly.json") or assets.get(
+            f"community-assembly-{assembly['release_channel']}.json"
+        )
+        receipt_asset = assets.get("container-release.json")
+        if lock is None or receipt_asset is None:
+            continue
+        candidate = json.loads(asset_bytes(repository, lock))
+        receipt = json.loads(asset_bytes(repository, receipt_asset))
+        if (
+            candidate.get("release_channel") == assembly["release_channel"]
+            and receipt.get("status") == "qualified"
+            and receipt.get("assembly_sha256") == candidate.get("assembly_sha256")
+        ):
+            return {
+                "tag": release["tag_name"],
+                "url": release["html_url"],
+                "image": candidate["image"],
+                "digest": receipt.get("digest"),
+                "assembly": candidate,
+            }
+    return None
 
 
 def _pull_request(repository: str, number: int) -> dict:
