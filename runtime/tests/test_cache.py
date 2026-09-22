@@ -163,8 +163,45 @@ def test_cache_transfer_modes_require_the_model_contract(identifier):
             identifier,
             env={"CACHE_MODE": "lmcache", "LMCACHE_TRANSFER_MODE": "lmcache_driven"},
         )
-    with pytest.raises(ConfigError, match="only.*GLM"):
-        resolve(identifier, env={"CACHE_MODE": "native"})
+
+
+def test_ds41_native_cpu_cache_remains_unsupported():
+    with pytest.raises(ConfigError, match="only.*GLM and Qwen"):
+        resolve("ds41-flash", env={"CACHE_MODE": "native"})
+
+
+def test_qwen_native_cpu_cache_uses_simple_connector_without_lmcache_service():
+    plan = resolve(
+        "qwen38-flash-next",
+        env={
+            "CACHE_MODE": "native",
+            "NATIVE_KV_OFFLOADING_SIZE_GB": "4",
+            "TP": "2",
+        },
+    )
+    assert plan.cache_service is None
+    assert plan.environment["VLLM_USE_SIMPLE_KV_OFFLOAD"] == "1"
+    assert plan.values["kv-offloading-backend"] == "native"
+    assert plan.values["kv-offloading-size"] == 4
+    assert plan.values["enable-cumem-allocator"] is True
+    assert plan.values["recurrent-checkpoint-policy"] == "aligned"
+    assert plan.values["mamba-cache-mode"] == "align"
+    assert plan.values["draft-tokens"] == 3
+    assert plan.values["max-num-batched-tokens"] == 6019
+    assert "--kv-offloading-backend" in plan.argv
+
+
+@pytest.mark.parametrize(
+    "extra,error",
+    [
+        ({"TP": "2", "DCP": "2"}, "DCP=1"),
+        ({"RECURRENT_CHECKPOINT_POLICY": "request_boundaries"}, "aligned"),
+        ({"VLLM_USE_SIMPLE_KV_OFFLOAD": "0"}, "Simple|SIMPLE"),
+    ],
+)
+def test_qwen_native_cpu_cache_rejects_incompatible_contract(extra, error):
+    with pytest.raises(ConfigError, match=error):
+        resolve("qwen38-flash-next", env={"CACHE_MODE": "native", **extra})
 
 
 @pytest.mark.parametrize(
