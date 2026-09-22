@@ -101,8 +101,11 @@ Do not edit the published fragment.
 ## Publisher behavior
 
 For each release channel, the publisher finds the most recent qualified
-container release and compares its exact component commits with the proposed
-assembly. It then:
+container release by `published_at` across all GitHub release pages. API listing
+order and the source commit's date are not publication order. Drafts, unpublished
+entries, the assembly being built, and incomplete or unqualified publications
+cannot supply the comparison baseline. The publisher compares the selected
+release's exact component commits with the proposed assembly. It then:
 
 1. reads `.lil/changes/` at both exact component revisions;
 2. rejects changed or deleted published fragments;

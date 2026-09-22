@@ -75,6 +75,89 @@ def previous():
     }
 
 
+def publication(tag, published_at, *, channel="karmic-kraken-beta"):
+    candidate = {
+        "release_channel": channel,
+        "assembly_sha256": tag,
+        "image": f"ghcr.io/example/runtime:{tag}",
+    }
+    receipt = {"status": "qualified", "assembly_sha256": tag}
+    return {
+        "tag_name": tag,
+        "published_at": published_at,
+        "created_at": "2026-09-22T01:00:00Z",
+        "html_url": f"https://github.com/example/runtime/releases/tag/{tag}",
+        "assets": [
+            {"name": name, "state": "uploaded", "size": 1, "payload": payload}
+            for name, payload in (
+                ("community-assembly.json", candidate),
+                ("container-release.json", receipt),
+            )
+        ],
+    }
+
+
+def install_release_pages(monkeypatch, pages):
+    requests = []
+
+    def fake_api(endpoint):
+        requests.append(endpoint)
+        page = int(endpoint.rsplit("page=", 1)[1])
+        return pages[page - 1]
+
+    monkeypatch.setattr(changelog, "api", fake_api)
+    monkeypatch.setattr(
+        changelog, "asset_bytes",
+        lambda repository, asset: json.dumps(asset["payload"]).encode(),
+    )
+    return requests
+
+
+def test_previous_publication_uses_publication_time_not_api_order(monkeypatch):
+    entries = [
+        publication("published-at-two", "2026-09-22T02:00:00Z"),
+        publication("published-at-five", "2026-09-22T05:00:00Z"),
+        publication("published-at-three", "2026-09-22T03:00:00Z"),
+    ]
+    install_release_pages(monkeypatch, [entries])
+    result = changelog.previous_publication("example/runtime", assembly())
+    assert result["tag"] == "published-at-five"
+
+
+def test_previous_publication_checks_later_pages_before_selecting(monkeypatch):
+    first_page = [publication("published-at-two", "2026-09-22T02:00:00Z")]
+    first_page.extend({"draft": True} for _ in range(99))
+    second_page = [publication("published-at-five", "2026-09-22T05:00:00Z")]
+    requests = install_release_pages(monkeypatch, [first_page, second_page])
+    result = changelog.previous_publication("example/runtime", assembly())
+    assert result["tag"] == "published-at-five"
+    assert len(requests) == 2
+
+
+@pytest.mark.parametrize("unavailable", [
+    "draft", "unpublished", "assembly", "incomplete", "unqualified", "channel",
+])
+def test_previous_publication_skips_ineligible_publications(monkeypatch, unavailable):
+    candidate = publication("ineligible", "2026-09-22T06:00:00Z")
+    if unavailable == "draft":
+        candidate["draft"] = True
+    elif unavailable == "unpublished":
+        candidate["published_at"] = None
+    elif unavailable == "assembly":
+        candidate["tag_name"] = assembly()["release_tag"]
+    elif unavailable == "incomplete":
+        candidate["assets"][1]["state"] = "new"
+    elif unavailable == "unqualified":
+        candidate["assets"][1]["payload"]["status"] = "failed"
+    elif unavailable == "channel":
+        candidate["assets"][0]["payload"]["release_channel"] = "beta"
+    install_release_pages(monkeypatch, [[
+        candidate, publication("eligible", "2026-09-22T05:00:00Z"),
+    ]])
+    result = changelog.previous_publication("example/runtime", assembly())
+    assert result["tag"] == "eligible"
+
+
 def test_fragment_requires_human_identity_for_direct_changes():
     payload = fragment(pull_requests=[])
     with pytest.raises(ValueError, match="name at least one author"):
