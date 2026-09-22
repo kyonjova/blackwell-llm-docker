@@ -53,12 +53,27 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
             f"{identifier}: external cache is unsupported by this profile; Engram/PLE placement is independent"
         )
     if cache_mode == "native":
-        if not glm:
+        if not (glm or qwen):
             raise ConfigError(
-                "Native KV offload is implemented only by the GLM profile"
+                "Native KV offload is implemented only by the GLM and Qwen profiles"
             )
         if values["cache-native-gib"] <= 0:
             raise ConfigError("cache-native-gib must be positive")
+        if qwen:
+            if values["decode-context-parallel-size"] != 1:
+                raise ConfigError("Qwen native CPU cache requires DCP=1")
+            if values.get("recurrent-checkpoint-policy", "auto") not in {
+                "auto",
+                "aligned",
+            }:
+                raise ConfigError("Qwen native CPU cache requires aligned checkpoints")
+            if environment.get("VLLM_USE_SIMPLE_KV_OFFLOAD", "1") != "1":
+                raise ConfigError(
+                    "Qwen native CPU cache requires VLLM_USE_SIMPLE_KV_OFFLOAD=1; "
+                    "the generic OffloadingConnector is not supported"
+                )
+            export("VLLM_USE_SIMPLE_KV_OFFLOAD", "1")
+            put("recurrent-checkpoint-policy", "aligned")
         put("kv-offloading-backend", "native")
         put("kv-offloading-size", values["cache-native-gib"])
         put("enable-cumem-allocator", True)

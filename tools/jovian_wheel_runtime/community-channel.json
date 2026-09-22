@@ -1,21 +1,8 @@
 {
   "schema": "local-inference-container-channel/v2",
-  "channel": "jovian-judgement",
+  "channel": "karmic-kraken",
   "image_repository": "ghcr.io/local-inference-lab/vllm",
   "channels": {
-    "main": {
-      "image_tag": "jovian-judgement",
-      "branches": {},
-      "changelog": {"required_components": []}
-    },
-    "beta": {
-      "image_tag": "jovian-judgement-beta",
-      "branches": {
-        "vllm": "integration/beta",
-        "b12x": "integration/beta"
-      },
-      "changelog": {"required_components": ["vllm", "b12x"]}
-    },
     "karmic-kraken": {
       "channel": "karmic-kraken",
       "image_tag": "karmic-kraken",
@@ -37,7 +24,7 @@
   "components": {
     "vllm": {
       "repository": "local-inference-lab/vllm",
-      "branch": "dev/jovian-judgement",
+      "branch": "dev/karmic-kraken",
       "release_prefix": "vllm-jovian-cu134-beta-",
       "source_paths": ["vllm/", "csrc/", "cmake/", "rust/", "requirements/", "setup.py", "pyproject.toml", "CMakeLists.txt", "tools/jovian_wheel_release/"],
       "bootstrap": {"branch_commit": "fa6ae9212e72edff781cf8ec083a0a9dfc3c58b6", "release_commit": "103bd90ea49e6f93171c980938cae169d2514538"}

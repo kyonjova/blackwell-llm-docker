@@ -66,6 +66,13 @@ allocator retries with this tight memory budget.
 - Qwen TP2: `PRESET=qwen38-tp2`; CPU PLE placement and MTP defaults still come
   from the Qwen model profile. `PROFILE=qwen38-flash-next TP=2` is equivalent.
 
+For Qwen, the `rtx-pro-6000-pcie` hardware profile keeps residual-mixing
+projections replicated on each GPU (`VLLM_QWEN3_8_FLASH_NEXT_HC_TP=0`). This
+avoids two cross-GPU gathers at each residual-mixing boundary. To test sharded
+projections instead, pass `-e VLLM_QWEN3_8_FLASH_NEXT_HC_TP=1`; that option uses
+less projection-weight memory but can slow PCIe decode. `HARDWARE_PROFILE=native`
+leaves this choice to vLLM. Target weights and activation precision are unchanged.
+
 For the Qwen checkpoint's 524,288-token context, set
 `MAX_MODEL_LEN=524288`. The Qwen profile then supplies the YaRN factor-two
 text configuration to both the target and MTP draft model. The ordinary
@@ -345,7 +352,22 @@ configuration implementation stays here.
 ## External cache preservation and migration gates
 
 `CACHE_MODE=vram` starts no external service. `CACHE_MODE=native` selects
-GLM native KV offload. `CACHE_MODE=lmcache` constructs an explicit service plan
+GLM or Qwen native CPU KV offload. Qwen uses `SimpleCPUOffloadConnector`,
+DCP1 and aligned checkpoints; it does not start an LMCache service or persist
+cache across restarts. `NATIVE_KV_OFFLOADING_SIZE_GB` sets the total CPU cache
+capacity across all TP ranks (default 64 GiB). For example:
+
+```bash
+docker run -d --name qwen38-native --gpus '"device=0,1"' --network host --ipc host \
+  -v qwen-hf:/root/.cache/huggingface -v qwen-runtime:/cache \
+  -e PROFILE=qwen38-flash-next -e TP=2 -e DCP=1 -e PORT=8000 \
+  -e CACHE_MODE=native -e NATIVE_KV_OFFLOADING_SIZE_GB=32 \
+  "$LIL_IMAGE" --mode mtp --draft-tokens 3
+```
+
+This MTP configuration requires the
+[draft CuMem configuration fix](https://github.com/local-inference-lab/vllm/pull/834).
+`CACHE_MODE=lmcache` constructs an explicit service plan
 for GLM, Qwen, DS4 text/Vision, or DS4.1. `LMCACHE_MODE=ram|disk|off` selects
 RAM, RAM with persistent disk storage, or VRAM-only caching.
 The model and cache use distinct ports, defaulting to API port plus

@@ -19,14 +19,14 @@ CONFIG = ROOT / "tools/jovian_wheel_runtime/community-channel.json"
 
 def test_config_separates_only_vllm_and_b12x_branches():
     config = json.loads(CONFIG.read_text())
-    main = channel.channel_config(config, "main")
-    beta = channel.channel_config(config, "beta")
-    assert main["image_tag"] == "jovian-judgement"
-    assert beta["image_tag"] == "jovian-judgement-beta"
-    assert main["components"]["vllm"]["branch"] == "dev/jovian-judgement"
+    main = channel.channel_config(config, "karmic-kraken")
+    beta = channel.channel_config(config, "karmic-kraken-beta")
+    assert main["image_tag"] == "karmic-kraken"
+    assert beta["image_tag"] == "karmic-kraken-beta"
+    assert main["components"]["vllm"]["branch"] == "dev/karmic-kraken"
     assert main["components"]["b12x"]["branch"] == "master"
     for role in ("vllm", "b12x"):
-        assert beta["components"][role]["branch"] == "integration/beta"
+        assert beta["components"][role]["branch"] == "integration/karmic-kraken-beta"
         without_branch = copy.deepcopy(beta["components"][role])
         without_branch["branch"] = main["components"][role]["branch"]
         assert without_branch == main["components"][role]
@@ -35,9 +35,9 @@ def test_config_separates_only_vllm_and_b12x_branches():
     assert config == json.loads(CONFIG.read_text())
 
 
-def test_karmic_channels_share_dependencies_without_moving_jovian_branches():
+def test_only_karmic_containers_are_published_with_shared_foundation():
     config = json.loads(CONFIG.read_text())
-    jj = channel.channel_config(config, "main")
+    assert set(config["channels"]) == {"karmic-kraken", "karmic-kraken-beta"}
     kk = channel.channel_config(config, "karmic-kraken")
     beta = channel.channel_config(config, "karmic-kraken-beta")
     assert kk["channel"] == beta["channel"] == "karmic-kraken"
@@ -46,14 +46,24 @@ def test_karmic_channels_share_dependencies_without_moving_jovian_branches():
     for role in ("vllm", "b12x"):
         assert beta["components"][role]["branch"] == "integration/karmic-kraken-beta"
     for role in ("flashinfer", "lmcache", "instanttensor", "nccl"):
-        assert (
-            jj["components"][role] == kk["components"][role] == beta["components"][role]
-        )
+        assert kk["components"][role] == beta["components"][role]
     assert (
-        channel.channel_config(config, "beta")["components"]["vllm"]["branch"]
-        == "integration/beta"
+        kk["components"]["flashinfer"]["branch"]
+        == "community/jovian-judgement-cu134-sm120"
     )
+    assert (ROOT / ".github/workflows/jovian-wheel-runtime-release.yml").exists()
+    assert not (
+        ROOT / ".github/workflows/jovian-qwen38-ngc-runtime-release.yml"
+    ).exists()
     assert config == json.loads(CONFIG.read_text())
+
+
+@pytest.mark.parametrize(
+    "name", ["main", "beta", "jovian-judgement", "jovian-judgement-beta"]
+)
+def test_retired_jovian_channels_cannot_resolve(name):
+    with pytest.raises(ValueError, match="unknown release channel"):
+        channel.channel_config(json.loads(CONFIG.read_text()), name)
 
 
 @pytest.mark.parametrize(
@@ -70,29 +80,28 @@ def test_karmic_channels_share_dependencies_without_moving_jovian_branches():
 )
 def test_invalid_channel_configuration_fails_closed(fault):
     config = json.loads(CONFIG.read_text())
+    beta = config["channels"]["karmic-kraken-beta"]
     if fault == "duplicate_tag":
-        config["channels"]["beta"]["image_tag"] = config["channels"]["main"][
-            "image_tag"
-        ]
+        beta["image_tag"] = config["channels"]["karmic-kraken"]["image_tag"]
     elif fault == "unsafe_tag":
-        config["channels"]["beta"]["image_tag"] = "../untrusted"
+        beta["image_tag"] = "../untrusted"
     elif fault == "unknown_role":
-        config["channels"]["beta"]["branches"]["untrusted"] = "main"
+        beta["branches"]["untrusted"] = "main"
     elif fault == "unsafe_family":
-        config["channels"]["beta"]["channel"] = "../untrusted"
+        beta["channel"] = "../untrusted"
     elif fault == "unknown_changelog_component":
-        config["channels"]["beta"]["changelog"]["required_components"] = ["untrusted"]
+        beta["changelog"]["required_components"] = ["untrusted"]
     elif fault == "unknown_changelog_policy":
-        config["channels"]["beta"]["changelog"]["untrusted"] = True
+        beta["changelog"]["untrusted"] = True
     with pytest.raises(ValueError):
-        channel.channel_config(config, "missing" if fault == "unknown" else "beta")
+        channel.channel_config(
+            config, "missing" if fault == "unknown" else "karmic-kraken-beta"
+        )
 
 
 @pytest.mark.parametrize(
     "name,prefix",
     [
-        ("main", "jovian-judgement"),
-        ("beta", "jovian-judgement-beta"),
         ("karmic-kraken", "karmic-kraken"),
         ("karmic-kraken-beta", "karmic-kraken-beta"),
     ],
@@ -116,9 +125,7 @@ def test_resolved_image_uses_selected_channel(monkeypatch, tmp_path, name, prefi
     assert assembly["release_tag"] == prefix + "-" + assembly["assembly_sha256"]
 
 
-@pytest.mark.parametrize(
-    "pending", ["main", "beta", "karmic-kraken", "karmic-kraken-beta", None]
-)
+@pytest.mark.parametrize("pending", ["karmic-kraken", "karmic-kraken-beta", None])
 def test_one_pending_channel_does_not_block_the_other(monkeypatch, tmp_path, pending):
     def resolve(config, output, name):
         if name == pending:
@@ -130,7 +137,7 @@ def test_one_pending_channel_does_not_block_the_other(monkeypatch, tmp_path, pen
     matrix = channel.resolve_matrix(
         CONFIG, tmp_path, "local-inference-lab/blackwell-llm-docker"
     )
-    expected = {"main", "beta", "karmic-kraken", "karmic-kraken-beta"} - {pending}
+    expected = {"karmic-kraken", "karmic-kraken-beta"} - {pending}
     assert {row["channel"] for row in matrix["include"]} == expected
     for row in matrix["include"]:
         assert (

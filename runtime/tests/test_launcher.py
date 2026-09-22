@@ -20,6 +20,19 @@ from runtime.packaging import (
 MODELS = ["glm53-flash", "ds4-flash", "ds4-vision", "ds41-flash", "qwen38-flash-next"]
 
 
+@pytest.mark.parametrize("tp", [1, 2, 4])
+def test_qwen_pcie_keeps_residual_projections_local(tp):
+    key = "VLLM_QWEN3_8_FLASH_NEXT_HC_TP"
+    plan = resolve("qwen38-flash-next", "rtx-pro-6000-pcie", env={"TP": str(tp)})
+    assert plan.environment[key] == "0"
+    explicit = resolve(
+        "qwen38-flash-next", "rtx-pro-6000-pcie", env={"TP": str(tp), key: "1"}
+    )
+    assert explicit.environment[key] == "1"
+    assert key not in resolve("qwen38-flash-next", "native", env={}).environment
+    assert key not in resolve("glm53-flash", "rtx-pro-6000-pcie", env={}).environment
+
+
 def test_qwen_extended_context_sets_target_and_draft_yarn_config():
     default = resolve("qwen38-flash-next", env={})
     assert default.values["max-model-len"] == 262144

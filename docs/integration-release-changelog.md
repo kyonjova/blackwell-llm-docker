@@ -101,8 +101,11 @@ Do not edit the published fragment.
 ## Publisher behavior
 
 For each release channel, the publisher finds the most recent qualified
-container release and compares its exact component commits with the proposed
-assembly. It then:
+container release by `published_at` across all GitHub release pages. API listing
+order and the source commit's date are not publication order. Drafts, unpublished
+entries, the assembly being built, and incomplete or unqualified publications
+cannot supply the comparison baseline. The publisher compares the selected
+release's exact component commits with the proposed assembly. It then:
 
 1. reads `.lil/changes/` at both exact component revisions;
 2. rejects changed or deleted published fragments;
@@ -118,5 +121,24 @@ container release. A change can therefore appear once in a beta channel and
 once later in the corresponding stable channel without maintaining two texts.
 
 The channel policy is defined alongside branch selection in
-`tools/jovian_wheel_runtime/community-channel.json`. vLLM and B12X fragments are
-mandatory for the `beta` and `karmic-kraken-beta` release channels.
+`tools/jovian_wheel_runtime/community-channel.json`. Only two container channels
+are built and published:
+
+| Image alias | vLLM branch | B12X branch |
+|---|---|---|
+| `karmic-kraken` | `dev/karmic-kraken` | `master` |
+| `karmic-kraken-beta` | `integration/karmic-kraken-beta` | `integration/karmic-kraken-beta` |
+
+vLLM and B12X fragments are mandatory for `karmic-kraken-beta`. The resolver's
+single-channel default is `karmic-kraken`; the automatic matrix includes both.
+Jovian container publication is retired. Its released images, receipts and
+changelogs remain available for historical deployment and rollback. Component
+wheel releases and shared CUDA/FlashInfer dependencies with `jovian` in their
+names remain in use by Karmic; those names do not enable a Jovian image build.
+The standalone Qwen/Jovian container workflow is removed; use the shared
+community publisher for either Karmic channel.
+
+The runtime package verifier also exercises a two-rank tuning-result exchange
+between the installed vLLM and B12X packages. This CPU-only check rejects
+incompatible result schemas before image publication; it does not replace
+model startup, CUDA-graph or generation tests.
