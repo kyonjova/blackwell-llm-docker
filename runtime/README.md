@@ -66,6 +66,13 @@ allocator retries with this tight memory budget.
 - Qwen TP2: `PRESET=qwen38-tp2`; CPU PLE placement and MTP defaults still come
   from the Qwen model profile. `PROFILE=qwen38-flash-next TP=2` is equivalent.
 
+For Qwen, the `rtx-pro-6000-pcie` hardware profile keeps residual-mixing
+projections replicated on each GPU (`VLLM_QWEN3_8_FLASH_NEXT_HC_TP=0`). This
+avoids two cross-GPU gathers at each residual-mixing boundary. To test sharded
+projections instead, pass `-e VLLM_QWEN3_8_FLASH_NEXT_HC_TP=1`; that option uses
+less projection-weight memory but can slow PCIe decode. `HARDWARE_PROFILE=native`
+leaves this choice to vLLM. Target weights and activation precision are unchanged.
+
 For the Qwen checkpoint's 524,288-token context, set
 `MAX_MODEL_LEN=524288`. The Qwen profile then supplies the YaRN factor-two
 text configuration to both the target and MTP draft model. The ordinary
