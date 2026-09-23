@@ -299,8 +299,24 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
         values["cache-prefetch-policy"],
     ]
     argv += ["--no-l1-use-lazy", "--shm-name", shm] if engine else ["--l1-use-lazy"]
+    # A request-boundary checkpoint carries the complete recurrent state and
+    # most are never restored; on-reuse keeps them in RAM until a restore
+    # proves them useful, then writes them to L2 once.
+    store_policy = "default"
+    if (
+        values["cache-l2-enabled"]
+        and values["cache-l2-checkpoint-writes"] == "on-reuse"
+    ):
+        if not semantic:
+            raise ConfigError(
+                "LMCACHE_L2_CHECKPOINT_WRITES=on-reuse applies only to "
+                "request-boundary checkpoints"
+            )
+        store_policy = "checkpoint_on_reuse"
     if glm:
         argv += ["--hash-algorithm", "blake3", "--max-workers", "8"]
+        if store_policy != "default":
+            argv += ["--l2-store-policy", store_policy]
     else:
         argv += [
             "--l1-write-ttl-seconds",
@@ -312,7 +328,7 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
             "--eviction-ratio",
             "0.10",
             "--l2-store-policy",
-            "default",
+            store_policy,
             "--worker-reap-timeout-seconds",
             "120",
             "--worker-registration-grace-seconds",

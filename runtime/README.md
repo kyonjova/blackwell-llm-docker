@@ -412,7 +412,17 @@ For the GLM Spark TP2/DCP2 recipe with a 3072-token scheduling budget, replace
 ```
 
 Use `LMCACHE_MODE=ram` to omit disk storage. Keep `/cache` on a persistent
-Docker volume for disk restore. The engine-driven service uses CPU memory,
+Docker volume for disk restore.
+
+Each request-boundary checkpoint holds the complete recurrent state, about
+167 MB for Qwen at TP1. With disk storage, a chat turn writes two or three of
+them even when the next turn cannot use them, because the chat template
+rewrites the previous prompt and response. Set
+`LMCACHE_L2_CHECKPOINT_WRITES=on-reuse` to keep new checkpoints in RAM and write
+each one to disk only after a restore has used it. Checkpoints never restored
+then never reach the disk; after a restart or RAM eviction, a restore uses the
+longest checkpoint that was written. The default `always` writes every
+checkpoint to disk. The engine-driven service uses CPU memory,
 not a separate GPU. The profile selects request-boundary checkpoints and a
 matching target scheduling budget. It does not enable aligned/direct transfer
 for TP2. GLM vision remains available, but image-bearing requests recompute

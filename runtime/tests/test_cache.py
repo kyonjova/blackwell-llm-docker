@@ -378,3 +378,50 @@ def test_immutable_identity_pins_both_loaders_before_startup(tmp_path):
         "lmcache.mp.checkpoint_identity"
     ]
     assert identity["source_revision"] == "b" * 64
+
+
+def store_policies(plan) -> list[str]:
+    argv = plan.cache_service.argv
+    return [argv[i + 1] for i, arg in enumerate(argv) if arg == "--l2-store-policy"]
+
+
+@pytest.mark.parametrize(
+    "identifier,env,expected",
+    [
+        ("qwen38-flash-next", {}, ["default"]),
+        (
+            "qwen38-flash-next",
+            {"LMCACHE_L2_CHECKPOINT_WRITES": "on-reuse"},
+            ["checkpoint_on_reuse"],
+        ),
+        ("glm53-flash", {"TP": "2"}, []),
+        (
+            "glm53-flash",
+            {"TP": "2", "LMCACHE_L2_CHECKPOINT_WRITES": "on-reuse"},
+            ["checkpoint_on_reuse"],
+        ),
+    ],
+)
+def test_l2_checkpoint_writes_select_the_store_policy(identifier, env, expected):
+    plan = resolve(
+        identifier,
+        env={"CACHE_MODE": "lmcache", "LMCACHE_L2_ENABLED": "true", **env},
+    )
+    assert store_policies(plan) == expected
+
+
+def test_l2_checkpoint_writes_need_l2_and_request_boundary_checkpoints():
+    without_l2 = resolve(
+        "qwen38-flash-next",
+        env={"CACHE_MODE": "lmcache", "LMCACHE_L2_CHECKPOINT_WRITES": "on-reuse"},
+    )
+    assert store_policies(without_l2) == ["default"]
+    with pytest.raises(ConfigError, match="request-boundary checkpoints"):
+        resolve(
+            "ds4-flash",
+            env={
+                "CACHE_MODE": "lmcache",
+                "LMCACHE_L2_ENABLED": "true",
+                "LMCACHE_L2_CHECKPOINT_WRITES": "on-reuse",
+            },
+        )
