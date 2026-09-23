@@ -1,0 +1,16 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-70",
+  "category": "fix",
+  "summary": "Log why the launcher stops the model server",
+  "models": [
+    "all"
+  ],
+  "compatibility": "No user action required.",
+  "details": [
+    "A [lil-serve] line names the cause before shutdown: LMCache exit status or signal (with an out-of-memory hint for SIGKILL), an external signal, or the model server's own exit."
+  ],
+  "pull_requests": [
+    70
+  ]
+}

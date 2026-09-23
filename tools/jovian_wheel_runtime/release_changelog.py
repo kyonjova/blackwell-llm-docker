@@ -16,6 +16,8 @@ from container_channel import api, asset_bytes
 SCHEMA = "local-inference-release-change/v1"
 OUTPUT_SCHEMA = "local-inference-container-changelog/v1"
 CHANGE_PATH = ".lil/changes"
+# Launcher, profiles and image recipe changes, recorded in this repository.
+RECIPE_COMPONENT = "docker"
 CATEGORIES = {
     "breaking",
     "compatibility",
@@ -221,11 +223,35 @@ def _pull_request(repository: str, number: int) -> dict:
     }
 
 
+def _fragment_commit(source: dict) -> str:
+    """Read fragments at the observed branch tip when the wheel was reused.
+
+    The resolver reuses a wheel when later commits change no source paths,
+    for example commits that only add change fragments.
+    """
+    return source.get("observed_branch_commit") or source["source_commit"]
+
+
 def collect_release_changelog(assembly: dict, publication_repository: str) -> dict:
     """Compile immutable fragments added since the previous channel release."""
     previous = previous_publication(publication_repository, assembly)
+    sources = dict(assembly["components"])
+    previous_sources = dict((previous or {}).get("assembly", {}).get("components", {}))
+    # The recipe ships in the image too; its fragments live in this repository.
+    if assembly.get("recipe_commit"):
+        sources[RECIPE_COMPONENT] = {
+            "repository": publication_repository,
+            "source_commit": assembly["recipe_commit"],
+        }
+        previous_recipe = (previous or {}).get("assembly", {}).get("recipe_commit")
+        if previous_recipe:
+            previous_sources[RECIPE_COMPONENT] = {
+                "repository": publication_repository,
+                "source_commit": previous_recipe,
+            }
+
     required = set(assembly.get("changelog", {}).get("required_components", []))
-    unknown_required = required - set(assembly["components"])
+    unknown_required = required - set(sources)
     if unknown_required:
         raise ValueError(
             f"changelog policy names unknown components: {sorted(unknown_required)}"
@@ -234,20 +260,16 @@ def collect_release_changelog(assembly: dict, publication_repository: str) -> di
     current_by_component: dict[str, dict[str, dict]] = {}
     added: list[tuple[str, str, dict]] = []
     component_ranges = {}
-    for component, current in assembly["components"].items():
+    for component, current in sources.items():
         repository = current["repository"]
-        current_commit = current["source_commit"]
+        current_commit = _fragment_commit(current)
         current_fragments = load_fragments(repository, current_commit, component)
         current_by_component[component] = current_fragments
-        previous_component = (
-            previous.get("assembly", {}).get("components", {}).get(component)
-            if previous
-            else None
-        )
+        previous_component = previous_sources.get(component) if previous else None
         previous_commit = None
         previous_fragments: dict[str, dict] = {}
         if previous_component and previous_component.get("repository") == repository:
-            previous_commit = previous_component.get("source_commit")
+            previous_commit = _fragment_commit(previous_component)
             previous_fragments = load_fragments(repository, previous_commit, component)
         deleted = set(previous_fragments) - set(current_fragments)
         modified = {
@@ -338,7 +360,7 @@ def render_release_notes(changelog: dict) -> str:
     )
     rows = [f"## {heading}", ""]
     if not changelog["changes"]:
-        rows += ["No vLLM or B12X runtime changes are recorded for this assembly.", ""]
+        rows += ["No component changes are recorded for this assembly.", ""]
         return "\n".join(rows)
     grouped: dict[str, list[dict]] = defaultdict(list)
     for change in changelog["changes"]:

@@ -1,0 +1,9 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-72",
+  "category": "internal",
+  "summary": "List launcher and profile changes in container release notes",
+  "models": ["all"],
+  "compatibility": "No user action required.",
+  "pull_requests": [72]
+}
