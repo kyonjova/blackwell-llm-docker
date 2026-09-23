@@ -330,3 +330,56 @@ def test_collects_recipe_fragments_since_the_previous_recipe(monkeypatch):
     assert "[docker #71](https://github.com/example/releases/pull/71)" in (
         changelog.render_release_notes(result)
     )
+
+
+def test_reads_fragments_at_the_observed_branch_tip(monkeypatch):
+    """A reused wheel still publishes fragments added after its source commit."""
+    payload = {**fragment("lmcache-83", pull_requests=[83]), "requires": []}
+    current = assembly()
+    current["changelog"] = {"required_components": []}
+    current["components"] = {
+        "lmcache": {
+            "repository": "local-inference-lab/LMCache",
+            "source_commit": "lmcache-wheel",
+            "observed_branch_commit": "lmcache-tip",
+        }
+    }
+    prior = previous()
+    prior["assembly"]["components"] = {
+        "lmcache": {
+            "repository": "local-inference-lab/LMCache",
+            "source_commit": "lmcache-old",
+        }
+    }
+    by_commit = {"lmcache-old": {}, "lmcache-tip": {"lmcache-83": record(payload)}}
+    monkeypatch.setattr(changelog, "previous_publication", lambda *args: prior)
+    monkeypatch.setattr(
+        changelog,
+        "load_fragments",
+        lambda repository, commit, component: by_commit[commit],
+    )
+    monkeypatch.setattr(
+        changelog,
+        "_pull_request",
+        lambda repository, number: {
+            "number": number,
+            "url": f"https://github.com/{repository}/pull/{number}",
+            "title": "Reviewed change",
+            "author": "@contributor",
+        },
+    )
+
+    result = changelog.collect_release_changelog(current, "example/releases")
+
+    assert [change["id"] for change in result["changes"]] == ["lmcache-83"]
+
+
+def test_docker_is_a_known_required_component_only_with_a_recipe(monkeypatch):
+    monkeypatch.setattr(changelog, "previous_publication", lambda *args: None)
+    monkeypatch.setattr(changelog, "load_fragments", lambda *args: {})
+    current = assembly()
+    current["changelog"] = {"required_components": ["docker"]}
+    with pytest.raises(ValueError, match="unknown components"):
+        changelog.collect_release_changelog(current, "example/releases")
+    current["recipe_commit"] = "recipe-new"
+    changelog.collect_release_changelog(current, "example/releases")
