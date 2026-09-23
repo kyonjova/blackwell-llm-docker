@@ -5,7 +5,10 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import re
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -409,6 +412,37 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
         semantic or values["cache-l2-enabled"],
         namespace,
     )
+
+
+# Asked in a GPU-free child so the supervisor keeps no Torch state. Without
+# vLLM #864 the QSA backend refuses KV connectors while nothing enforces it,
+# and DCP>1 would silently fall back to KV chunks without recurrent state.
+_QSA_ATOMIC_TRANSFER_PROBE = (
+    "from vllm.models.qwen4_exp.nvidia.b12x_qsa import Qwen4ExpQSABackend as B\n"
+    "raise SystemExit(0 if B.supports_kv_connector() else 3)"
+)
+
+
+def verify_installed_transfer(plan, run=subprocess.run) -> None:
+    """Refuse Qwen DCP>1 external caches unless vLLM keeps QSA checkpoints atomic."""
+    service = plan.cache_service
+    if (
+        not service
+        or plan.profile != "qwen38-flash-next"
+        or plan.values["decode-context-parallel-size"] == 1
+    ):
+        return
+    result = run(
+        [sys.executable, "-c", _QSA_ATOMIC_TRANSFER_PROBE],
+        env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise ConfigError(
+            "Qwen external cache with DCP>1 requires a vLLM build with atomic QSA "
+            "checkpoint transfer; use DCP1 or an image that includes it"
+        )
 
 
 def resolve_identity(plan, contract, helper: Path):

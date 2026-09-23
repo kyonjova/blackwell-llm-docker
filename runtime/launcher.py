@@ -1040,8 +1040,10 @@ def execute(plan: LaunchPlan, contract_path: Path) -> None:
         environment.pop("NCCL_GRAPH_FILE")
     environment.update(plan.environment)
     if plan.cache_service:
-        from runtime.cache import resolve_identity
+        from runtime.cache import resolve_identity, verify_installed_transfer
         from runtime.supervisor import supervise
+
+        verify_installed_transfer(plan)
 
         helper = ROOT / "checkpoint_identity.py"
         if not helper.is_file():
