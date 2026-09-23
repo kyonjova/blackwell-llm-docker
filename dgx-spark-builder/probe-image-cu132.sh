@@ -1,25 +1,33 @@
 #!/usr/bin/env bash
-# probe-image.sh -- prove a built serving image contains what its profile
-# says, before spending a two-node boot on it.
+# probe-image-cu132.sh -- prove a built serving image contains what its
+# profile says, before spending a two-node boot on it. This is THE image
+# verification step: build-spark-cu132.sh builds only and defers to this.
 #
-# Usage:  ./probe-image.sh IMAGE [build.env]
+# Usage:  ./probe-image-cu132.sh IMAGE [build.env]
 #
 # With a profile, VLLM_PIN / B12X_PIN are compared against what the image
-# reports. Checks, in order: source identity, the RoCEnante composition
-# (vLLM PR #597 + b12x PR #295), then the generic image contract.
+# reports, and TORCH_VERSION / VLLM_REQUIRED_LAUNCHERS set the expectations
+# for the generic contract. Checks, in order: source identity, the RoCEnante
+# composition (vLLM PR #597 + b12x PR #295), KDA, DeepGEMM, then the generic
+# image contract.
 set -euo pipefail
-IMAGE="${1:?usage: probe-image.sh IMAGE [build.env]}"
+IMAGE="${1:?usage: probe-image-cu132.sh IMAGE [build.env]}"
 ENV_FILE="${2:-}"
-py() { docker run --rm --entrypoint /opt/venv/bin/python "$IMAGE" - "$@"; }
+# -i is REQUIRED: without it docker does not attach the heredoc to the
+# container's stdin, `python -` reads EOF, runs nothing and exits 0 -- every
+# py check would PASS without executing a line.
+py() { docker run -i --rm --entrypoint /opt/venv/bin/python "$IMAGE" - "$@"; }
 sh() { docker run --rm --entrypoint bash "$IMAGE" -c "$1"; }
 pass=0; fail=0
 ok()   { echo "  PASS  $*"; pass=$((pass+1)); }
 bad()  { echo "  FAIL  $*"; fail=$((fail+1)); }
-want_vllm=""; want_b12x=""
-if [[ -n "$ENV_FILE" ]]; then
-  want_vllm="$(grep -E '^VLLM_PIN=' "$ENV_FILE" | cut -d= -f2 || true)"
-  want_b12x="$(grep -E '^B12X_PIN=' "$ENV_FILE" | cut -d= -f2 || true)"
-fi
+prof() { [[ -n "$ENV_FILE" ]] && grep -E "^$1=" "$ENV_FILE" | tail -1 | cut -d= -f2- || true; }
+want_vllm="$(prof VLLM_PIN)"; want_b12x="$(prof B12X_PIN)"
+# Contract expectations: from the profile when given, else the cu132 line.
+torch_full="$(prof TORCH_VERSION)"; torch_full="${torch_full:-2.13.0+cu132}"
+want_torch="${torch_full%%+*}"; _cu="${torch_full##*+cu}"; want_cuda="${_cu:0:2}.${_cu:2}"
+want_launchers="$(prof VLLM_REQUIRED_LAUNCHERS)"
+want_launchers="${want_launchers:-serve-glm53-flash-nvfp4.sh}"
 
 echo "== image: $IMAGE"
 docker image inspect "$IMAGE" >/dev/null 2>&1 || { echo "image not present"; exit 1; }
@@ -84,14 +92,41 @@ if py <<'PY' 2>/dev/null; then ok "b12x: b12x.sequence.kda_prefill importable"; 
 import importlib; importlib.import_module("b12x.sequence.kda_prefill")
 PY
 
+echo "== DeepGEMM (DS4 path)"
+# deep_gemm is only exercised on the DS4 path, so a missing shared library
+# surfaces at serve time, not at build time. KK's vllm-project/DeepGEMM links
+# libdw.so.1 (elfutils); the final stage is FROM system-base and gets it only
+# via the PATCH_DEEPGEMM_LIBDW runtime install. ldd runs with torch/lib on
+# LD_LIBRARY_PATH: torch extensions have no RPATH to it and resolve
+# libc10/libtorch_* only because `import torch` loaded them first, so without
+# this every torch lib is a false "not found".
+py <<'PY' && ok "deep_gemm imports; every native extension resolves (libdw.so.1 present)" || bad "deep_gemm import or shared-library resolution failed (see output above)"
+import glob, os, subprocess, torch, deep_gemm
+dg_dir = os.path.dirname(deep_gemm.__file__)
+torch_lib = os.path.join(os.path.dirname(torch.__file__), "lib")
+env = dict(os.environ, LD_LIBRARY_PATH=":".join(
+    p for p in (torch_lib, os.environ.get("LD_LIBRARY_PATH", "")) if p))
+sos = glob.glob(os.path.join(dg_dir, "**", "*.so"), recursive=True)
+assert sos, f"no native extension under {dg_dir}"
+for so in sos:
+    out = subprocess.run(["ldd", so], capture_output=True, text=True, env=env).stdout
+    missing = [l.strip() for l in out.splitlines() if "not found" in l]
+    assert not missing, f"{so}: unresolved {missing}"
+PY
+
 echo "== generic image contract"
-py <<'PY' && ok "aarch64, torch 2.13.0, CUDA 13.2, b12x + humming importable" || bad "generic contract"
-import platform, torch, importlib.util
-assert platform.machine() == "aarch64"
-assert torch.__version__.startswith("2.13.0") and torch.version.cuda == "13.2"
+EXPECT_TORCH="$want_torch" EXPECT_CUDA="$want_cuda" \
+  docker run -i --rm -e EXPECT_TORCH -e EXPECT_CUDA --entrypoint /opt/venv/bin/python "$IMAGE" - <<'PY' \
+  && ok "aarch64, torch ${want_torch}, CUDA ${want_cuda}, b12x + humming importable" || bad "generic contract (expected torch ${want_torch}, CUDA ${want_cuda})"
+import os, platform, torch, importlib.util
+assert platform.machine() == "aarch64", platform.machine()
+assert torch.__version__.startswith(os.environ["EXPECT_TORCH"]), torch.__version__
+assert torch.version.cuda == os.environ["EXPECT_CUDA"], torch.version.cuda
 assert importlib.util.find_spec("b12x") and (importlib.util.find_spec("humming_kernels") or importlib.util.find_spec("humming"))
 PY
-sh 'test -f /usr/local/bin/serve-glm53-flash-nvfp4.sh' && ok "GLM-5.3 launcher present" || bad "serve-glm53-flash-nvfp4.sh missing (wrong vLLM branch?)"
+for l in $want_launchers; do
+  sh "test -x /usr/local/bin/$l" && ok "launcher present: $l" || bad "launcher missing: $l (wrong vLLM branch?)"
+done
 sh 'test -f /opt/libnccl-local-inference.so.2.30.4 && test -f /usr/local/cuda/compat/libcuda.so.1' && ok "patched NCCL + CUDA compat shim present" || bad "NCCL/compat shim missing"
 sh 'readlink -f /usr/local/cuda/targets/sbsa-linux/lib/libcublas.so.13 | grep -q /usr/lib/aarch64-linux-gnu/' && ok "cuBLAS overlay resolves into aarch64 multiarch" || bad "cuBLAS overlay not applied"
 sh 'env | grep -q "^VLLM_PCIE_ALLREDUCE_BACKEND=b12x$"' && ok "baked VLLM_PCIE_ALLREDUCE_BACKEND=b12x" || echo "  NOTE  baked PCIe backend env not b12x (launcher overrides with -e anyway)"

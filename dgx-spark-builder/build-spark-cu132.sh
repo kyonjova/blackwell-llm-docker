@@ -823,62 +823,11 @@ start_sampler
 report_telemetry OK
 
 # ------------------------------------------------------------- verification
-# Expectations come from the profile, not from literals: a profile that bumps
-# TORCH_VERSION must not fail its own correct build at the last step.
-_cu="${TORCH_VERSION##*+cu}"
-# -i is required: without it docker does not attach the heredoc to the
-# container's stdin, `python -` reads EOF, runs NOTHING, and exits 0 --
-# false-green gate. The 'image OK' grep makes a silently-skipped
-# verification impossible to miss.
-_verify_log="$(mktemp)"
-if ! docker run -i --rm \
-  -e EXPECT_TORCH="${TORCH_VERSION%%+*}" \
-  -e EXPECT_CUDA="${_cu:0:2}.${_cu:2}" \
-  --entrypoint /opt/venv/bin/python "${IMAGE}" - > "${_verify_log}" <<'PY'
-import os, platform, torch
-assert platform.machine() == "aarch64", platform.machine()
-assert torch.__version__.startswith(os.environ["EXPECT_TORCH"]), torch.__version__
-assert torch.version.cuda == os.environ["EXPECT_CUDA"], torch.version.cuda
-import importlib.util
-assert importlib.util.find_spec("b12x") is not None, "b12x/sparkinfer missing"
-assert importlib.util.find_spec("humming_kernels") is not None or \
-       importlib.util.find_spec("humming") is not None, "humming kernels missing"
-# deep_gemm is only exercised on the DS4 path, so a missing shared library
-# (libdw.so.1, see PATCH_DEEPGEMM_LIBDW) would otherwise surface at serve
-# time. Import it here, and resolve every native extension it ships.
-import deep_gemm, glob, subprocess
-dg_dir = os.path.dirname(deep_gemm.__file__)
-for so in glob.glob(os.path.join(dg_dir, "**", "*.so"), recursive=True):
-    missing = [l.strip() for l in subprocess.run(["ldd", so], capture_output=True, text=True).stdout.splitlines()
-               if "not found" in l]
-    assert not missing, f"{so}: unresolved libraries: {missing}"
-print("deep_gemm OK:", dg_dir)
-print("image OK: aarch64, torch", torch.__version__, "cuda", torch.version.cuda)
-PY
-then
-  die "in-image python verification failed (see traceback above)"
-fi
-grep -q 'image OK' "${_verify_log}" || die "in-image python verification produced no 'image OK' line (asserts skipped or failed)"
-sed 's/^/  /' "${_verify_log}"
-rm -f "${_verify_log}"
-for launcher in ${VLLM_REQUIRED_LAUNCHERS}; do
-  docker run --rm --entrypoint test "${IMAGE}" -f "/usr/local/bin/${launcher}" \
-    || die "required launcher missing from image: ${launcher}"
-done
-docker run --rm --entrypoint test "${IMAGE}" -f /opt/libnccl-local-inference.so.2.30.4
-docker run --rm --entrypoint test "${IMAGE}" -f /usr/local/cuda/compat/libcuda.so.1
-docker run --rm --entrypoint bash "${IMAGE}" -c '
-  set -euo pipefail
-  lib=/usr/local/cuda/targets/sbsa-linux/lib/libcublas.so.13
-  test -L "${lib}"
-  target="$(readlink -f "${lib}")"
-  case "${target}" in
-    /usr/lib/aarch64-linux-gnu/*) echo "cublas overlay OK: ${target}" ;;
-    *) echo "ERROR: cublas overlay not applied: ${lib} -> ${target}" >&2; exit 1 ;;
-  esac
-'
-printf '\nBuilt %s\n' "${IMAGE}"
-report_telemetry "OK+VERIFIED"
+# Deliberately NOT done here: image verification lives in probe-image-cu132.sh
+# (run it before shipping the image to the second node). Keeping it in one
+# place avoids two copies of the image contract drifting apart.
+printf '\nBuilt %s\nVerify before shipping:\n  ./probe-image-cu132.sh %s %s\n' \
+  "${IMAGE}" "${IMAGE}" "${ENV_FILE:-<profile.env>}"
 
 # ----------------------------------------------------------- build manifest
 # One self-contained record per completed build: everything the lab
@@ -886,7 +835,7 @@ report_telemetry "OK+VERIFIED"
 # that only exist after a registry push marked UNKNOWN. Markdown so the
 # announcement sections lift straight out. Shares RUN_STAMP with the optional
 # transcript (LOGGING=1), so manifest and log pair by filename.
-# Called non-fatally: a verified build must never be failed by its own
+# Called non-fatally: a successful build must never be failed by its own
 # paperwork, so every substitution degrades to UNKNOWN instead of dying.
 emit_build_manifest() {
 image_id="$(docker inspect --format '{{.Id}}' "${IMAGE}" 2>/dev/null || echo 'UNKNOWN — needs verification')"
@@ -950,13 +899,9 @@ pip_freeze="$(docker run --rm --entrypoint /opt/venv/bin/pip "${IMAGE}" freeze 2
   printf '## Patches applied (differences from the upstream build system)\n\n```\n'
   cat "${PATCH_REPORT}" 2>/dev/null || echo "UNKNOWN — needs verification"
   printf '```\n\n'
-  printf '## Verification (commands executed by this wrapper, all passed)\n\n'
-  printf -- '- In-image python asserts: aarch64, torch 2.13.0+cu132, cuda 13.2, `b12x` and humming kernels importable, `deep_gemm` imports with all native libraries resolved\n'
-  printf -- '- Required launchers present: `%s`\n' "${VLLM_REQUIRED_LAUNCHERS:-none configured}"
-  printf -- '- Patched NCCL present: `/opt/libnccl-local-inference.so.2.30.4`\n'
-  printf -- '- CUDA compat shim present: `/usr/local/cuda/compat/libcuda.so.1`\n'
-  printf -- '- cuBLAS overlay symlink resolves into `/usr/lib/aarch64-linux-gnu/`\n'
-  printf -- '- Serving on hardware: Not tested (build-time verification only; record pair validation separately)\n\n'
+  printf '## Verification\n\n'
+  printf -- '- Not run by the build wrapper. Verify with: `./probe-image-cu132.sh %s %s`\n' "${IMAGE}" "${ENV_FILE:-<profile.env>}"
+  printf -- '- Serving on hardware: Not tested (record pair validation separately)\n\n'
   printf '## Resolved floating specs\n\n'
   printf -- '- `FASTSAFETENSORS_SPEC=%s` resolved to: `%s`\n\n' \
     "${FASTSAFETENSORS_SPEC}" \
@@ -977,11 +922,11 @@ pip_freeze="$(docker run --rm --entrypoint /opt/venv/bin/pip "${IMAGE}" freeze 2
 
 # Path hoisted so the closing instructions below still resolve if the emitter
 # dies, and run in a SUBSHELL: `if ! func` catches a nonzero return but NOT a
-# `set -u` abort, which would kill the script after a verified build. A
+# `set -u` abort, which would kill the script after a successful build. A
 # subshell contains both.
 build_manifest="${SCRIPT_DIR}/manifest/build_manifest-${PROFILE_NAME}-${RUN_STAMP}.md"
 if ! ( emit_build_manifest ); then
-  warn "build manifest emission failed -- the image itself is built and VERIFIED; re-run the wrapper (fully cached) to regenerate it, and please report this"
+  warn "build manifest emission failed -- the image itself is built; re-run the wrapper (fully cached) to regenerate it, and please report this"
 fi
 
 printf 'Ship it to the other node:\n  docker save %s | ssh <node2> docker load\n' "${IMAGE}"
