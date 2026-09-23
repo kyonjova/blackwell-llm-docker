@@ -101,7 +101,8 @@ PROFILE_NAME="$(expand_date "${PROFILE_NAME}")"
 [[ "${PROFILE_NAME}" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || die "PROFILE_NAME must be lowercase [a-z0-9.-]: ${PROFILE_NAME}"
 LOGGING="${LOGGING:-0}"; [[ "${LOG_FLAG}" == 1 ]] && LOGGING=1
 case "${LOGGING}" in 0|1) ;; *) die "LOGGING must be 0 or 1" ;; esac
-RUN_LOG="${SCRIPT_DIR}/build-log-${PROFILE_NAME}-${RUN_STAMP}.txt"
+mkdir -p "${SCRIPT_DIR}/logs" "${SCRIPT_DIR}/manifest"
+RUN_LOG="${SCRIPT_DIR}/logs/build-log-${PROFILE_NAME}-${RUN_STAMP}.txt"
 [[ "${LOGGING}" != 1 ]] || note "transcript: ${RUN_LOG}"
 
 # --------------------------------------------------------------- repo checks
@@ -622,7 +623,12 @@ if [[ "${PHASE}" == all || "${PHASE}" == overlay ]]; then
   # would still "pass" but fall back to triton at serve time. b12x.comm.roce is
   # RoCEnante; deep_gemm must resolve either from site-packages (the overlay's
   # standalone DEEPGEMM_COMMIT install) or the vendored fallback.
-  docker run --rm --entrypoint python "${IMAGE}" - <<'PY'
+  # -i is required: without it docker does not attach the heredoc to the
+  # container's stdin, `python -` reads EOF, runs NOTHING, and exits 0 --
+  # false-green gate (the asserts would silently never execute). The
+  # 'image OK' grep makes a silently-skipped verification impossible to miss.
+  _verify_log="$(mktemp)"
+  if ! docker run -i --rm --entrypoint python "${IMAGE}" - > "${_verify_log}" <<'PY'
 import platform, torch, importlib, importlib.util
 assert platform.machine() == "aarch64", platform.machine()
 assert torch.__version__.startswith("2.13.0"), torch.__version__
@@ -637,6 +643,12 @@ except ImportError:
 print("image OK: aarch64, torch", torch.__version__, "cuda", torch.version.cuda,
       "| flashkda, b12x.comm.roce, deep_gemm importable")
 PY
+  then
+    die "in-image python verification failed (see traceback above)"
+  fi
+  grep -q 'image OK' "${_verify_log}" || die "in-image python verification produced no 'image OK' line (asserts skipped or failed)"
+  sed 's/^/  /' "${_verify_log}"
+  rm -f "${_verify_log}"
   for launcher in ${VLLM_REQUIRED_LAUNCHERS}; do
     docker run --rm --entrypoint test "${IMAGE}" -f "/usr/local/bin/${launcher}" || die "required launcher missing from image: ${launcher}"
   done
@@ -707,7 +719,7 @@ PY
       printf "docker inspect --format '{{index .RepoDigests 0}}' <registry>/<repo>:<tag>\n\`\`\`\n"
     } > "${build_manifest}" && note "build manifest written: ${build_manifest}"
   }
-  build_manifest="${SCRIPT_DIR}/build_manifest-${PROFILE_NAME}-${RUN_STAMP}.md"
+  build_manifest="${SCRIPT_DIR}/manifest/build_manifest-${PROFILE_NAME}-${RUN_STAMP}.md"
   if ! ( emit_build_manifest ); then
     warn "build manifest emission failed -- the image is built and VERIFIED; re-run (fully cached) to regenerate it"
   fi

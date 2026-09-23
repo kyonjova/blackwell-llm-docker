@@ -46,7 +46,8 @@ finalize_transcript() {
   if [[ "${LOGGING:-0}" != 1 ]]; then rm -f "${_RAW_LOG:-}"; return 0; fi
   # RUN_LOG is unset if we died before PROFILE_NAME resolved; keep the
   # transcript anyway -- that run is exactly the one worth reading.
-  local log="${RUN_LOG:-${SCRIPT_DIR}/build-log-${PROFILE_NAME:-unknown}-${RUN_STAMP}.txt}"
+  mkdir -p "${SCRIPT_DIR}/logs" "${SCRIPT_DIR}/manifest"
+  local log="${RUN_LOG:-${SCRIPT_DIR}/logs/build-log-${PROFILE_NAME:-unknown}-${RUN_STAMP}.txt}"
   printf 'build transcript: %s\n' "${log}" >&2
   # Restore the real fds so tee sees EOF, then WAIT for it to flush before the
   # move; without this the last lines written are lost.
@@ -94,7 +95,7 @@ fi
 [[ -n "${ENV_FILE}" ]] \
   || warn "no profile found beside this script: building from IN-SCRIPT FALLBACK PINS, which are not the source of truth and are probably stale"
 
-ALLOWED_KEYS=" ALLOW_FOREIGN_ARCH B12X_COMMIT B12X_PATCH_FILE B12X_PATCH_SHA256 B12X_PIN B12X_REF B12X_REPO BUILD_BASE_IMAGE_TAG CUTLASS_COMMIT CUTLASS_DSL_VERSION CUTLASS_REF DEEPGEMM_COMMIT DEEPGEMM_REF FASTSAFETENSORS_SPEC FLASHINFER_BUILD_CUBIN FLASHINFER_COMMIT FLASHINFER_REF FLASHINFER_REPO FROZEN_ACK HUMMING_KERNELS_SPEC IMAGE IMAGE_REPO IMAGE_TAG INSTANTTENSOR_COMMIT INSTANTTENSOR_REF INSTANTTENSOR_REPO LAUNCHER_COMMIT LAUNCHER_REF LAUNCHER_REPO LOGGING MAX_JOBS NCCL_COMMIT NCCL_REF NCCL_REPO NVCC_THREADS PATCH_EXLLAMAV3_AVX PATCH_GPU_ARCH PATCH_HOST_ARCH PATCH_PCIE_ENV PATCH_PIPCHECK_WHEELTAG PATCH_VLLM_REQ_MARKERS PATCH_VLLM_WHEEL_TAGS PIN_PREFLIGHT PIN_SOURCE_COMMITS PROFILE_NAME QUACK_KERNELS_SPEC SPARKINFER_COMMIT SPARKINFER_REF SPARKINFER_REPO SYSTEM_BASE_IMAGE TILELANG_VERSION TOKENSPEED_MLA_VERSION TORCHVISION_VERSION TORCH_BUNDLED_NCCL_VERSION TORCH_VERSION TVM_FFI_VERSION VLLM_BUILD_VERSION VLLM_COMMIT VLLM_MAX_JOBS VLLM_NVCC_THREADS VLLM_PATCH_FILE VLLM_PATCH_SHA256 VLLM_PATCH_URL VLLM_PIN VLLM_REF VLLM_REPO VLLM_REQUIRED_LAUNCHERS VLLM_RUNTIME_EXTRA_PACKAGES XGRAMMAR_COMMIT XGRAMMAR_REF XGRAMMAR_TRANSFORMERS5_COMPAT XGRAMMAR_VERSION "
+ALLOWED_KEYS=" ALLOW_FOREIGN_ARCH B12X_COMMIT B12X_PATCH_FILE B12X_PATCH_SHA256 B12X_PIN B12X_REF B12X_REPO BUILD_BASE_IMAGE_TAG CUTLASS_COMMIT CUTLASS_DSL_VERSION CUTLASS_REF DEEPGEMM_COMMIT DEEPGEMM_REPO DEEPGEMM_REF EXLLAMAV3_COMMIT EXLLAMAV3_REPO FASTSAFETENSORS_SPEC FLASHINFER_BUILD_CUBIN FLASHINFER_COMMIT FLASHINFER_REF FLASHINFER_REPO FROZEN_ACK HUMMING_KERNELS_SPEC IMAGE IMAGE_REPO IMAGE_TAG INSTANTTENSOR_COMMIT INSTANTTENSOR_REF INSTANTTENSOR_REPO LAUNCHER_COMMIT LAUNCHER_REF LAUNCHER_REPO LOGGING MAX_JOBS NCCL_COMMIT NCCL_REF NCCL_REPO NVCC_THREADS PATCH_DEEPGEMM_LIBDW PATCH_EXLLAMAV3_AVX PATCH_GPU_ARCH PATCH_HOST_ARCH PATCH_PCIE_ENV PATCH_PIPCHECK_WHEELTAG PATCH_VLLM_REQ_MARKERS PATCH_VLLM_WHEEL_TAGS PIN_PREFLIGHT PIN_SOURCE_COMMITS PROFILE_NAME QUACK_KERNELS_SPEC SPARKINFER_COMMIT SPARKINFER_REF SPARKINFER_REPO SYSTEM_BASE_IMAGE TILELANG_VERSION TOKENSPEED_MLA_VERSION TORCHVISION_VERSION TORCH_BUNDLED_NCCL_VERSION TORCH_VERSION TVM_FFI_VERSION VLLM_BUILD_VERSION VLLM_COMMIT VLLM_MAX_JOBS VLLM_NVCC_THREADS VLLM_PATCH_FILE VLLM_PATCH_SHA256 VLLM_PATCH_URL VLLM_PIN VLLM_REF VLLM_REPO VLLM_REQUIRED_LAUNCHERS VLLM_RUNTIME_EXTRA_PACKAGES XGRAMMAR_COMMIT XGRAMMAR_REF XGRAMMAR_TRANSFORMERS5_COMPAT XGRAMMAR_VERSION "
 if [[ -n "${ENV_FILE}" ]]; then
   [[ -f "${ENV_FILE}" ]] || die "env file not found: ${ENV_FILE}"
   # Canonicalize now: the repo-root cd below would break a relative path for
@@ -159,7 +160,7 @@ export PROFILE_NAME
 : "${LOGGING:=0}"
 [[ "${LOG_FLAG}" != 1 ]] || LOGGING=1
 case "${LOGGING}" in 0|1) ;; *) die "LOGGING must be 0 or 1: ${LOGGING}" ;; esac
-RUN_LOG="${SCRIPT_DIR}/build-log-${PROFILE_NAME}-${RUN_STAMP}.txt"
+RUN_LOG="${SCRIPT_DIR}/logs/build-log-${PROFILE_NAME}-${RUN_STAMP}.txt"
 [[ "${LOGGING}" != 1 ]] || note "transcript: ${RUN_LOG}"
 
 # -------------------------------------------------------------- repo checks
@@ -397,7 +398,7 @@ fi
 # ------------------------------------------------------------- patch toggles
 for t in PATCH_GPU_ARCH PATCH_HOST_ARCH PATCH_PCIE_ENV \
          PATCH_PIPCHECK_WHEELTAG PATCH_VLLM_REQ_MARKERS PATCH_EXLLAMAV3_AVX \
-         PATCH_VLLM_WHEEL_TAGS; do
+         PATCH_VLLM_WHEEL_TAGS PATCH_DEEPGEMM_LIBDW; do
   v="${!t:-auto}"
   case "${v}" in on|off|auto) ;; *) die "${t} must be on, off, or auto: ${v}" ;; esac
   printf -v "${t}" '%s' "${v}"; export "${t}"
@@ -703,6 +704,39 @@ else:
           file=sys.stderr)
 PYEOF
 
+# libdw-dev for karmic-kraken DeepGEMM: KK pins vendor vllm-project/DeepGEMM
+# (deepseek-ai upstream until r39), whose python_api.cpp pulls the elfutils
+# DWARF API (elfutils/libdwfl.h) via the third-party/deep_jit submodule; the
+# wheel-builder needed an explicit apt-get for it (vllm 6027a37, KK wheel run
+# 35269892481). The cu132 DeepGEMM stage (stage 2b) runs no apt-get of its
+# own, so inject the install as the first command of that stage's RUN.
+# Harmless on deepseek-ai pins (auto): one small apt layer.
+python3 - "${dockerfile}" "${PATCH_DEEPGEMM_LIBDW}" <<'PYEOF'
+import pathlib, sys
+path, tog = pathlib.Path(sys.argv[1]), sys.argv[2]
+text = path.read_text()
+anchor = 'git clone --recursive "${DEEPGEMM_REPO}" /tmp/deepgemm-src'
+hits = [line for line in text.splitlines() if anchor in line]
+if tog == "off":
+    print("PATCH_DEEPGEMM_LIBDW=off: libdw install skipped", file=sys.stderr)
+elif len(hits) == 0 and tog == "auto":
+    print("PATCH_DEEPGEMM_LIBDW(auto): DeepGEMM clone line absent; skipping",
+          file=sys.stderr)
+else:
+    assert len(hits) == 1, f"DeepGEMM clone anchor found {len(hits)} times"
+    # The clone is the FIRST shell command of the stage's RUN (later commands
+    # use the leading " && " convention). The install becomes the new first
+    # command: no leading &&, trailing backslash-newline chains into the clone.
+    inject = ("apt-get update && apt-get install -y --no-install-recommends "
+              "libdw-dev && rm -rf /var/lib/apt/lists/* " + chr(92) + chr(10))
+    line = hits[0]
+    # keep the original leading whitespace of the clone line
+    indent = line[:len(line) - len(line.lstrip())]
+    path.write_text(text.replace(line, indent + inject + line, 1))
+    print("injected libdw-dev install before the DeepGEMM clone (stage 2b)",
+          file=sys.stderr)
+PYEOF
+
 # The exact Dockerfile the build consumed (all patches applied) -- the
 # build-log analog of a published integration-patch sha.
 PATCHED_DOCKERFILE_SHA="$(sha256sum "${dockerfile}" | cut -d' ' -f1)"
@@ -726,10 +760,15 @@ report_telemetry OK
 # Expectations come from the profile, not from literals: a profile that bumps
 # TORCH_VERSION must not fail its own correct build at the last step.
 _cu="${TORCH_VERSION##*+cu}"
-docker run --rm \
+# -i is required: without it docker does not attach the heredoc to the
+# container's stdin, `python -` reads EOF, runs NOTHING, and exits 0 --
+# false-green gate. The 'image OK' grep makes a silently-skipped
+# verification impossible to miss.
+_verify_log="$(mktemp)"
+if ! docker run -i --rm \
   -e EXPECT_TORCH="${TORCH_VERSION%%+*}" \
   -e EXPECT_CUDA="${_cu:0:2}.${_cu:2}" \
-  --entrypoint /opt/venv/bin/python "${IMAGE}" - <<'PY'
+  --entrypoint /opt/venv/bin/python "${IMAGE}" - > "${_verify_log}" <<'PY'
 import os, platform, torch
 assert platform.machine() == "aarch64", platform.machine()
 assert torch.__version__.startswith(os.environ["EXPECT_TORCH"]), torch.__version__
@@ -740,6 +779,12 @@ assert importlib.util.find_spec("humming_kernels") is not None or \
        importlib.util.find_spec("humming") is not None, "humming kernels missing"
 print("image OK: aarch64, torch", torch.__version__, "cuda", torch.version.cuda)
 PY
+then
+  die "in-image python verification failed (see traceback above)"
+fi
+grep -q 'image OK' "${_verify_log}" || die "in-image python verification produced no 'image OK' line (asserts skipped or failed)"
+sed 's/^/  /' "${_verify_log}"
+rm -f "${_verify_log}"
 for launcher in ${VLLM_REQUIRED_LAUNCHERS}; do
   docker run --rm --entrypoint test "${IMAGE}" -f "/usr/local/bin/${launcher}" \
     || die "required launcher missing from image: ${launcher}"
@@ -858,7 +903,7 @@ pip_freeze="$(docker run --rm --entrypoint /opt/venv/bin/pip "${IMAGE}" freeze 2
 # dies, and run in a SUBSHELL: `if ! func` catches a nonzero return but NOT a
 # `set -u` abort, which would kill the script after a verified build. A
 # subshell contains both.
-build_manifest="${SCRIPT_DIR}/build_manifest-${PROFILE_NAME}-${RUN_STAMP}.md"
+build_manifest="${SCRIPT_DIR}/manifest/build_manifest-${PROFILE_NAME}-${RUN_STAMP}.md"
 if ! ( emit_build_manifest ); then
   warn "build manifest emission failed -- the image itself is built and VERIFIED; re-run the wrapper (fully cached) to regenerate it, and please report this"
 fi
