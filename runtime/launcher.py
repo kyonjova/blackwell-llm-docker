@@ -952,8 +952,7 @@ def validate(values: dict, environment: dict, identifier: str) -> None:
             raise ConfigError("max-num-prefill-tokens-per-step must be nonnegative")
         if prefill_step_tokens > values["max-num-batched-tokens"]:
             raise ConfigError(
-                "max-num-prefill-tokens-per-step cannot exceed "
-                "max-num-batched-tokens"
+                "max-num-prefill-tokens-per-step cannot exceed max-num-batched-tokens"
             )
         if prefill_step_tokens > 0 and share is None:
             raise ConfigError(
