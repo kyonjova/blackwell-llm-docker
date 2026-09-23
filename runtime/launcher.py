@@ -31,6 +31,15 @@ JIT_PATHS = {
     "B12X_COMPILE_CACHE_DIR": "b12x/compile",
     "SPARKINFER_COMPILE_CACHE_DIR": "b12x/compile",
     "CUDA_CACHE_PATH": "cuda",
+    # These default to the home directory, which a recreated container loses.
+    "TILELANG_CACHE_DIR": "tilelang",
+    "TVM_FFI_CACHE_DIR": "tvm-ffi",
+    "TVM_CACHE_DIR": "tvm",
+    "FLASHINFER_WORKSPACE_BASE": "flashinfer",
+    "FLASH_ATTENTION_CUTE_DSL_CACHE_DIR": "flash-attention-cute-dsl",
+    "TORCH_EXTENSIONS_DIR": "torch-extensions",
+    "NUMBA_CACHE_DIR": "numba",
+    "CUPY_CACHE_DIR": "cupy",
 }
 NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SECRET = re.compile(
@@ -540,6 +549,10 @@ def resolve(
                     "TILELANG_",
                     "TVM_",
                     "TORCH_EXTENSIONS_",
+                    "FLASHINFER_",
+                    "FLASH_ATTENTION_",
+                    "NUMBA_",
+                    "CUPY_",
                     "INSTANTTENSOR_",
                     "SAFETENSORS_",
                 )

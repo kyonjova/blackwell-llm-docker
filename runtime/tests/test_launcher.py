@@ -540,6 +540,24 @@ def test_cache_namespaces_follow_runtime_and_profile_not_a_release_string():
 
 
 @pytest.mark.parametrize("model", MODELS)
+def test_every_jit_compiler_cache_lives_on_the_persistent_volume(model):
+    """TileLang, TVM and FlashInfer default to $HOME, which is not persisted."""
+    plan = resolve(model, env={}, runtime_identity="a" * 64)
+    root = plan.environment["XDG_CACHE_HOME"]
+    assert root.startswith("/cache/jit/" + "a" * 64 + "/")
+    for name in (
+        "TILELANG_CACHE_DIR",
+        "TVM_FFI_CACHE_DIR",
+        "FLASHINFER_WORKSPACE_BASE",
+        "TORCH_EXTENSIONS_DIR",
+        "B12X_COMPILE_CACHE_DIR",
+    ):
+        assert plan.environment[name].startswith(root + "/"), name
+    custom = resolve(model, env={"TILELANG_CACHE_DIR": "/elsewhere"})
+    assert custom.environment["TILELANG_CACHE_DIR"] == "/elsewhere"
+
+
+@pytest.mark.parametrize("model", MODELS)
 def test_checkpoint_cache_does_not_follow_jit_namespace(model):
     first = resolve(model, env={}, runtime_identity="a" * 64)
     second = resolve(model, env={}, runtime_identity="b" * 64)
