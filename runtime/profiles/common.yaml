@@ -8,6 +8,7 @@ defaults:
   cache-l1-init-gib: 2
   cache-l2-gib: 256
   cache-l2-enabled: false
+  cache-l2-odirect: false
   cache-cpu-workers: 4
   cache-l2-workers: 4
   cache-directory: /cache/lmcache

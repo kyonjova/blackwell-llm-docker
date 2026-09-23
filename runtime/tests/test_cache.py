@@ -5,7 +5,7 @@ import json
 import pytest
 
 from runtime import ConfigError
-from runtime.cache import resolve_identity
+from runtime.cache import resolve_identity, verify_installed_transfer
 from runtime.launcher import make_argv, resolve
 from runtime.supervisor import validate_pool
 
@@ -102,6 +102,26 @@ def test_ds4_ram_and_disk_use_one_cpu_only_service(identifier):
     assert ram.cache_service.environment["CUDA_VISIBLE_DEVICES"] == ""
 
 
+def test_native_filesystem_cache_exposes_explicit_direct_io_control():
+    default = resolve("qwen38-flash-next", env={"LMCACHE_MODE": "disk"})
+    direct = resolve(
+        "qwen38-flash-next",
+        env={"LMCACHE_MODE": "disk", "LMCACHE_L2_ODIRECT": "1"},
+    )
+
+    def adapter(plan):
+        index = plan.cache_service.argv.index("--l2-adapter")
+        return json.loads(plan.cache_service.argv[index + 1])
+
+    assert adapter(default)["use_odirect"] is False
+    assert adapter(direct)["use_odirect"] is True
+    assert adapter(default)["eviction"] == {
+        "eviction_policy": "LRU",
+        "trigger_watermark": 0.8,
+        "eviction_ratio": 0.2,
+    }
+
+
 def test_qwen_external_cache_preserves_scheduler_and_exact_recurrent_state():
     plan = resolve("qwen38-flash-next", env={"CACHE_MODE": "lmcache"})
     assert plan.values["max-num-batched-tokens"] == 6019
@@ -115,6 +135,54 @@ def test_qwen_external_cache_preserves_scheduler_and_exact_recurrent_state():
     assert plan.cache_service.identity_required
     assert plan.cache_service.environment["CUDA_VISIBLE_DEVICES"] == ""
     assert plan.values["cache-gpu-workers"] == 1
+
+
+@pytest.mark.parametrize(("tp", "dcp"), [(2, 1), (2, 2), (4, 1), (4, 2), (4, 4)])
+def test_qwen_atomic_cache_supports_tp_dcp_topologies(tp, dcp):
+    plan = resolve(
+        "qwen38-flash-next",
+        env={
+            "CACHE_MODE": "lmcache",
+            "TP": str(tp),
+            "DCP": str(dcp),
+        },
+    )
+    assert plan.values["recurrent-checkpoint-policy"] == "request_boundaries"
+    assert (
+        plan.values["kv-transfer-config"]["kv_connector"]
+        == "LMCacheRecurrentCheckpointConnector"
+    )
+    assert plan.values["cache-gpu-workers"] == tp
+
+
+@pytest.mark.parametrize(
+    "identifier,dcp,supported,probed",
+    [
+        ("qwen38-flash-next", 1, False, False),
+        ("qwen38-flash-next", 2, True, True),
+        ("qwen38-flash-next", 2, False, True),
+        ("glm53-flash", 4, False, False),
+    ],
+)
+def test_qwen_dcp_cache_requires_installed_atomic_qsa_transfer(
+    identifier, dcp, supported, probed
+):
+    plan = resolve(
+        identifier, env={"CACHE_MODE": "lmcache", "TP": "4", "DCP": str(dcp)}
+    )
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs["env"]["CUDA_VISIBLE_DEVICES"]))
+        return type("Result", (), {"returncode": 0 if supported else 3})()
+
+    if probed and not supported:
+        with pytest.raises(ConfigError, match="atomic QSA checkpoint transfer"):
+            verify_installed_transfer(plan, run=run)
+    else:
+        verify_installed_transfer(plan, run=run)
+    assert len(calls) == int(probed)
+    assert all(devices == "" for _command, devices in calls)
 
 
 @pytest.mark.parametrize("identifier", ["glm53-flash", "qwen38-flash-next"])
@@ -209,7 +277,6 @@ def test_qwen_native_cpu_cache_rejects_incompatible_contract(extra, error):
     [
         {"recurrent-checkpoint-policy": "aligned"},
         {"prefix-cache-retention-interval": 4096},
-        {"tensor-parallel-size": 2, "decode-context-parallel-size": 2},
     ],
 )
 def test_qwen_rejects_incompatible_checkpoint_contract(extra):

@@ -571,6 +571,13 @@
       "LMCACHE_MODE"
     ]
   },
+  "cache-l2-odirect": {
+    "type": "boolean",
+    "control": true,
+    "env": [
+      "LMCACHE_L2_ODIRECT"
+    ]
+  },
   "cache-directory": {
     "type": "string",
     "control": true,
