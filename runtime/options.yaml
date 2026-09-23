@@ -578,6 +578,17 @@
       "LMCACHE_L2_ODIRECT"
     ]
   },
+  "cache-l2-checkpoint-writes": {
+    "type": "string",
+    "control": true,
+    "env": [
+      "LMCACHE_L2_CHECKPOINT_WRITES"
+    ],
+    "enum": [
+      "always",
+      "on-reuse"
+    ]
+  },
   "cache-directory": {
     "type": "string",
     "control": true,
