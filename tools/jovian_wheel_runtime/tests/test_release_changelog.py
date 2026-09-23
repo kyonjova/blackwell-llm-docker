@@ -107,7 +107,8 @@ def install_release_pages(monkeypatch, pages):
 
     monkeypatch.setattr(changelog, "api", fake_api)
     monkeypatch.setattr(
-        changelog, "asset_bytes",
+        changelog,
+        "asset_bytes",
         lambda repository, asset: json.dumps(asset["payload"]).encode(),
     )
     return requests
@@ -134,9 +135,17 @@ def test_previous_publication_checks_later_pages_before_selecting(monkeypatch):
     assert len(requests) == 2
 
 
-@pytest.mark.parametrize("unavailable", [
-    "draft", "unpublished", "assembly", "incomplete", "unqualified", "channel",
-])
+@pytest.mark.parametrize(
+    "unavailable",
+    [
+        "draft",
+        "unpublished",
+        "assembly",
+        "incomplete",
+        "unqualified",
+        "channel",
+    ],
+)
 def test_previous_publication_skips_ineligible_publications(monkeypatch, unavailable):
     candidate = publication("ineligible", "2026-09-22T06:00:00Z")
     if unavailable == "draft":
@@ -151,9 +160,15 @@ def test_previous_publication_skips_ineligible_publications(monkeypatch, unavail
         candidate["assets"][1]["payload"]["status"] = "failed"
     elif unavailable == "channel":
         candidate["assets"][0]["payload"]["release_channel"] = "beta"
-    install_release_pages(monkeypatch, [[
-        candidate, publication("eligible", "2026-09-22T05:00:00Z"),
-    ]])
+    install_release_pages(
+        monkeypatch,
+        [
+            [
+                candidate,
+                publication("eligible", "2026-09-22T05:00:00Z"),
+            ]
+        ],
+    )
     result = changelog.previous_publication("example/runtime", assembly())
     assert result["tag"] == "eligible"
 
@@ -263,3 +278,55 @@ def test_published_fragments_are_immutable(monkeypatch, mutation):
     )
     with pytest.raises(ValueError, match="fragments are immutable"):
         changelog.collect_release_changelog(assembly(), "example/releases")
+
+
+def test_collects_recipe_fragments_since_the_previous_recipe(monkeypatch):
+    """Launcher and profile changes in this repository reach the release notes."""
+    recipe_payload = fragment("docker-71", pull_requests=[71])
+    recipe_payload["requires"] = []
+    vllm_payload = {**fragment(), "requires": []}
+    by_source = {
+        ("local-inference-lab/vllm", "vllm-old"): {},
+        ("local-inference-lab/vllm", "vllm-new"): {"vllm-816": record(vllm_payload)},
+        ("local-inference-lab/b12x", "b12x-old"): {},
+        ("local-inference-lab/b12x", "b12x-new"): {
+            "b12x-402": record(
+                fragment("b12x-402", pull_requests=[402]) | {"requires": []}
+            )
+        },
+        ("example/releases", "recipe-old"): {},
+        ("example/releases", "recipe-new"): {"docker-71": record(recipe_payload)},
+    }
+    prior = previous()
+    prior["assembly"]["recipe_commit"] = "recipe-old"
+    current = assembly()
+    current["recipe_commit"] = "recipe-new"
+    monkeypatch.setattr(changelog, "previous_publication", lambda *args: prior)
+    monkeypatch.setattr(
+        changelog,
+        "load_fragments",
+        lambda repository, commit, component: by_source[(repository, commit)],
+    )
+    monkeypatch.setattr(
+        changelog,
+        "_pull_request",
+        lambda repository, number: {
+            "number": number,
+            "url": f"https://github.com/{repository}/pull/{number}",
+            "title": "Reviewed change",
+            "author": "@contributor",
+        },
+    )
+
+    result = changelog.collect_release_changelog(current, "example/releases")
+
+    assert "docker-71" in [change["id"] for change in result["changes"]]
+    assert result["components"]["docker"] == {
+        "repository": "example/releases",
+        "previous_commit": "recipe-old",
+        "current_commit": "recipe-new",
+        "change_count": 1,
+    }
+    assert "[docker #71](https://github.com/example/releases/pull/71)" in (
+        changelog.render_release_notes(result)
+    )

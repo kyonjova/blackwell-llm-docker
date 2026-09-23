@@ -1,0 +1,19 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-71",
+  "category": "feature",
+  "summary": "Write recurrent checkpoints to disk only after reuse",
+  "models": [
+    "Qwen3.8-Flash-Next",
+    "GLM-5.3-Flash"
+  ],
+  "compatibility": "No user action required.",
+  "details": [
+    "cache-l2-checkpoint-writes (LMCACHE_L2_CHECKPOINT_WRITES) accepts always (default) or on-reuse.",
+    "on-reuse persists a checkpoint to the LMCache disk tier only after a restore has reused it; in a Qwen test disk writes fell from 334 to 501 MB to 0.1 to 0.2 MB per request.",
+    "A checkpoint evicted from RAM before any reuse is not on disk."
+  ],
+  "pull_requests": [
+    71
+  ]
+}

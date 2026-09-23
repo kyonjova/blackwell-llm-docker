@@ -16,6 +16,8 @@ from container_channel import api, asset_bytes
 SCHEMA = "local-inference-release-change/v1"
 OUTPUT_SCHEMA = "local-inference-container-changelog/v1"
 CHANGE_PATH = ".lil/changes"
+# Launcher, profiles and image recipe changes, recorded in this repository.
+RECIPE_COMPONENT = "docker"
 CATEGORIES = {
     "breaking",
     "compatibility",
@@ -231,19 +233,30 @@ def collect_release_changelog(assembly: dict, publication_repository: str) -> di
             f"changelog policy names unknown components: {sorted(unknown_required)}"
         )
 
+    sources = dict(assembly["components"])
+    previous_sources = dict((previous or {}).get("assembly", {}).get("components", {}))
+    # The recipe ships in the image too; its fragments live in this repository.
+    if assembly.get("recipe_commit"):
+        sources[RECIPE_COMPONENT] = {
+            "repository": publication_repository,
+            "source_commit": assembly["recipe_commit"],
+        }
+        previous_recipe = (previous or {}).get("assembly", {}).get("recipe_commit")
+        if previous_recipe:
+            previous_sources[RECIPE_COMPONENT] = {
+                "repository": publication_repository,
+                "source_commit": previous_recipe,
+            }
+
     current_by_component: dict[str, dict[str, dict]] = {}
     added: list[tuple[str, str, dict]] = []
     component_ranges = {}
-    for component, current in assembly["components"].items():
+    for component, current in sources.items():
         repository = current["repository"]
         current_commit = current["source_commit"]
         current_fragments = load_fragments(repository, current_commit, component)
         current_by_component[component] = current_fragments
-        previous_component = (
-            previous.get("assembly", {}).get("components", {}).get(component)
-            if previous
-            else None
-        )
+        previous_component = previous_sources.get(component) if previous else None
         previous_commit = None
         previous_fragments: dict[str, dict] = {}
         if previous_component and previous_component.get("repository") == repository:
@@ -338,7 +351,7 @@ def render_release_notes(changelog: dict) -> str:
     )
     rows = [f"## {heading}", ""]
     if not changelog["changes"]:
-        rows += ["No vLLM or B12X runtime changes are recorded for this assembly.", ""]
+        rows += ["No component changes are recorded for this assembly.", ""]
         return "\n".join(rows)
     grouped: dict[str, list[dict]] = defaultdict(list)
     for change in changelog["changes"]:

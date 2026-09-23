@@ -1,0 +1,16 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-68",
+  "category": "feature",
+  "summary": "Expose the per-step prefill limit in the launcher",
+  "models": [
+    "all"
+  ],
+  "compatibility": "No user action required.",
+  "details": [
+    "The max-num-prefill-tokens-per-step option (MAX_NUM_PREFILL_TOKENS_PER_STEP) bounds prefill work per step while decode requests compete for compute."
+  ],
+  "pull_requests": [
+    68
+  ]
+}
