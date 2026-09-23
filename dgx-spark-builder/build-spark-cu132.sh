@@ -552,11 +552,27 @@ text = path.read_text()
 # image's metadata is identical either way. The final stage follows
 # vllm-build in the graph, so changing its layers costs only the cheap
 # final-stage steps.
-FIX_WHEEL = ("{py} -c \"import sysconfig,pathlib; "
+#
+# FIX_FULL also re-pins vllm's `quack-kernels==X` Requires-Dist to the
+# version ACTUALLY installed (QUACK_KERNELS_SPEC). vllm's requirements/cuda.txt
+# carries nvidia-cutlass-dsl==4.7.1 + quack-kernels==0.6.5 from the upstream
+# vllm-project merge "[CI] Bump CUTLASS DSL to 4.7 (#54927)" (ec6b0494f,
+# 2026-09-11) -- NOT a karmic-kraken decision. KK's own wheel pipeline
+# (tools/jovian_wheel_release/normalize_wheel.py + runtime.lock at the pin)
+# rewrites nvidia-cutlass-dsl back to 4.6.2 ("The SM120 foundation, B12X and
+# FlashInfer share DSL 4.6.2. Upstream's 4.7.1 bump accompanies FA4, which
+# does not support SM120") and drops quack-kernels from Requires-Dist
+# entirely. b12x pins 4.6.2 on master AND integration/karmic-kraken-beta.
+# quack 0.6.5 requires cutlass-dsl>=4.7, so 0.6.4 (built for 4.6.2) is the
+# release that matches the KK contract. Upstream blackwell-llm-docker already
+# rewrites the cutlass-dsl pin in cuda.txt but not quack's, so the strict pip
+# check fails on that one line. The rewrite is printed in the build log;
+# every other requirement stays strict.
+FIX_WHEEL =("{py} -c \"import sysconfig,pathlib; "
              "[p.write_text(p.read_text().replace('_sbsa','_aarch64')) "
              "for d in {{sysconfig.get_paths()['purelib'],sysconfig.get_paths()['platlib']}} "
              "for p in pathlib.Path(d).glob('*.dist-info/WHEEL')]\"")
-FIX_FULL = ("{py} -c \"import sysconfig,pathlib,re; "
+FIX_FULL = ("{py} -c \"import sysconfig,pathlib,re,importlib.metadata as md; "
             "dirs={{sysconfig.get_paths()['purelib'],sysconfig.get_paths()['platlib']}}; "
             "[p.write_text(p.read_text().replace('_sbsa','_aarch64')) "
             "for d in dirs "
@@ -564,7 +580,13 @@ FIX_FULL = ("{py} -c \"import sysconfig,pathlib,re; "
             "[p.write_text(re.sub(r'(?m)^(Requires-Dist: (?:PyNvVideoCodec|instanttensor)\\b[^;\\n]*?)\\s*$', "
             "lambda m: m.group(1) + '; platform_machine == \\'x86_64\\'', p.read_text())) "
             "for d in dirs "
-            "for p in pathlib.Path(d).glob('vllm-*.dist-info/METADATA')]\"")
+            "for p in pathlib.Path(d).glob('vllm-*.dist-info/METADATA')]; "
+            "qv=md.version('quack-kernels'); "
+            "hits=[(p, re.subn(r'(?m)^Requires-Dist: quack-kernels==[^;\\n]*', 'Requires-Dist: quack-kernels=='+qv, p.read_text())) "
+            "for d in dirs "
+            "for p in pathlib.Path(d).glob('vllm-*.dist-info/METADATA')]; "
+            "[p.write_text(t) for p,(t,n) in hits if n]; "
+            "print('vllm metadata: quack-kernels pin ->', qv, '(', sum(n for _,(_,n) in hits), 'line(s) rewritten)')\"")
 
 venv_gates = 0
 
