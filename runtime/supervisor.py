@@ -7,6 +7,7 @@ import os
 import signal
 import socket
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -90,6 +91,25 @@ def preflight(service: CacheService, environment: dict) -> None:
                 ) from error
 
 
+def describe_exit(status: int) -> str:
+    if status >= 0:
+        return f"status {status}"
+    try:
+        name = signal.Signals(-status).name
+    except ValueError:
+        name = f"signal {-status}"
+    if status == -signal.SIGKILL:
+        # Nothing in this container sends SIGKILL before its own shutdown.
+        return f"{name}; the host kernel OOM killer is the usual sender, see dmesg"
+    return name
+
+
+def announce(message: str) -> None:
+    # Printed before shutdown starts, so it precedes the model server's own
+    # shutdown messages and names the actual cause.
+    print(f"[lil-serve] {message}", file=sys.stderr, flush=True)
+
+
 def stop_groups(children, grace=10):
     for child in children:
         try:
@@ -157,18 +177,36 @@ def supervise(
             except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
                 time.sleep(0.1)
         if requested_signal:
+            announce(
+                f"Received {signal.Signals(requested_signal).name} before the model "
+                "server started; stopping LMCache"
+            )
             return 128 + requested_signal
         if cache.poll() is not None:
             raise ConfigError("LMCache exited after its readiness response")
         model = subprocess.Popen(model_command, env=environment, start_new_session=True)
         children.append(model)
         while not requested_signal:
-            if cache.poll() is not None:
-                raise ConfigError("LMCache exited while the model server was running")
+            status = cache.poll()
+            if status is not None:
+                reason = (
+                    f"LMCache exited ({describe_exit(status)}) while the model "
+                    "server was running"
+                )
+                announce(f"{reason}; stopping the model server")
+                raise ConfigError(reason)
             status = model.poll()
             if status is not None:
+                announce(
+                    f"Model server exited ({describe_exit(status)}); stopping LMCache"
+                )
                 return status if status >= 0 else 128 - status
             time.sleep(0.1)
+        announce(
+            f"Received {signal.Signals(requested_signal).name} from outside the "
+            "container, usually docker stop, a Compose recreation or an image "
+            "updater; stopping the model server and LMCache"
+        )
         return 128 + requested_signal
     finally:
         stop_groups(children)
