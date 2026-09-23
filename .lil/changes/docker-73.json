@@ -1,0 +1,13 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-73",
+  "category": "fix",
+  "summary": "Keep TileLang, TVM and FlashInfer compile caches on the persistent /cache volume",
+  "models": ["all"],
+  "compatibility": "No user action required.",
+  "details": [
+    "These caches defaulted to the home directory inside the container, so a recreated container compiled them again; DeepSeek V4 lost minutes of TileLang compilation per start.",
+    "The launcher now places them under /cache/jit/<runtime>/<profile>/ next to the B12X, Triton and vLLM caches; explicit values still take precedence."
+  ],
+  "pull_requests": [73]
+}
