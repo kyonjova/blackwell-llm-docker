@@ -376,7 +376,7 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
             "use_odirect": values["cache-l2-odirect"],
             "max_capacity_gb": values["cache-l2-gib"],
         }
-        if glm:
+        if glm or qwen:
             l2["eviction"] = {
                 "eviction_policy": "LRU",
                 "trigger_watermark": 0.8,

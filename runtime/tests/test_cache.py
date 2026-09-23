@@ -115,6 +115,11 @@ def test_native_filesystem_cache_exposes_explicit_direct_io_control():
 
     assert adapter(default)["use_odirect"] is False
     assert adapter(direct)["use_odirect"] is True
+    assert adapter(default)["eviction"] == {
+        "eviction_policy": "LRU",
+        "trigger_watermark": 0.8,
+        "eviction_ratio": 0.2,
+    }
 
 
 def test_qwen_external_cache_preserves_scheduler_and_exact_recurrent_state():
