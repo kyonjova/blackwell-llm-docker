@@ -711,10 +711,26 @@ PYEOF
 # 35269892481). The cu132 DeepGEMM stage (stage 2b) runs no apt-get of its
 # own, so inject the install as the first command of that stage's RUN.
 # Harmless on deepseek-ai pins (auto): one small apt layer.
+#
+# Runtime half: the compiled deep_gemm extension links libdw.so.1, but the
+# final stage is FROM system-base (not from deepgemm-build) and only COPYs
+# /opt/venv across -- the shared library stays behind in the build stage and
+# `import deep_gemm` dies with "libdw.so.1: cannot open shared object file"
+# at the final-stage verify step. So the same toggle also injects the RUNTIME
+# package (libdw1t64, which pulls libelf1t64) as the first RUN of the final
+# stage. Placed before the COPY --from lines on purpose: the layer then
+# depends only on system-base and stays cached across every vLLM/B12X pin
+# bump.
+#
+# Both injections are verified as shell chains, not just as anchor hits: the
+# first revision of this patch ended the install in a bare "\" (continuation,
+# not separator), turning the clone into arguments to `rm -rf`.
 python3 - "${dockerfile}" "${PATCH_DEEPGEMM_LIBDW}" <<'PYEOF'
-import pathlib, sys
+import pathlib, re, sys
 path, tog = pathlib.Path(sys.argv[1]), sys.argv[2]
 text = path.read_text()
+BS_NL = chr(92) + chr(10)   # backslash-newline
+APT = "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends"
 anchor = 'git clone --recursive "${DEEPGEMM_REPO}" /tmp/deepgemm-src'
 hits = [line for line in text.splitlines() if anchor in line]
 if tog == "off":
@@ -724,16 +740,44 @@ elif len(hits) == 0 and tog == "auto":
           file=sys.stderr)
 else:
     assert len(hits) == 1, f"DeepGEMM clone anchor found {len(hits)} times"
+
+    # --- build half (stage 2b): libdw-dev headers for python_api.cpp.
     # The clone is the FIRST shell command of the stage's RUN (later commands
     # use the leading " && " convention). The install becomes the new first
-    # command: no leading &&, trailing backslash-newline chains into the clone.
-    inject = ("apt-get update && apt-get install -y --no-install-recommends "
-              "libdw-dev && rm -rf /var/lib/apt/lists/* " + chr(92) + chr(10))
+    # command and must END in "&& \" so the clone is a separate command whose
+    # failure (and the install's) still aborts the RUN.
+    inject = ("apt-get update && " + APT + " libdw-dev"
+              " && rm -rf /var/lib/apt/lists/* && " + BS_NL)
     line = hits[0]
-    # keep the original leading whitespace of the clone line
     indent = line[:len(line) - len(line.lstrip())]
-    path.write_text(text.replace(line, indent + inject + line, 1))
-    print("injected libdw-dev install before the DeepGEMM clone (stage 2b)",
+    text = text.replace(line, indent + inject + line, 1)
+    assert re.search(r'/var/lib/apt/lists/\* && \\\n\s*git clone --recursive '
+                     r'"\$\{DEEPGEMM_REPO\}" /tmp/deepgemm-src', text), \
+        "PATCH_DEEPGEMM_LIBDW: build-stage install does not chain into the clone"
+
+    # --- runtime half (final stage): libdw.so.1 for `import deep_gemm`.
+    # Anchor: the SHELL line that directly follows "... AS final". Upstream
+    # has exactly one final stage; anything else is a shape change -> die.
+    final_re = re.compile(
+        r'(^FROM \S+ AS final\n(?:ARG [^\n]*\n|\n)*'
+        r'SHELL \["/bin/bash", "-euxo", "pipefail", "-c"\]\n)', re.MULTILINE)
+    fh = final_re.findall(text)
+    assert len(fh) == 1, (
+        f"PATCH_DEEPGEMM_LIBDW: final-stage SHELL anchor found {len(fh)} times "
+        "-- upstream changed the final stage's shape; update final_re")
+    runtime = ("\n# PATCH_DEEPGEMM_LIBDW (runtime): libdw.so.1 for deep_gemm's _C extension\n"
+               "RUN apt-get update " + BS_NL +
+               " && " + APT + " libdw1t64 " + BS_NL +
+               " && rm -rf /var/lib/apt/lists/*\n")
+    text = text.replace(fh[0], fh[0] + runtime, 1)
+    # The runtime RUN must precede the final stage's deep_gemm verify.
+    fin = text.index(fh[0])
+    rt, vf = text.index("libdw1t64", fin), text.find("import deep_gemm", fin)
+    assert vf == -1 or rt < vf, "PATCH_DEEPGEMM_LIBDW: runtime install landed after the deep_gemm verify"
+
+    path.write_text(text)
+    print("injected libdw-dev install before the DeepGEMM clone (stage 2b) "
+          "+ libdw1t64 runtime install at the top of the final stage",
           file=sys.stderr)
 PYEOF
 
@@ -777,6 +821,16 @@ import importlib.util
 assert importlib.util.find_spec("b12x") is not None, "b12x/sparkinfer missing"
 assert importlib.util.find_spec("humming_kernels") is not None or \
        importlib.util.find_spec("humming") is not None, "humming kernels missing"
+# deep_gemm is only exercised on the DS4 path, so a missing shared library
+# (libdw.so.1, see PATCH_DEEPGEMM_LIBDW) would otherwise surface at serve
+# time. Import it here, and resolve every native extension it ships.
+import deep_gemm, glob, subprocess
+dg_dir = os.path.dirname(deep_gemm.__file__)
+for so in glob.glob(os.path.join(dg_dir, "**", "*.so"), recursive=True):
+    missing = [l.strip() for l in subprocess.run(["ldd", so], capture_output=True, text=True).stdout.splitlines()
+               if "not found" in l]
+    assert not missing, f"{so}: unresolved libraries: {missing}"
+print("deep_gemm OK:", dg_dir)
 print("image OK: aarch64, torch", torch.__version__, "cuda", torch.version.cuda)
 PY
 then
@@ -875,7 +929,7 @@ pip_freeze="$(docker run --rm --entrypoint /opt/venv/bin/pip "${IMAGE}" freeze 2
   cat "${PATCH_REPORT}" 2>/dev/null || echo "UNKNOWN — needs verification"
   printf '```\n\n'
   printf '## Verification (commands executed by this wrapper, all passed)\n\n'
-  printf -- '- In-image python asserts: aarch64, torch 2.13.0+cu132, cuda 13.2, `b12x` and humming kernels importable\n'
+  printf -- '- In-image python asserts: aarch64, torch 2.13.0+cu132, cuda 13.2, `b12x` and humming kernels importable, `deep_gemm` imports with all native libraries resolved\n'
   printf -- '- Required launchers present: `%s`\n' "${VLLM_REQUIRED_LAUNCHERS:-none configured}"
   printf -- '- Patched NCCL present: `/opt/libnccl-local-inference.so.2.30.4`\n'
   printf -- '- CUDA compat shim present: `/usr/local/cuda/compat/libcuda.so.1`\n'
