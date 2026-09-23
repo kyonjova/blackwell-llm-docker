@@ -8,7 +8,8 @@
 # With a profile, VLLM_PIN / B12X_PIN are compared against what the image
 # reports, and TORCH_VERSION / VLLM_REQUIRED_LAUNCHERS set the expectations
 # for the generic contract. Checks, in order: source identity, the RoCEnante
-# composition (vLLM PR #597 + b12x PR #295), KDA, DeepGEMM, then the generic
+# composition (vLLM PR #597 + b12x PR #295), KDA, DeepGEMM, io_uring + the
+# baked seccomp profile (image checks, then HOST notes), then the generic
 # image contract.
 set -euo pipefail
 IMAGE="${1:?usage: probe-image-cu132.sh IMAGE [build.env]}"
@@ -113,6 +114,57 @@ for so in sos:
     missing = [l.strip() for l in out.splitlines() if "not found" in l]
     assert not missing, f"{so}: unresolved {missing}"
 PY
+
+echo "== io_uring loader path (PATCH_IO_URING)"
+# The b12x loader's Spark read path compiles against liburing at first use;
+# without it: "io_uring bounce support is unavailable".
+sh 'pkg-config --exists liburing' && ok "liburing $(sh 'pkg-config --modversion liburing' 2>/dev/null) visible to pkg-config" \
+  || bad "liburing-dev missing: LOAD_FORMAT=b12x dies at load (rebuild with PATCH_IO_URING=auto|on)"
+seccomp_path="$(label org.local-inference.seccomp-profile)"; seccomp_sha="$(label org.local-inference.seccomp-profile.sha256)"
+if [[ -z "$seccomp_path" ]]; then
+  echo "  NOTE  no seccomp profile baked (org.local-inference.seccomp-profile label absent)"
+else
+  echo "  seccomp profile: $seccomp_path  sha256 ${seccomp_sha:0:12}  from $(label org.local-inference.seccomp-profile.source)"
+  sh "echo '$seccomp_sha  $seccomp_path' | sha256sum -c - >/dev/null" && ok "baked seccomp profile matches its label sha256" \
+    || bad "baked seccomp profile missing or does not match its label"
+fi
+
+# HOST checks -- informational: they describe the machine running this probe,
+# not the image. An image cannot apply seccomp to itself; the runtime installs
+# the filter before the entrypoint. Serving needs io_uring allowed by the
+# daemon default (no --security-opt in any launcher).
+host_prof="$(docker info --format '{{range .SecurityOptions}}{{println .}}{{end}}' 2>/dev/null | sed -n 's/^name=seccomp,profile=//p')"
+echo "  HOST  docker default seccomp: ${host_prof:-(none reported)}"
+if [[ -n "$seccomp_sha" && -f "$host_prof" ]]; then
+  if [[ "$(sha256sum "$host_prof" | cut -d' ' -f1)" == "$seccomp_sha" ]]; then
+    echo "  HOST  daemon default profile == the image's baked profile"
+  else
+    echo "  HOST  daemon default profile DIFFERS from the image's baked profile (re-extract after a pin bump if the upstream profile changed)"
+  fi
+fi
+# io_uring_setup is syscall 425 on aarch64 and x86_64. NULL params: an
+# allowed kernel answers EFAULT; seccomp (or io_uring_disabled) answers EPERM.
+uring="$(docker run --rm --entrypoint /opt/venv/bin/python "$IMAGE" -c '
+import ctypes, errno
+libc = ctypes.CDLL(None, use_errno=True); libc.syscall(425, 0, 0)
+print("BLOCKED" if ctypes.get_errno() == errno.EPERM else "OK")' 2>/dev/null || echo ERROR)"
+case "$uring" in
+  OK) echo "  HOST  io_uring ALLOWED in a default container -- launchers need no --security-opt on this host" ;;
+  *BLOCKED*)
+    echo "  HOST  io_uring BLOCKED in a default container (EPERM). One-time fix per node (restarts dockerd):"
+    if [[ -n "$seccomp_path" ]]; then
+      echo "          sudo mkdir -p /etc/docker/seccomp"
+      echo "          docker run --rm --entrypoint cat $IMAGE $seccomp_path | sudo tee /etc/docker/seccomp/spark-io-uring.json >/dev/null"
+    fi
+      cat <<'EOT'
+          sudo jq --arg p /etc/docker/seccomp/spark-io-uring.json '. + {"seccomp-profile": $p}' \
+            /etc/docker/daemon.json > /tmp/daemon.json && sudo mv /tmp/daemon.json /etc/docker/daemon.json
+          sudo systemctl restart docker
+        and confirm: sysctl kernel.io_uring_disabled  (must be 0)
+EOT
+      ;;
+  *) echo "  HOST  io_uring probe inconclusive: $uring" ;;
+esac
 
 echo "== generic image contract"
 EXPECT_TORCH="$want_torch" EXPECT_CUDA="$want_cuda" \

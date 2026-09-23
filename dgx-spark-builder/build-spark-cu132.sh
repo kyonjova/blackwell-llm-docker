@@ -95,7 +95,7 @@ fi
 [[ -n "${ENV_FILE}" ]] \
   || warn "no profile found beside this script: building from IN-SCRIPT FALLBACK PINS, which are not the source of truth and are probably stale"
 
-ALLOWED_KEYS=" ALLOW_FOREIGN_ARCH B12X_COMMIT B12X_PATCH_FILE B12X_PATCH_SHA256 B12X_PIN B12X_REF B12X_REPO BUILD_BASE_IMAGE_TAG CUTLASS_COMMIT CUTLASS_DSL_VERSION CUTLASS_REF DEEPGEMM_COMMIT DEEPGEMM_REPO DEEPGEMM_REF EXLLAMAV3_COMMIT EXLLAMAV3_REPO FASTSAFETENSORS_SPEC FLASHINFER_BUILD_CUBIN FLASHINFER_COMMIT FLASHINFER_REF FLASHINFER_REPO FROZEN_ACK HUMMING_KERNELS_SPEC IMAGE IMAGE_REPO IMAGE_TAG INSTANTTENSOR_COMMIT INSTANTTENSOR_REF INSTANTTENSOR_REPO LAUNCHER_COMMIT LAUNCHER_REF LAUNCHER_REPO LOGGING MAX_JOBS NCCL_COMMIT NCCL_REF NCCL_REPO NVCC_THREADS PATCH_DEEPGEMM_LIBDW PATCH_EXLLAMAV3_AVX PATCH_GPU_ARCH PATCH_HOST_ARCH PATCH_PCIE_ENV PATCH_PIPCHECK_WHEELTAG PATCH_VLLM_REQ_MARKERS PATCH_VLLM_WHEEL_TAGS PIN_PREFLIGHT PIN_SOURCE_COMMITS PROFILE_NAME QUACK_KERNELS_SPEC SPARKINFER_COMMIT SPARKINFER_REF SPARKINFER_REPO SYSTEM_BASE_IMAGE TILELANG_VERSION TOKENSPEED_MLA_VERSION TORCHVISION_VERSION TORCH_BUNDLED_NCCL_VERSION TORCH_VERSION TVM_FFI_VERSION VLLM_BUILD_VERSION VLLM_COMMIT VLLM_MAX_JOBS VLLM_NVCC_THREADS VLLM_PATCH_FILE VLLM_PATCH_SHA256 VLLM_PATCH_URL VLLM_PIN VLLM_REF VLLM_REPO VLLM_REQUIRED_LAUNCHERS VLLM_RUNTIME_EXTRA_PACKAGES XGRAMMAR_COMMIT XGRAMMAR_REF XGRAMMAR_TRANSFORMERS5_COMPAT XGRAMMAR_VERSION "
+ALLOWED_KEYS=" ALLOW_FOREIGN_ARCH B12X_COMMIT B12X_PATCH_FILE B12X_PATCH_SHA256 B12X_PIN B12X_REF B12X_REPO BUILD_BASE_IMAGE_TAG CUTLASS_COMMIT CUTLASS_DSL_VERSION CUTLASS_REF DEEPGEMM_COMMIT DEEPGEMM_REPO DEEPGEMM_REF EXLLAMAV3_COMMIT EXLLAMAV3_REPO FASTSAFETENSORS_SPEC FLASHINFER_BUILD_CUBIN FLASHINFER_COMMIT FLASHINFER_REF FLASHINFER_REPO FROZEN_ACK HUMMING_KERNELS_SPEC IMAGE IMAGE_REPO IMAGE_TAG INSTANTTENSOR_COMMIT INSTANTTENSOR_REF INSTANTTENSOR_REPO LAUNCHER_COMMIT LAUNCHER_REF LAUNCHER_REPO LOGGING MAX_JOBS NCCL_COMMIT NCCL_REF NCCL_REPO NVCC_THREADS PATCH_DEEPGEMM_LIBDW PATCH_EXLLAMAV3_AVX PATCH_GPU_ARCH PATCH_IO_URING PATCH_HOST_ARCH PATCH_PCIE_ENV PATCH_PIPCHECK_WHEELTAG PATCH_VLLM_REQ_MARKERS PATCH_VLLM_WHEEL_TAGS PIN_PREFLIGHT PIN_SOURCE_COMMITS PROFILE_NAME QUACK_KERNELS_SPEC SECCOMP_PROFILE_SRC SPARKINFER_COMMIT SPARKINFER_REF SPARKINFER_REPO SYSTEM_BASE_IMAGE TILELANG_VERSION TOKENSPEED_MLA_VERSION TORCHVISION_VERSION TORCH_BUNDLED_NCCL_VERSION TORCH_VERSION TVM_FFI_VERSION VLLM_BUILD_VERSION VLLM_COMMIT VLLM_MAX_JOBS VLLM_NVCC_THREADS VLLM_PATCH_FILE VLLM_PATCH_SHA256 VLLM_PATCH_URL VLLM_PIN VLLM_REF VLLM_REPO VLLM_REQUIRED_LAUNCHERS VLLM_RUNTIME_EXTRA_PACKAGES XGRAMMAR_COMMIT XGRAMMAR_REF XGRAMMAR_TRANSFORMERS5_COMPAT XGRAMMAR_VERSION "
 if [[ -n "${ENV_FILE}" ]]; then
   [[ -f "${ENV_FILE}" ]] || die "env file not found: ${ENV_FILE}"
   # Canonicalize now: the repo-root cd below would break a relative path for
@@ -398,7 +398,7 @@ fi
 # ------------------------------------------------------------- patch toggles
 for t in PATCH_GPU_ARCH PATCH_HOST_ARCH PATCH_PCIE_ENV \
          PATCH_PIPCHECK_WHEELTAG PATCH_VLLM_REQ_MARKERS PATCH_EXLLAMAV3_AVX \
-         PATCH_VLLM_WHEEL_TAGS PATCH_DEEPGEMM_LIBDW; do
+         PATCH_VLLM_WHEEL_TAGS PATCH_DEEPGEMM_LIBDW PATCH_IO_URING; do
   v="${!t:-auto}"
   case "${v}" in on|off|auto) ;; *) die "${t} must be on, off, or auto: ${v}" ;; esac
   printf -v "${t}" '%s' "${v}"; export "${t}"
@@ -802,6 +802,117 @@ else:
           "+ libdw1t64 runtime install at the top of the final stage",
           file=sys.stderr)
 PYEOF
+
+# ------------------------------------------------------------ PATCH_IO_URING
+# The b12x loader (LOAD_FORMAT=b12x) reads weights on Spark through an
+# O_DIRECT io_uring "bounce" ring. b12x compiles that reader at first use
+# against liburing and treats liburing as OPTIONAL: without liburing-dev the
+# load dies with "io_uring bounce support is unavailable: install liburing
+# development headers and pkg-config". Upstream ships this as a derived image
+# (vllm docker/Dockerfile.spark-io-uring); here it is folded into the final
+# stage so there is one image for every loader.
+#
+# The same RUN writes KK's seccomp profile (vllm scripts/seccomp/
+# spark-io-uring.json, fetched at the PINNED vLLM commit so it is versioned
+# with the engine) to /opt/local-inference/seccomp/spark-io-uring.json and
+# records its sha256 in image labels. NOTE: an image cannot APPLY a seccomp
+# profile to itself -- the filter is installed by the runtime before the
+# entrypoint runs. The baked copy is the source of truth for the one-time
+# host setup (daemon-wide default profile; see probe-image-cu132.sh), which is
+# what removes the per-launcher --security-opt.
+#
+# Layer placement: directly after the final stage's SHELL line, before any
+# COPY --from, so the layer depends only on system-base + the profile bytes
+# and stays cached across vLLM/B12X pin bumps.
+#   on   = die if the profile cannot be fetched or the anchor moved
+#   auto = liburing always; profile skipped with a warning if unreachable
+#   off  = neither
+# SECCOMP_PROFILE_SRC = local file overriding the fetch (air-gapped builders).
+SECCOMP_IMAGE_PATH=/opt/local-inference/seccomp/spark-io-uring.json
+SECCOMP_SHA=""
+SECCOMP_ORIGIN=""
+seccomp_tmp=""
+if [[ "${PATCH_IO_URING}" != off ]]; then
+  seccomp_tmp="$(mktemp)"
+  if [[ -n "${SECCOMP_PROFILE_SRC:-}" ]]; then
+    [[ -f "${SECCOMP_PROFILE_SRC}" ]] || die "SECCOMP_PROFILE_SRC does not exist: ${SECCOMP_PROFILE_SRC}"
+    cp "${SECCOMP_PROFILE_SRC}" "${seccomp_tmp}"
+    SECCOMP_ORIGIN="file:${SECCOMP_PROFILE_SRC}"
+  else
+    _nwo="${VLLM_REPO#*github.com/}"; _nwo="${_nwo%.git}"
+    _url="https://raw.githubusercontent.com/${_nwo}/${VLLM_COMMIT}/scripts/seccomp/spark-io-uring.json"
+    if curl -fsSL --max-time 30 -o "${seccomp_tmp}" "${_url}" 2>/dev/null; then
+      SECCOMP_ORIGIN="${_nwo}@${VLLM_COMMIT:0:12}:scripts/seccomp/spark-io-uring.json"
+    else
+      : > "${seccomp_tmp}"
+      [[ "${PATCH_IO_URING}" == on ]] \
+        && die "PATCH_IO_URING=on: cannot fetch ${_url} (no network, or the file is absent at this vLLM pin). Set SECCOMP_PROFILE_SRC=<local copy> or PATCH_IO_URING=auto"
+      warn "PATCH_IO_URING(auto): seccomp profile unreachable at ${_url}; baking liburing only"
+    fi
+  fi
+  if [[ -s "${seccomp_tmp}" ]]; then
+    # A profile that parses but does not allow io_uring would bake a trap.
+    python3 - "${seccomp_tmp}" <<'PYEOF' || die "seccomp profile failed validation (${SECCOMP_ORIGIN})"
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d.get("defaultAction") in ("SCMP_ACT_ERRNO", "SCMP_ACT_KILL", "SCMP_ACT_KILL_PROCESS"), \
+    f"not an allowlist profile: defaultAction={d.get('defaultAction')}"
+allowed = {n for s in d.get("syscalls", []) if s.get("action") == "SCMP_ACT_ALLOW"
+           and not s.get("args") and not s.get("includes") for n in s.get("names", [])}
+need = {"io_uring_setup", "io_uring_enter", "io_uring_register"}
+assert need <= allowed, f"io_uring not unconditionally allowed: missing {sorted(need - allowed)}"
+PYEOF
+    SECCOMP_SHA="$(sha256sum "${seccomp_tmp}" | cut -d' ' -f1)"
+  fi
+fi
+python3 - "${dockerfile}" "${PATCH_IO_URING}" "${seccomp_tmp}" "${SECCOMP_SHA}" "${SECCOMP_ORIGIN}" "${SECCOMP_IMAGE_PATH}" <<'PYEOF'
+import base64, gzip, pathlib, re, sys
+path, tog, prof, sha, origin, dest = sys.argv[1:7]
+path = pathlib.Path(path)
+if tog == "off":
+    print("PATCH_IO_URING=off: liburing + seccomp profile skipped", file=sys.stderr)
+    sys.exit(0)
+text = path.read_text()
+BS_NL = chr(92) + chr(10)
+APT = "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends"
+final_re = re.compile(
+    r'(^FROM \S+ AS final\n(?:ARG [^\n]*\n|\n)*'
+    r'SHELL \["/bin/bash", "-euxo", "pipefail", "-c"\]\n)', re.MULTILINE)
+fh = final_re.findall(text)
+assert len(fh) == 1, (f"PATCH_IO_URING: final-stage SHELL anchor found {len(fh)} times "
+                      "-- upstream changed the final stage's shape; update final_re")
+run = ("\n# PATCH_IO_URING: liburing for the b12x loader's io_uring bounce reader"
+       + (" + KK seccomp profile (" + origin + ")" if sha else "") + "\n"
+       "RUN apt-get update " + BS_NL +
+       " && " + APT + " liburing-dev pkg-config " + BS_NL +
+       " && rm -rf /var/lib/apt/lists/* " + BS_NL +
+       " && pkg-config --exists liburing")
+if sha:
+    # gzip+base64 keeps the ~17 KB JSON to one short RUN line with no
+    # build-context dependency; sha256sum -c proves the bytes survived.
+    blob = base64.b64encode(gzip.compress(pathlib.Path(prof).read_bytes(), mtime=0)).decode()
+    run += (" " + BS_NL +
+            " && mkdir -p " + str(pathlib.PurePosixPath(dest).parent) + " " + BS_NL +
+            " && echo '" + blob + "' | base64 -d | gunzip > " + dest + " " + BS_NL +
+            " && echo '" + sha + "  " + dest + "' | sha256sum -c - " + BS_NL +
+            " && chmod 0644 " + dest + "\n"
+            "LABEL org.local-inference.seccomp-profile=\"" + dest + "\" " + BS_NL +
+            "      org.local-inference.seccomp-profile.sha256=\"" + sha + "\" " + BS_NL +
+            "      org.local-inference.seccomp-profile.source=\"" + origin + "\"\n")
+else:
+    run += "\n"
+text = text.replace(fh[0], fh[0] + run, 1)
+path.write_text(text)
+print("PATCH_IO_URING: liburing-dev + pkg-config in the final stage"
+      + (f"; seccomp profile baked at {dest} (sha256 {sha[:12]})" if sha else "; no seccomp profile"),
+      file=sys.stderr)
+PYEOF
+if [[ "${PATCH_IO_URING}" == off ]]; then
+  plog "PATCH_IO_URING=off: skipped"
+else
+  plog "PATCH_IO_URING: final stage += liburing-dev pkg-config${SECCOMP_SHA:+; seccomp ${SECCOMP_IMAGE_PATH} sha256=${SECCOMP_SHA} from ${SECCOMP_ORIGIN}}"
+fi
+[[ -z "${seccomp_tmp}" ]] || rm -f "${seccomp_tmp}"
 
 # The exact Dockerfile the build consumed (all patches applied) -- the
 # build-log analog of a published integration-patch sha.
