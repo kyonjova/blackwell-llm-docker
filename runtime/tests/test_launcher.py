@@ -430,6 +430,40 @@ def test_auto_fairness_uses_native_options_without_reimplementing_controller(hal
     assert plan.values["decode-refill-target"] == "auto"
 
 
+def test_compute_share_prefill_token_cap_uses_native_option():
+    plan = resolve(
+        "qwen38-flash-next",
+        env={
+            "PREFILL_COMPUTE_SHARE": "auto",
+            "MAX_NUM_PREFILL_TOKENS_PER_STEP": "3008",
+        },
+    )
+
+    assert plan.values["max-num-prefill-tokens-per-step"] == 3008
+    assert "--max-num-prefill-tokens-per-step" in plan.argv
+    assert "3008" in plan.argv
+
+
+@pytest.mark.parametrize("value", ["-1", "6020"])
+def test_compute_share_prefill_token_cap_rejects_invalid_values(value):
+    with pytest.raises(ConfigError):
+        resolve(
+            "qwen38-flash-next",
+            env={
+                "PREFILL_COMPUTE_SHARE": "auto",
+                "MAX_NUM_PREFILL_TOKENS_PER_STEP": value,
+            },
+        )
+
+
+def test_compute_share_prefill_token_cap_requires_compute_share():
+    with pytest.raises(ConfigError, match="requires prefill-compute-share"):
+        resolve(
+            "qwen38-flash-next",
+            env={"MAX_NUM_PREFILL_TOKENS_PER_STEP": "3008"},
+        )
+
+
 @pytest.mark.parametrize(
     "environment",
     [
