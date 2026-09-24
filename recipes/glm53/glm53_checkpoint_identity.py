@@ -13,11 +13,44 @@ import argparse
 import hashlib
 import json
 import os
+import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
 _IDENTITY_CACHE_FORMAT = "local-checkpoint-identity/v1"
+# Large sequential reads on several files at once: hashing is IO-bound, and
+# hashlib releases the GIL while it digests a buffer.
+_READ_BYTES = 16 * 1024 * 1024
+_HASH_WORKERS = 8
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    buffer = bytearray(_READ_BYTES)
+    view = memoryview(buffer)
+    with path.open("rb", buffering=0) as stream:
+        while count := stream.readinto(buffer):
+            digest.update(view[:count])
+    return digest.hexdigest()
+
+
+def _content_digests(paths: list[Path]) -> list[str]:
+    """SHA-256 of each file's content, several files at a time.
+
+    Every byte is read: a Hugging Face blob name is not trusted, because a
+    blob edited in place keeps its name.
+    """
+    size = sum(path.stat().st_size for path in paths)
+    if size >= 1024**3:
+        print(
+            f"[lil-serve] Hashing {size / 1024**3:.1f} GiB of checkpoint files "
+            "once to identify the model; later starts reuse the result from "
+            "/cache/checkpoint-identities",
+            file=sys.stderr,
+            flush=True,
+        )
+    with ThreadPoolExecutor(min(_HASH_WORKERS, len(paths))) as pool:
+        return list(pool.map(_file_sha256, paths))
 
 
 def _identity_cache_path(directory: Path) -> Path | None:
@@ -148,10 +181,7 @@ def local_checkpoint_identity(directory: Path) -> str:
     digests = _cached_digests(cache_path, directory, metadata)
     cache_hit = digests is not None
     if digests is None:
-        digests = []
-        for path in selected:
-            with path.open("rb") as stream:
-                digests.append(hashlib.file_digest(stream, "sha256").hexdigest())
+        digests = _content_digests(selected)
     if files() != selected or any(
         content_metadata(path.stat()) != content_metadata(before[path])
         for path in selected
