@@ -613,6 +613,15 @@ def resolve(
         )
 
     if identifier == "qwen38-flash-next":
+        # B12X QSA shards compressed KV across DCP ranks in groups of four
+        # tokens and refuses vLLM's default interleave of one, so every
+        # DCP > 1 deployment needs this unless the operator chose a value.
+        if values["decode-context-parallel-size"] > 1:
+            for key in ("cp-kv-cache-interleave-size", "dcp-kv-cache-interleave-size"):
+                if key not in values or origins[key].startswith(
+                    ("common:", "model:", "hardware:")
+                ):
+                    derive(key, 4, "QSA DCP interleave")
         context_length = values["max-model-len"]
         base_context_length = 262144
         if context_length > base_context_length and "hf-overrides" not in values:

@@ -1,0 +1,14 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-76",
+  "category": "fix",
+  "summary": "Qwen3.8-Flash-Next with DCP > 1 starts without extra interleave flags",
+  "models": ["Qwen3.8-Flash-Next"],
+  "compatibility": "No user action required; an explicit CP_KV_CACHE_INTERLEAVE_SIZE / DCP_KV_CACHE_INTERLEAVE_SIZE still wins.",
+  "details": [
+    "B12X QSA shards compressed KV across DCP ranks in groups of four tokens and refused vLLM's default interleave of one (\"QSA DCP requires cp_kv_cache_interleave_size divisible by 4\"). The launcher now sets both interleave sizes to 4 when DCP > 1.",
+    "Together with vllm #886, TP4/DCP4 works with the official qwen4_exp checkpoints."
+  ],
+  "pull_requests": [76],
+  "requires": []
+}
