@@ -310,6 +310,12 @@
       "ENABLE_AUTO_TOOL_CHOICE"
     ]
   },
+  "enable-expert-parallel": {
+    "type": "boolean",
+    "env": [
+      "ENABLE_EXPERT_PARALLEL"
+    ]
+  },
   "enable-flashinfer-autotune": {
     "type": "boolean",
     "env": [
