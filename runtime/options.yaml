@@ -584,6 +584,13 @@
       "LMCACHE_L2_ODIRECT"
     ]
   },
+  "cache-l2-prune-stale": {
+    "type": "boolean",
+    "control": true,
+    "env": [
+      "LMCACHE_L2_PRUNE_STALE"
+    ]
+  },
   "cache-l2-checkpoint-writes": {
     "type": "string",
     "control": true,
