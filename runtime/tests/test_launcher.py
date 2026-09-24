@@ -430,6 +430,40 @@ def test_auto_fairness_uses_native_options_without_reimplementing_controller(hal
     assert plan.values["decode-refill-target"] == "auto"
 
 
+def test_compute_share_prefill_token_cap_uses_native_option():
+    plan = resolve(
+        "qwen38-flash-next",
+        env={
+            "PREFILL_COMPUTE_SHARE": "auto",
+            "MAX_NUM_PREFILL_TOKENS_PER_STEP": "3008",
+        },
+    )
+
+    assert plan.values["max-num-prefill-tokens-per-step"] == 3008
+    assert "--max-num-prefill-tokens-per-step" in plan.argv
+    assert "3008" in plan.argv
+
+
+@pytest.mark.parametrize("value", ["-1", "6020"])
+def test_compute_share_prefill_token_cap_rejects_invalid_values(value):
+    with pytest.raises(ConfigError):
+        resolve(
+            "qwen38-flash-next",
+            env={
+                "PREFILL_COMPUTE_SHARE": "auto",
+                "MAX_NUM_PREFILL_TOKENS_PER_STEP": value,
+            },
+        )
+
+
+def test_compute_share_prefill_token_cap_requires_compute_share():
+    with pytest.raises(ConfigError, match="requires prefill-compute-share"):
+        resolve(
+            "qwen38-flash-next",
+            env={"MAX_NUM_PREFILL_TOKENS_PER_STEP": "3008"},
+        )
+
+
 @pytest.mark.parametrize(
     "environment",
     [
@@ -503,6 +537,24 @@ def test_cache_namespaces_follow_runtime_and_profile_not_a_release_string():
     )
     assert explicit.environment["VLLM_CACHE_ROOT"] == "/custom/vllm"
     assert explicit.environment["TRITON_CACHE_DIR"] == "/explicit"
+
+
+@pytest.mark.parametrize("model", MODELS)
+def test_every_jit_compiler_cache_lives_on_the_persistent_volume(model):
+    """TileLang, TVM and FlashInfer default to $HOME, which is not persisted."""
+    plan = resolve(model, env={}, runtime_identity="a" * 64)
+    root = plan.environment["XDG_CACHE_HOME"]
+    assert root.startswith("/cache/jit/" + "a" * 64 + "/")
+    for name in (
+        "TILELANG_CACHE_DIR",
+        "TVM_FFI_CACHE_DIR",
+        "FLASHINFER_WORKSPACE_BASE",
+        "TORCH_EXTENSIONS_DIR",
+        "B12X_COMPILE_CACHE_DIR",
+    ):
+        assert plan.environment[name].startswith(root + "/"), name
+    custom = resolve(model, env={"TILELANG_CACHE_DIR": "/elsewhere"})
+    assert custom.environment["TILELANG_CACHE_DIR"] == "/elsewhere"
 
 
 @pytest.mark.parametrize("model", MODELS)

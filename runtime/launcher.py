@@ -31,6 +31,15 @@ JIT_PATHS = {
     "B12X_COMPILE_CACHE_DIR": "b12x/compile",
     "SPARKINFER_COMPILE_CACHE_DIR": "b12x/compile",
     "CUDA_CACHE_PATH": "cuda",
+    # These default to the home directory, which a recreated container loses.
+    "TILELANG_CACHE_DIR": "tilelang",
+    "TVM_FFI_CACHE_DIR": "tvm-ffi",
+    "TVM_CACHE_DIR": "tvm",
+    "FLASHINFER_WORKSPACE_BASE": "flashinfer",
+    "FLASH_ATTENTION_CUTE_DSL_CACHE_DIR": "flash-attention-cute-dsl",
+    "TORCH_EXTENSIONS_DIR": "torch-extensions",
+    "NUMBA_CACHE_DIR": "numba",
+    "CUPY_CACHE_DIR": "cupy",
 }
 NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SECRET = re.compile(
@@ -540,6 +549,10 @@ def resolve(
                     "TILELANG_",
                     "TVM_",
                     "TORCH_EXTENSIONS_",
+                    "FLASHINFER_",
+                    "FLASH_ATTENTION_",
+                    "NUMBA_",
+                    "CUPY_",
                     "INSTANTTENSOR_",
                     "SAFETENSORS_",
                 )
@@ -946,6 +959,18 @@ def validate(values: dict, environment: dict, identifier: str) -> None:
                 ) from error
             if not math.isfinite(seconds) or seconds <= 0:
                 raise ConfigError("half-life must be positive and finite")
+    prefill_step_tokens = values.get("max-num-prefill-tokens-per-step")
+    if prefill_step_tokens is not None:
+        if not isinstance(prefill_step_tokens, int) or prefill_step_tokens < 0:
+            raise ConfigError("max-num-prefill-tokens-per-step must be nonnegative")
+        if prefill_step_tokens > values["max-num-batched-tokens"]:
+            raise ConfigError(
+                "max-num-prefill-tokens-per-step cannot exceed max-num-batched-tokens"
+            )
+        if prefill_step_tokens > 0 and share is None:
+            raise ConfigError(
+                "max-num-prefill-tokens-per-step requires prefill-compute-share"
+            )
     for key in ("max-parallel-prefills", "decode-refill-target"):
         if (
             key in values
@@ -1040,8 +1065,10 @@ def execute(plan: LaunchPlan, contract_path: Path) -> None:
         environment.pop("NCCL_GRAPH_FILE")
     environment.update(plan.environment)
     if plan.cache_service:
-        from runtime.cache import resolve_identity
+        from runtime.cache import resolve_identity, verify_installed_transfer
         from runtime.supervisor import supervise
+
+        verify_installed_transfer(plan)
 
         helper = ROOT / "checkpoint_identity.py"
         if not helper.is_file():

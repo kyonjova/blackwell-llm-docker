@@ -412,7 +412,34 @@ For the GLM Spark TP2/DCP2 recipe with a 3072-token scheduling budget, replace
 ```
 
 Use `LMCACHE_MODE=ram` to omit disk storage. Keep `/cache` on a persistent
-Docker volume for disk restore. The engine-driven service uses CPU memory,
+Docker volume for disk restore.
+
+Each request-boundary checkpoint holds the complete recurrent state, about
+167 MB for Qwen at TP1 and about 215 MB per request for GLM-5.3-Flash at TP4.
+With disk storage, a chat turn writes two or three of them even when the next
+turn cannot use them, because the chat template rewrites the previous prompt
+and response. `LMCACHE_L2_CHECKPOINT_WRITES` selects what reaches the disk:
+
+- `always` (default) writes every checkpoint to disk.
+- `on-evict` writes the current checkpoint of a conversation once, when it
+  leaves RAM, and again for everything still only in RAM when the container
+  stops. Checkpoints that a newer turn of the same conversation has
+  superseded are never written. Disk writes fall from every request to about
+  one checkpoint per conversation that goes idle, so the disk holds the
+  newest state of many more conversations. Give the container time to stop:
+  `docker run --stop-timeout 60` or Compose `stop_grace_period: 60s`; the
+  shutdown write takes up to 30 s. A crash or `docker kill` loses checkpoints
+  that were only in RAM.
+- `on-reuse` keeps new checkpoints in RAM and writes each one to disk only
+  after a restore from the cache has used it. A follow-up served from GPU
+  memory does not count, so with long conversations little reaches the disk.
+
+With every value, RAM and disk eviction remove superseded checkpoints before
+any other entry. After a restart or eviction, a restore uses the longest
+checkpoint that still exists. Disk retention is roughly the disk capacity
+divided by the checkpoint bytes written per minute; check
+`lmcache_mp_checkpoint_retention{stat="l2_checkpoint_bytes"}` on the cache
+metrics port. The engine-driven service uses CPU memory,
 not a separate GPU. The profile selects request-boundary checkpoints and a
 matching target scheduling budget. It does not enable aligned/direct transfer
 for TP2. GLM vision remains available, but image-bearing requests recompute

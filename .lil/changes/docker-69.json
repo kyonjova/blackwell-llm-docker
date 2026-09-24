@@ -1,0 +1,16 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-69",
+  "category": "feature",
+  "summary": "Enable Qwen DCP external cache storage with bounded NVMe eviction",
+  "models": [
+    "Qwen3.8-Flash-Next"
+  ],
+  "compatibility": "Requires a vLLM build with atomic QSA checkpoint transfer; older images refuse this configuration at startup with a clear error.",
+  "details": [
+    "cache-l2-odirect (LMCACHE_L2_ODIRECT) writes the LMCache disk tier with O_DIRECT."
+  ],
+  "pull_requests": [
+    69
+  ]
+}

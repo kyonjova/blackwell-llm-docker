@@ -5,11 +5,24 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import re
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from runtime import ConfigError
+
+# LMCACHE_L2_CHECKPOINT_WRITES values that select a checkpoint store policy.
+CHECKPOINT_STORE_POLICIES = {
+    "on-reuse": "checkpoint_on_reuse",
+    "on-evict": "checkpoint_on_evict",
+}
+# Seconds LMCache may spend writing RAM-only checkpoints to L2 at shutdown
+# with on-evict, and the extra time the supervisor waits before SIGKILL.
+CHECKPOINT_SHUTDOWN_FLUSH_SECONDS = 30
+STOP_GRACE_SECONDS = 10
 
 
 @dataclass
@@ -23,6 +36,8 @@ class CacheService:
     directories: list[str] = field(default_factory=list)
     identity_required: bool = False
     namespace: str = ""
+    # Seconds between SIGTERM and SIGKILL when the container stops.
+    stop_grace: float = STOP_GRACE_SECONDS
 
 
 def configure(values, origins, environment, env_origins, identifier, runtime_identity):
@@ -202,8 +217,6 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
             raise ConfigError(
                 "Qwen external cache requires request-boundary checkpoints"
             )
-        if values["decode-context-parallel-size"] != 1:
-            raise ConfigError("Qwen external cache requires DCP1")
         if values.get("prefix-cache-retention-interval", 0) not in {0, "auto"}:
             raise ConfigError(
                 "Qwen external cache uses exact boundaries, not periodic retention"
@@ -298,8 +311,31 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
         values["cache-prefetch-policy"],
     ]
     argv += ["--no-l1-use-lazy", "--shm-name", shm] if engine else ["--l1-use-lazy"]
+    # A request-boundary checkpoint carries the complete recurrent state and
+    # the next turn of the same conversation supersedes it. on-reuse keeps
+    # new checkpoints in RAM until a restore proves them useful; on-evict
+    # writes the current checkpoint of a conversation when it leaves RAM and
+    # at shutdown, and never writes superseded ones.
+    store_policy = "default"
+    checkpoint_writes = values["cache-l2-checkpoint-writes"]
+    if values["cache-l2-enabled"] and checkpoint_writes in CHECKPOINT_STORE_POLICIES:
+        if not semantic:
+            raise ConfigError(
+                f"LMCACHE_L2_CHECKPOINT_WRITES={checkpoint_writes} applies only "
+                "to request-boundary checkpoints"
+            )
+        store_policy = CHECKPOINT_STORE_POLICIES[checkpoint_writes]
+    stop_grace = STOP_GRACE_SECONDS
+    if store_policy == "checkpoint_on_evict":
+        argv += [
+            "--checkpoint-shutdown-flush-seconds",
+            str(CHECKPOINT_SHUTDOWN_FLUSH_SECONDS),
+        ]
+        stop_grace += CHECKPOINT_SHUTDOWN_FLUSH_SECONDS
     if glm:
         argv += ["--hash-algorithm", "blake3", "--max-workers", "8"]
+        if store_policy != "default":
+            argv += ["--l2-store-policy", store_policy]
     else:
         argv += [
             "--l1-write-ttl-seconds",
@@ -311,7 +347,7 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
             "--eviction-ratio",
             "0.10",
             "--l2-store-policy",
-            "default",
+            store_policy,
             "--worker-reap-timeout-seconds",
             "120",
             "--worker-registration-grace-seconds",
@@ -375,10 +411,10 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
             "type": "fs_native",
             "base_path": namespace,
             "num_workers": values["cache-l2-workers"],
-            "use_odirect": False,
+            "use_odirect": values["cache-l2-odirect"],
             "max_capacity_gb": values["cache-l2-gib"],
         }
-        if glm:
+        if glm or qwen:
             l2["eviction"] = {
                 "eviction_policy": "LRU",
                 "trigger_watermark": 0.8,
@@ -410,7 +446,39 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
         directories,
         semantic or values["cache-l2-enabled"],
         namespace,
+        stop_grace,
     )
+
+
+# Asked in a GPU-free child so the supervisor keeps no Torch state. Without
+# vLLM #864 the QSA backend refuses KV connectors while nothing enforces it,
+# and DCP>1 would silently fall back to KV chunks without recurrent state.
+_QSA_ATOMIC_TRANSFER_PROBE = (
+    "from vllm.models.qwen4_exp.nvidia.b12x_qsa import Qwen4ExpQSABackend as B\n"
+    "raise SystemExit(0 if B.supports_kv_connector() else 3)"
+)
+
+
+def verify_installed_transfer(plan, run=subprocess.run) -> None:
+    """Refuse Qwen DCP>1 external caches unless vLLM keeps QSA checkpoints atomic."""
+    service = plan.cache_service
+    if (
+        not service
+        or plan.profile != "qwen38-flash-next"
+        or plan.values["decode-context-parallel-size"] == 1
+    ):
+        return
+    result = run(
+        [sys.executable, "-c", _QSA_ATOMIC_TRANSFER_PROBE],
+        env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise ConfigError(
+            "Qwen external cache with DCP>1 requires a vLLM build with atomic QSA "
+            "checkpoint transfer; use DCP1 or an image that includes it"
+        )
 
 
 def resolve_identity(plan, contract, helper: Path):

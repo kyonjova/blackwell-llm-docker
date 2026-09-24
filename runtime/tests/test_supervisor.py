@@ -1,6 +1,7 @@
 """Model/cache process ownership must hold on success and failure."""
 
 import json
+import signal
 import subprocess
 from dataclasses import replace
 from io import BytesIO
@@ -39,7 +40,7 @@ def test_supervisor_always_stops_its_children(
     monkeypatch.setattr(supervisor, "preflight", lambda *_: None)
     monkeypatch.setattr(subprocess, "Popen", Child)
     monkeypatch.setattr(
-        supervisor, "stop_groups", lambda processes: stopped.extend(processes)
+        supervisor, "stop_groups", lambda processes, grace: stopped.extend(processes)
     )
     monkeypatch.setattr(supervisor.urllib.request, "build_opener", lambda *_: HTTP())
     if isinstance(expected, str):
@@ -99,7 +100,9 @@ def test_non_json_status_retries_but_invalid_pool_is_fatal(monkeypatch, valid_po
 
     monkeypatch.setattr(supervisor, "preflight", lambda *_: None)
     monkeypatch.setattr(subprocess, "Popen", Child)
-    monkeypatch.setattr(supervisor, "stop_groups", lambda items: stopped.extend(items))
+    monkeypatch.setattr(
+        supervisor, "stop_groups", lambda items, grace: stopped.extend(items)
+    )
     monkeypatch.setattr(supervisor.urllib.request, "build_opener", lambda *_: HTTP())
     monkeypatch.setattr(supervisor, "read_json", status)
     monkeypatch.setattr(supervisor.time, "sleep", lambda *_: None)
@@ -111,4 +114,66 @@ def test_non_json_status_retries_but_invalid_pool_is_fatal(monkeypatch, valid_po
             supervisor.supervise(service, ["model"], {}, [])
         assert len(children) == 1
     assert len(attempts) == 2
+    assert stopped == children
+
+
+@pytest.mark.parametrize(
+    "event,expected,announcement",
+    [
+        (
+            "cache-killed",
+            "SIGKILL; the host kernel OOM killer",
+            "LMCache exited (SIGKILL",
+        ),
+        ("model-exit", 3, "Model server exited (status 3); stopping LMCache"),
+        (
+            "sigterm",
+            128 + signal.SIGTERM,
+            "Received SIGTERM from outside the container",
+        ),
+    ],
+)
+def test_supervisor_names_the_stop_reason_before_stopping(
+    monkeypatch, capsys, event, expected, announcement
+):
+    service = replace(
+        resolve("ds4-flash", env={"LMCACHE_MODE": "ram"}).cache_service, shm_bytes=0
+    )
+    children, stopped = [], []
+
+    class Child:
+        def __init__(self, command, **kwargs):
+            self.role = "cache" if not children else "model"
+            children.append(self)
+
+        def poll(self):
+            if len(children) < 2:
+                return None
+            if event == "cache-killed" and self.role == "cache":
+                return -signal.SIGKILL
+            if event == "model-exit" and self.role == "model":
+                return 3
+            if event == "sigterm" and self.role == "model":
+                signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+            return None
+
+    class HTTP:
+        def open(self, *_args, **_kwargs):
+            return BytesIO(b"{}")
+
+    def stop(processes, grace):
+        # The reason must already be visible when shutdown begins.
+        assert announcement in capsys.readouterr().err
+        stopped.extend(processes)
+
+    monkeypatch.setattr(supervisor, "preflight", lambda *_: None)
+    monkeypatch.setattr(subprocess, "Popen", Child)
+    monkeypatch.setattr(supervisor, "stop_groups", stop)
+    monkeypatch.setattr(supervisor.urllib.request, "build_opener", lambda *_: HTTP())
+    monkeypatch.setattr(supervisor.time, "sleep", lambda *_: None)
+    if isinstance(expected, str):
+        with pytest.raises(ConfigError, match=expected):
+            supervisor.supervise(service, ["model"], {}, [])
+    else:
+        assert supervisor.supervise(service, ["model"], {}, []) == expected
     assert stopped == children
