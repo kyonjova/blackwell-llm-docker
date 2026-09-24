@@ -1,0 +1,14 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-78",
+  "category": "fix",
+  "summary": "Identify a local checkpoint several times faster on first start",
+  "models": ["all"],
+  "compatibility": "No user action required. The identity is unchanged, so existing caches stay valid.",
+  "details": [
+    "With persistent LMCache storage and a local model directory, the first start hashes the checkpoint to key the cache. Files are now hashed eight at a time with 16 MiB reads (99 GB: 7 s instead of 50 s from page cache), and a log line says what the pause is.",
+    "Later starts still reuse the cached result from /cache/checkpoint-identities."
+  ],
+  "pull_requests": [78],
+  "requires": []
+}

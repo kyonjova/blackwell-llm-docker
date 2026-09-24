@@ -88,3 +88,45 @@ def test_invalid_cache_entry_requires_content_hash(
     entry = next(cache.glob("*.json"))
     entry.write_text(json.dumps({"format": "invalid"}))
     assert identity.local_checkpoint_identity(model) == expected
+
+
+def _legacy_identity(model: Path) -> str:
+    manifest = [
+        (path.name, path.stat().st_size, hashlib.sha256(path.read_bytes()).hexdigest())
+        for path in sorted(model.iterdir())
+    ]
+    return hashlib.sha256(
+        b"glm53-local-checkpoint-v1\0"
+        + json.dumps(manifest, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def test_hub_blob_names_are_not_trusted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A blob edited in place keeps its SHA-256 name, so every file is read."""
+    repo = tmp_path / "hub" / "models--org--model"
+    blobs = repo / "blobs"
+    snapshot = repo / "snapshots" / ("a" * 40)
+    blobs.mkdir(parents=True)
+    snapshot.mkdir(parents=True)
+    original = b"weights stored through git lfs"
+    blob = blobs / hashlib.sha256(original).hexdigest()
+    blob.write_bytes(b"weights edited after download")
+    (snapshot / "model.safetensors").symlink_to(Path("../..") / "blobs" / blob.name)
+    (snapshot / "config.json").write_text('{"model_type":"test"}')
+    monkeypatch.setenv("LIL_CHECKPOINT_IDENTITY_CACHE_DIR", str(tmp_path / "cache"))
+    assert identity.local_checkpoint_identity(snapshot) == _legacy_identity(snapshot)
+
+
+def test_parallel_hashing_matches_the_sequential_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "config.json").write_text('{"model_type":"test"}')
+    for index in range(11):
+        (model / f"model-{index:05d}.safetensors").write_bytes(bytes([index]) * 70_000)
+    monkeypatch.setattr(identity, "_READ_BYTES", 4096)
+    monkeypatch.setenv("LIL_CHECKPOINT_IDENTITY_CACHE_DIR", str(tmp_path / "cache"))
+    assert identity.local_checkpoint_identity(model) == _legacy_identity(model)
