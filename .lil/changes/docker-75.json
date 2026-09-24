@@ -1,0 +1,15 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-75",
+  "category": "feature",
+  "summary": "PRESET=glm53-tp3: GLM-5.3-Flash on three GPUs",
+  "models": ["GLM-5.3-Flash"],
+  "compatibility": "New preset; requires vllm #889. VRAM prefix cache only (CACHE_MODE=lmcache is not available at TP3).",
+  "details": [
+    "TP3 with expert parallelism, MTP3 and eight request slots; FlashInfer CUTLASS MoE with autotune, flashkda prefill, a 256 KiB one-shot all-reduce cutoff, half L2 prefetch budgets and a finer CUDA-graph ladder.",
+    "Large dense projections decode in FP8 (VLLM_GLM53_FP8_DENSE=0 keeps them BF16).",
+    "New managed option enable-expert-parallel (ENABLE_EXPERT_PARALLEL)."
+  ],
+  "pull_requests": [75],
+  "requires": []
+}

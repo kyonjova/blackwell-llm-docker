@@ -65,6 +65,13 @@ allocator retries with this tight memory budget.
 - Native form: `lil-serve --preset glm53-spark-tp2 -- --port 8000`.
 - Qwen TP2: `PRESET=qwen38-tp2`; CPU PLE placement and MTP defaults still come
   from the Qwen model profile. `PROFILE=qwen38-flash-next TP=2` is equivalent.
+- GLM on three GPUs: `PRESET=glm53-tp3` (TP3 with expert parallelism, MTP3,
+  eight request slots). MLA and KDA heads are padded to divide by three with
+  zero weights, the vision tower runs data-parallel, and the large dense
+  projections decode in FP8 (`-e VLLM_GLM53_FP8_DENSE=0` keeps them BF16).
+  The external cache (`CACHE_MODE=lmcache`) is not available at TP3; the VRAM
+  prefix cache is. The first start tunes FlashInfer MoE kernels and stores the
+  result under `/cache`.
 
 For Qwen, the `rtx-pro-6000-pcie` hardware profile keeps residual-mixing
 projections replicated on each GPU (`VLLM_QWEN3_8_FLASH_NEXT_HC_TP=0`). This
