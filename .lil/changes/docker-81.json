@@ -1,0 +1,14 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-81",
+  "category": "feature",
+  "summary": "Disk-cache tiers left by earlier images are reported at startup and can be pruned",
+  "models": ["all"],
+  "compatibility": "No user action required. Set LMCACHE_L2_PRUNE_STALE=1 to delete unused tiers of earlier images at startup.",
+  "details": [
+    "A new image or a changed cache setting starts a new LMCache disk tier, and the previous tier stayed on disk outside LMCACHE_L2_GB. One production deployment found about 530 GB per host this way.",
+    "The startup log now lists such tiers of the same model with their sizes. With LMCACHE_L2_PRUNE_STALE=1 they are deleted at startup, except tiers held by a running container and tiers written in the last 30 minutes."
+  ],
+  "pull_requests": [81],
+  "requires": []
+}

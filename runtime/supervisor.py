@@ -6,6 +6,7 @@ import fcntl
 import json
 import math
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -47,6 +48,12 @@ L2_DISK_SHARE = 0.9
 # flock when its holder exits, including on SIGKILL or an OOM kill, so a held
 # lock proves a running owner and a free one proves the arena is stale.
 _ARENA_LOCKS: list[int] = []
+# Each running cache holds a shared lock on its disk tier. A tier whose lock
+# can be taken exclusively has no running owner that took the lock.
+_TIER_LOCKS: list[int] = []
+TIER_LOCK = ".lil-tier.lock"
+# A tier written this recently may belong to an image that predates the lock.
+RECENT_TIER_WRITE_SECONDS = 1800
 
 
 def _claim_arena(shm: Path) -> None:
@@ -81,6 +88,115 @@ def _tree_bytes(path: Path) -> int:
                 except OSError:
                     continue
     return total
+
+
+def _tree_newest(path: Path) -> float:
+    """Newest modification time of the files below ``path``."""
+    newest = 0.0
+    stack = [path]
+    while stack:
+        try:
+            entries = os.scandir(stack.pop())
+        except OSError:
+            continue
+        with entries:
+            for entry in entries:
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append(Path(entry.path))
+                    elif entry.is_file(follow_symlinks=False):
+                        newest = max(newest, entry.stat(follow_symlinks=False).st_mtime)
+                except OSError:
+                    continue
+    return newest
+
+
+def _disk_tier_paths(service: CacheService) -> list[Path]:
+    paths = []
+    for index, arg in enumerate(service.argv[:-1]):
+        if arg == "--l2-adapter":
+            adapter = json.loads(service.argv[index + 1])
+            if adapter.get("type") in {"fs", "fs_native"}:
+                paths.append(Path(adapter["base_path"]))
+    return paths
+
+
+def report_stale_tiers(service: CacheService) -> None:
+    """Name disk-tier namespaces of earlier images and optionally delete them.
+
+    A tier lives in ``<cache>/<model>/<layout>/<checkpoint>``. The layout
+    digest covers the runtime, so every image or cache-setting change starts
+    a new namespace, and the previous one stays on disk outside the tier cap.
+    """
+    for base in _disk_tier_paths(service):
+        # Only the namespace this launcher derived has the layout above.
+        if not service.namespace or base != Path(service.namespace):
+            continue
+        base.mkdir(parents=True, exist_ok=True)
+        fd = os.open(base / TIER_LOCK, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(fd)
+            raise ConfigError(
+                f"Another container is deleting the LMCache disk tier {base}"
+            ) from None
+        _TIER_LOCKS.append(fd)
+        root = base.parent.parent
+        stale = []
+        for layout in sorted(root.iterdir()):
+            if layout.is_symlink() or not layout.is_dir():
+                continue
+            for tier in sorted(layout.iterdir()):
+                if tier == base or tier.is_symlink() or not tier.is_dir():
+                    continue
+                stale.append(tier)
+        if not stale:
+            continue
+        now = time.time()
+        removed, kept = [], []
+        for tier in stale:
+            size = _tree_bytes(tier)
+            newest = _tree_newest(tier)
+            lock = tier / TIER_LOCK
+            owner = None
+            if lock.exists():
+                owner = os.open(lock, os.O_RDWR)
+                try:
+                    fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    os.close(owner)
+                    kept.append((tier, size, "in use by a running container"))
+                    continue
+            try:
+                if not service.prune_stale_tiers:
+                    written = time.strftime("%Y-%m-%d %H:%M", time.localtime(newest))
+                    kept.append((tier, size, f"last written {written}"))
+                elif now - newest < RECENT_TIER_WRITE_SECONDS:
+                    kept.append((tier, size, "written in the last 30 minutes"))
+                else:
+                    shutil.rmtree(tier)
+                    removed.append((tier, size, "removed"))
+            finally:
+                if owner is not None:
+                    os.close(owner)
+        for label, tiers in (("Removed", removed), ("Kept", kept)):
+            if not tiers:
+                continue
+            total = sum(size for _, size, _ in tiers)
+            listing = "; ".join(
+                f"{tier} ({size / 1024**3:.0f} GiB, {why})" for tier, size, why in tiers
+            )
+            announce(
+                f"{label} {len(tiers)} disk-tier namespace(s) of earlier images or "
+                f"cache settings, {total / 1024**3:.0f} GiB outside LMCACHE_L2_GB: "
+                f"{listing}"
+            )
+        if kept and not service.prune_stale_tiers:
+            announce(
+                "Set LMCACHE_L2_PRUNE_STALE=1 to delete the ones no running "
+                "container uses at startup, or delete them by hand"
+            )
 
 
 def fit_disk_tiers(service: CacheService) -> None:
@@ -183,6 +299,7 @@ def preflight(service: CacheService, environment: dict) -> None:
             raise ConfigError(
                 "Insufficient free /dev/shm for the complete engine-driven L1 arena"
             )
+    report_stale_tiers(service)
     fit_disk_tiers(service)
 
 

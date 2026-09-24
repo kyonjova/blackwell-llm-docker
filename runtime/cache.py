@@ -38,6 +38,8 @@ class CacheService:
     namespace: str = ""
     # Seconds between SIGTERM and SIGKILL when the container stops.
     stop_grace: float = STOP_GRACE_SECONDS
+    # Delete unused disk-tier namespaces of earlier images or settings.
+    prune_stale_tiers: bool = False
 
 
 def configure(values, origins, environment, env_origins, identifier, runtime_identity):
@@ -447,6 +449,7 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
         semantic or values["cache-l2-enabled"],
         namespace,
         stop_grace,
+        bool(values.get("cache-l2-prune-stale")),
     )
 
 

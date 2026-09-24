@@ -433,6 +433,15 @@ with a warning, so it cannot fill the disk. A RAM arena left in `/dev/shm` by a
 container that was killed or crashed is removed automatically; an arena whose
 container is still running is refused.
 
+The disk tier lives in `/cache/lmcache/<model>/<layout>/<checkpoint>`. The
+layout covers the image runtime and the cache settings, so a new image or a
+changed setting starts an empty tier, and the previous one stays on disk
+outside `LMCACHE_L2_GB`. The startup log names such tiers with their sizes.
+`-e LMCACHE_L2_PRUNE_STALE=1` deletes them at startup, except tiers held by a
+running container and tiers written in the last 30 minutes. Containers from
+images older than this option do not hold that lock: do not prune a volume
+that such a container still uses.
+
 Each request-boundary checkpoint holds the complete recurrent state, about
 167 MB for Qwen at TP1 and about 215 MB per request for GLM-5.3-Flash at TP4.
 With disk storage, a chat turn writes two or three of them even when the next
