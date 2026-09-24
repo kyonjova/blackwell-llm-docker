@@ -1,0 +1,19 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-74",
+  "category": "feature",
+  "summary": "LMCACHE_L2_CHECKPOINT_WRITES=on-evict writes checkpoints to disk when they leave RAM",
+  "models": [
+    "Qwen3.8-Flash-Next",
+    "GLM-5.3-Flash"
+  ],
+  "compatibility": "Opt-in. With on-evict, stop the container with at least 60 s (docker run --stop-timeout 60, Compose stop_grace_period: 60s) so RAM-only checkpoints reach the disk.",
+  "details": [
+    "on-evict selects the LMCache checkpoint_on_evict store policy: the current checkpoint of a conversation is written once, when RAM evicts it, and superseded checkpoints are never written.",
+    "At shutdown LMCache writes checkpoints still only in RAM for up to 30 s; the supervisor waits 40 s before SIGKILL in this mode.",
+    "The README describes always, on-evict and on-reuse and how to estimate disk retention."
+  ],
+  "pull_requests": [
+    74
+  ]
+}

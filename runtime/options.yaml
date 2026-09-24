@@ -586,7 +586,8 @@
     ],
     "enum": [
       "always",
-      "on-reuse"
+      "on-reuse",
+      "on-evict"
     ]
   },
   "cache-directory": {
