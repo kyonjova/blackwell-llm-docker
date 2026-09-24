@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
+import math
 import os
 import signal
 import socket
@@ -37,20 +39,98 @@ def validate_pool(status: dict, service: CacheService) -> None:
         )
 
 
+SHM_ROOT = Path("/dev/shm")
+# Share of a filesystem's space (free plus what the tier already holds) that
+# a disk tier may claim; the rest stays for the model, logs and other writers.
+L2_DISK_SHARE = 0.9
+# Arena locks stay open for the supervisor's lifetime. The kernel releases a
+# flock when its holder exits, including on SIGKILL or an OOM kill, so a held
+# lock proves a running owner and a free one proves the arena is stale.
+_ARENA_LOCKS: list[int] = []
+
+
+def _claim_arena(shm: Path) -> None:
+    """Lock the arena name for this container or refuse if another owns it."""
+    fd = os.open(shm.with_name(shm.name + ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        raise ConfigError(
+            f"Refusing to reuse a cache SHM arena owned by another running container: {shm}"
+        ) from None
+    _ARENA_LOCKS.append(fd)
+
+
+def _tree_bytes(path: Path) -> int:
+    """Bytes allocated on disk by the files below ``path``."""
+    total = 0
+    stack = [path]
+    while stack:
+        try:
+            entries = os.scandir(stack.pop())
+        except OSError:
+            continue
+        with entries:
+            for entry in entries:
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append(Path(entry.path))
+                    elif entry.is_file(follow_symlinks=False):
+                        total += entry.stat(follow_symlinks=False).st_blocks * 512
+                except OSError:
+                    continue
+    return total
+
+
+def fit_disk_tiers(service: CacheService) -> None:
+    """Cap filesystem L2 tiers to what their disk can still hold.
+
+    A tier larger than its disk fills the disk and fails every writer on it,
+    including the model server. Existing tier contents count as available,
+    since the tier can evict them.
+    """
+    for index, arg in enumerate(service.argv[:-1]):
+        if arg != "--l2-adapter":
+            continue
+        adapter = json.loads(service.argv[index + 1])
+        requested = adapter.get("max_capacity_gb")
+        if adapter.get("type") not in {"fs", "fs_native"} or not requested:
+            continue
+        base = Path(adapter["base_path"])
+        probe = base
+        while not probe.exists() and probe != probe.parent:
+            probe = probe.parent
+        stats = os.statvfs(probe)
+        free = stats.f_bavail * stats.f_frsize
+        held = _tree_bytes(base) if base.exists() else 0
+        usable = math.floor((free + held) * L2_DISK_SHARE / 1024**3)
+        if requested <= usable:
+            continue
+        if usable < 1:
+            raise ConfigError(
+                f"No space for the LMCache disk tier at {base}: "
+                f"{free / 1024**3:.1f} GiB free. Free disk space or set "
+                "LMCACHE_L2_ENABLED=0"
+            )
+        adapter["max_capacity_gb"] = usable
+        service.argv[index + 1] = json.dumps(adapter, separators=(",", ":"))
+        announce(
+            f"LMCache disk tier capped at {usable} GiB instead of {requested:g} GiB: "
+            f"{probe} has {free / 1024**3:.0f} GiB free and the tier already holds "
+            f"{held / 1024**3:.0f} GiB. Lower LMCACHE_L2_GB or free space to "
+            "silence this"
+        )
+
+
 def preflight(service: CacheService, environment: dict) -> None:
     if any("UNRESOLVED-CHECKPOINT" in arg for arg in service.argv):
         raise ConfigError(
             "Persistent cache identity must be resolved before starting processes"
         )
-    if service.shm_bytes:
-        shm = Path("/dev/shm") / service.shm_name
-        if shm.exists():
-            raise ConfigError(f"Refusing to reuse an existing cache SHM arena: {shm}")
-        stats = os.statvfs("/dev/shm")
-        if stats.f_bavail * stats.f_frsize < service.shm_bytes:
-            raise ConfigError(
-                "Insufficient free /dev/shm for the complete engine-driven L1 arena"
-            )
+    shm = SHM_ROOT / service.shm_name if service.shm_bytes else None
+    if shm is not None:
+        _claim_arena(shm)
     interposer = Path("/opt/lmcache/lib/liblmcache_cumem_shareable.so")
     if (
         str(interposer) in environment.get("LD_PRELOAD", "").split(":")
@@ -89,6 +169,21 @@ def preflight(service: CacheService, environment: dict) -> None:
                 raise ConfigError(
                     f"Cache service address is unavailable: {address}:{port}"
                 ) from error
+    if shm is not None:
+        # This container holds the arena lock and the cache ports are free, so
+        # an existing arena was left by a cache that did not shut down cleanly.
+        if shm.exists():
+            shm.unlink()
+            announce(
+                f"Removed the stale cache SHM arena {shm} left by a cache service "
+                "that did not shut down cleanly"
+            )
+        stats = os.statvfs(SHM_ROOT)
+        if stats.f_bavail * stats.f_frsize < service.shm_bytes:
+            raise ConfigError(
+                "Insufficient free /dev/shm for the complete engine-driven L1 arena"
+            )
+    fit_disk_tiers(service)
 
 
 def describe_exit(status: int) -> str:

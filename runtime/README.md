@@ -419,7 +419,11 @@ For the GLM Spark TP2/DCP2 recipe with a 3072-token scheduling budget, replace
 ```
 
 Use `LMCACHE_MODE=ram` to omit disk storage. Keep `/cache` on a persistent
-Docker volume for disk restore.
+Docker volume for disk restore. At startup the disk tier is capped to 90% of
+what its filesystem can give it (free space plus what the tier already holds),
+with a warning, so it cannot fill the disk. A RAM arena left in `/dev/shm` by a
+container that was killed or crashed is removed automatically; an arena whose
+container is still running is refused.
 
 Each request-boundary checkpoint holds the complete recurrent state, about
 167 MB for Qwen at TP1 and about 215 MB per request for GLM-5.3-Flash at TP4.
