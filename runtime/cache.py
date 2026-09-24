@@ -14,7 +14,6 @@ from pathlib import Path
 
 from runtime import ConfigError
 
-
 # LMCACHE_L2_CHECKPOINT_WRITES values that select a checkpoint store policy.
 CHECKPOINT_STORE_POLICIES = {
     "on-reuse": "checkpoint_on_reuse",
