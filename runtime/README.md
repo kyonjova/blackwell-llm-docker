@@ -153,6 +153,14 @@ performance measurements. Source references are recorded inside each profile.
   `--linear-backend b12x` are explicit alternatives requiring dispatch and
   performance checks. Model choice is explicit: changing speculation mode
   never silently changes the checkpoint repository.
+- DS4 text sets `VLLM_ENABLE_STARTUP_PLAN=1`. The first start stores the
+  measured KV budget under the JIT cache. Later starts reuse it when the vLLM
+  configuration, the device and the vLLM, PyTorch and CUDA versions are
+  unchanged, and skip the CUDA-graph memory estimate (about 45-50 s on TP2).
+  A plan is refused when free GPU memory shrank. The key covers CLI settings,
+  not environment variables: after changing an environment variable that
+  affects GPU memory, start once with `-e VLLM_ENABLE_STARTUP_PLAN=0` or set
+  `KV_CACHE_MEMORY_BYTES`.
   The official text/Vision checkpoint and remote-code revisions follow the
   source launcher's pinned revisions. An explicit model override does not
   inherit another repository's revision; `MODEL_REVISION` and

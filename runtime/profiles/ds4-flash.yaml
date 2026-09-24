@@ -49,6 +49,9 @@ environment:
   VLLM_USE_MEGA_AOT_ARTIFACT: "1"
   VLLM_USE_FLASHINFER_SAMPLER: "1"
   VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS: "1"
+  # Reuse the measured KV budget on warm starts (vllm #895); the plan is
+  # keyed by the vLLM config and device and refused if free memory shrank.
+  VLLM_ENABLE_STARTUP_PLAN: "1"
   VLLM_MULTI_STREAM_GEMM_TOKEN_THRESHOLD: "1024"
 modes:
   off: {}
