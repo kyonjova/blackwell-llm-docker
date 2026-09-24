@@ -91,7 +91,24 @@ def test_explicit_inputs_override_preset_values():
     assert plan.environment["NCCL_MIN_NCHANNELS"] == "4"
     assert plan.values["max-cudagraph-capture-size"] == 64
     assert plan.values["cudagraph-capture-sizes"] == [
-        1, 2, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64,
+        1,
+        2,
+        4,
+        8,
+        12,
+        16,
+        20,
+        24,
+        28,
+        32,
+        36,
+        40,
+        44,
+        48,
+        52,
+        56,
+        60,
+        64,
     ]
 
 
