@@ -201,12 +201,22 @@ def previous_publication(repository: str, assembly: dict) -> dict | None:
             and receipt.get("status") == "qualified"
             and receipt.get("assembly_sha256") == candidate.get("assembly_sha256")
         ):
+            deferred = []
+            notes = assets.get("release-changelog.json")
+            if notes is not None:
+                deferred = [
+                    item["id"]
+                    for item in json.loads(asset_bytes(repository, notes)).get(
+                        "deferred", []
+                    )
+                ]
             return {
                 "tag": release["tag_name"],
                 "url": release["html_url"],
                 "image": candidate["image"],
                 "digest": receipt.get("digest"),
                 "assembly": candidate,
+                "deferred": deferred,
             }
     return None
 
@@ -257,6 +267,10 @@ def collect_release_changelog(assembly: dict, publication_repository: str) -> di
             f"changelog policy names unknown components: {sorted(unknown_required)}"
         )
 
+    # A fragment whose required fragments are not in this assembly, for
+    # example a shared recipe change that needs a beta-only vLLM fix, waits
+    # for the first release of this channel that contains them.
+    previously_deferred = set((previous or {}).get("deferred", []))
     current_by_component: dict[str, dict[str, dict]] = {}
     added: list[tuple[str, str, dict]] = []
     component_ranges = {}
@@ -293,7 +307,10 @@ def collect_release_changelog(assembly: dict, publication_repository: str) -> di
             raise ValueError(
                 f"{component}: source changed without a new {CHANGE_PATH} fragment"
             )
-        for identity in identities:
+        waiting = sorted(
+            previously_deferred & set(previous_fragments) & set(current_fragments)
+        )
+        for identity in (*identities, *waiting):
             added.append((component, repository, current_fragments[identity]))
         component_ranges[component] = {
             "repository": repository,
@@ -308,13 +325,19 @@ def collect_release_changelog(assembly: dict, publication_repository: str) -> di
         for identity in fragments
     }
     changes = []
+    deferred = []
     for component, repository, record in added:
         fragment = record["fragment"]
         missing = set(fragment.get("requires", [])) - known_ids
         if missing:
-            raise ValueError(
-                f"{fragment['id']}: unknown required fragments: {sorted(missing)}"
+            deferred.append(
+                {
+                    "id": fragment["id"],
+                    "component": component,
+                    "missing": sorted(missing),
+                }
             )
+            continue
         changes.append(
             {
                 **fragment,
@@ -347,6 +370,7 @@ def collect_release_changelog(assembly: dict, publication_repository: str) -> di
         ),
         "components": component_ranges,
         "changes": changes,
+        "deferred": sorted(deferred, key=lambda item: item["id"]),
     }
 
 
