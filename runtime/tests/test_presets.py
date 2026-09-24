@@ -90,7 +90,24 @@ def test_explicit_inputs_override_preset_values():
     assert plan.values["kv-cache-memory-bytes"] == 3758096384
     assert plan.environment["NCCL_MIN_NCHANNELS"] == "4"
     assert plan.values["max-cudagraph-capture-size"] == 64
-    assert plan.values["cudagraph-capture-sizes"][-1] == 64
+    assert plan.values["cudagraph-capture-sizes"] == [
+        1, 2, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64,
+    ]
+
+
+@pytest.mark.parametrize(
+    "seqs,sizes",
+    [
+        (4, [1, 2, 4, 8, 12, 16]),
+        (8, [1, 2, 4, 8, 12, 16, 20, 24, 28, 32]),
+    ],
+)
+def test_more_request_slots_keep_a_graph_for_every_verifier_batch(seqs, sizes):
+    # MTP3 verifies four rows per request. Raising MAX_NUM_SEQS must not leave
+    # 5-7 running requests (20/24/28 rows) without a CUDA graph.
+    plan = spark(cli_env={"MAX_NUM_SEQS": str(seqs)})
+    assert plan.values["max-cudagraph-capture-size"] == sizes[-1]
+    assert plan.values["cudagraph-capture-sizes"] == sizes
 
 
 @pytest.mark.parametrize("mode,input_rows", [("mtp", 4096), ("dflash2", 4124)])
