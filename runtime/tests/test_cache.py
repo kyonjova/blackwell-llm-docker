@@ -400,6 +400,16 @@ def store_policies(plan) -> list[str]:
             {"TP": "2", "LMCACHE_L2_CHECKPOINT_WRITES": "on-reuse"},
             ["checkpoint_on_reuse"],
         ),
+        (
+            "qwen38-flash-next",
+            {"LMCACHE_L2_CHECKPOINT_WRITES": "on-evict"},
+            ["checkpoint_on_evict"],
+        ),
+        (
+            "glm53-flash",
+            {"TP": "2", "LMCACHE_L2_CHECKPOINT_WRITES": "on-evict"},
+            ["checkpoint_on_evict"],
+        ),
     ],
 )
 def test_l2_checkpoint_writes_select_the_store_policy(identifier, env, expected):
@@ -425,3 +435,18 @@ def test_l2_checkpoint_writes_need_l2_and_request_boundary_checkpoints():
                 "LMCACHE_L2_CHECKPOINT_WRITES": "on-reuse",
             },
         )
+
+
+@pytest.mark.parametrize(
+    "identifier,env", [("qwen38-flash-next", {}), ("glm53-flash", {"TP": "2"})]
+)
+def test_on_evict_flushes_at_shutdown_and_extends_the_stop_grace(identifier, env):
+    base = {"CACHE_MODE": "lmcache", "LMCACHE_L2_ENABLED": "true", **env}
+    always = resolve(identifier, env=base).cache_service
+    on_evict = resolve(
+        identifier, env={**base, "LMCACHE_L2_CHECKPOINT_WRITES": "on-evict"}
+    ).cache_service
+    assert "--checkpoint-shutdown-flush-seconds" not in always.argv
+    flag = on_evict.argv.index("--checkpoint-shutdown-flush-seconds")
+    flush = float(on_evict.argv[flag + 1])
+    assert on_evict.stop_grace >= flush + always.stop_grace

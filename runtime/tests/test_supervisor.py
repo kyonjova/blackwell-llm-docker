@@ -40,7 +40,7 @@ def test_supervisor_always_stops_its_children(
     monkeypatch.setattr(supervisor, "preflight", lambda *_: None)
     monkeypatch.setattr(subprocess, "Popen", Child)
     monkeypatch.setattr(
-        supervisor, "stop_groups", lambda processes: stopped.extend(processes)
+        supervisor, "stop_groups", lambda processes, grace: stopped.extend(processes)
     )
     monkeypatch.setattr(supervisor.urllib.request, "build_opener", lambda *_: HTTP())
     if isinstance(expected, str):
@@ -100,7 +100,9 @@ def test_non_json_status_retries_but_invalid_pool_is_fatal(monkeypatch, valid_po
 
     monkeypatch.setattr(supervisor, "preflight", lambda *_: None)
     monkeypatch.setattr(subprocess, "Popen", Child)
-    monkeypatch.setattr(supervisor, "stop_groups", lambda items: stopped.extend(items))
+    monkeypatch.setattr(
+        supervisor, "stop_groups", lambda items, grace: stopped.extend(items)
+    )
     monkeypatch.setattr(supervisor.urllib.request, "build_opener", lambda *_: HTTP())
     monkeypatch.setattr(supervisor, "read_json", status)
     monkeypatch.setattr(supervisor.time, "sleep", lambda *_: None)
@@ -159,7 +161,7 @@ def test_supervisor_names_the_stop_reason_before_stopping(
         def open(self, *_args, **_kwargs):
             return BytesIO(b"{}")
 
-    def stop(processes):
+    def stop(processes, grace):
         # The reason must already be visible when shutdown begins.
         assert announcement in capsys.readouterr().err
         stopped.extend(processes)

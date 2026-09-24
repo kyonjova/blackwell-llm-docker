@@ -15,6 +15,17 @@ from pathlib import Path
 from runtime import ConfigError
 
 
+# LMCACHE_L2_CHECKPOINT_WRITES values that select a checkpoint store policy.
+CHECKPOINT_STORE_POLICIES = {
+    "on-reuse": "checkpoint_on_reuse",
+    "on-evict": "checkpoint_on_evict",
+}
+# Seconds LMCache may spend writing RAM-only checkpoints to L2 at shutdown
+# with on-evict, and the extra time the supervisor waits before SIGKILL.
+CHECKPOINT_SHUTDOWN_FLUSH_SECONDS = 30
+STOP_GRACE_SECONDS = 10
+
+
 @dataclass
 class CacheService:
     argv: list[str]
@@ -26,6 +37,8 @@ class CacheService:
     directories: list[str] = field(default_factory=list)
     identity_required: bool = False
     namespace: str = ""
+    # Seconds between SIGTERM and SIGKILL when the container stops.
+    stop_grace: float = STOP_GRACE_SECONDS
 
 
 def configure(values, origins, environment, env_origins, identifier, runtime_identity):
@@ -300,19 +313,26 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
     ]
     argv += ["--no-l1-use-lazy", "--shm-name", shm] if engine else ["--l1-use-lazy"]
     # A request-boundary checkpoint carries the complete recurrent state and
-    # most are never restored; on-reuse keeps them in RAM until a restore
-    # proves them useful, then writes them to L2 once.
+    # the next turn of the same conversation supersedes it. on-reuse keeps
+    # new checkpoints in RAM until a restore proves them useful; on-evict
+    # writes the current checkpoint of a conversation when it leaves RAM and
+    # at shutdown, and never writes superseded ones.
     store_policy = "default"
-    if (
-        values["cache-l2-enabled"]
-        and values["cache-l2-checkpoint-writes"] == "on-reuse"
-    ):
+    checkpoint_writes = values["cache-l2-checkpoint-writes"]
+    if values["cache-l2-enabled"] and checkpoint_writes in CHECKPOINT_STORE_POLICIES:
         if not semantic:
             raise ConfigError(
-                "LMCACHE_L2_CHECKPOINT_WRITES=on-reuse applies only to "
-                "request-boundary checkpoints"
+                f"LMCACHE_L2_CHECKPOINT_WRITES={checkpoint_writes} applies only "
+                "to request-boundary checkpoints"
             )
-        store_policy = "checkpoint_on_reuse"
+        store_policy = CHECKPOINT_STORE_POLICIES[checkpoint_writes]
+    stop_grace = STOP_GRACE_SECONDS
+    if store_policy == "checkpoint_on_evict":
+        argv += [
+            "--checkpoint-shutdown-flush-seconds",
+            str(CHECKPOINT_SHUTDOWN_FLUSH_SECONDS),
+        ]
+        stop_grace += CHECKPOINT_SHUTDOWN_FLUSH_SECONDS
     if glm:
         argv += ["--hash-algorithm", "blake3", "--max-workers", "8"]
         if store_policy != "default":
@@ -427,6 +447,7 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
         directories,
         semantic or values["cache-l2-enabled"],
         namespace,
+        stop_grace,
     )
 
 

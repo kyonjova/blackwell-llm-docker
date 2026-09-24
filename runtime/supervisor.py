@@ -209,6 +209,6 @@ def supervise(
         )
         return 128 + requested_signal
     finally:
-        stop_groups(children)
+        stop_groups(children, service.stop_grace)
         for sig, handler in previous.items():
             signal.signal(sig, handler)
