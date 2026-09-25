@@ -167,7 +167,10 @@ performance measurements. Source references are recorded inside each profile.
   `MODEL_CODE_REVISION` remain operator controls.
 - DS4.1: DSpark K7 with adaptive verification, greedy proposals, standard
   rejection, B12X target/draft attention and B12X MoE/dense. Engram table
-  placement selects `ram` or `disk` independently of general CPU offload.
+  placement selects `ram` (default) or `disk` independently of general CPU
+  offload. With RAM tables the container uses about 190 GiB of host memory
+  at TP4; use
+  `ENGRAM_TABLE_MEMORY=disk` on hosts with less.
   Main/SWA pages remain 256/128. Breakable prefill graphs remain disabled;
   the native graph configuration remains FULL_AND_PIECEWISE.
   JIT monitoring defaults to `warn`: a kernel missed during warmup may compile
@@ -219,7 +222,7 @@ python -m runtime.launcher --profile glm53-flash \
 
 python -m runtime.launcher --profile ds41-flash \
   --hardware rtx-pro-6000-pcie --print-config \
-  --env OMP_NUM_THREADS=1 -- --engram-table-memory ram
+  --env OMP_NUM_THREADS=1 -- --engram-table-memory disk
 ```
 
 Precedence, highest first:
