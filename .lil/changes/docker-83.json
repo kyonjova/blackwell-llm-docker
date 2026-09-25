@@ -1,0 +1,18 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-83",
+  "category": "performance",
+  "summary": "Qwen3.8-Flash-Next MTP drafts sample the draft distribution, faster at the default temperature",
+  "models": [
+    "Qwen3.8-Flash-Next"
+  ],
+  "compatibility": "No user action required. The output distribution is unchanged.",
+  "details": [
+    "The Qwen profile proposed the argmax draft token (vLLM's greedy default). With the model's default sampling (temperature 1, top_k 20, top_p 0.95) fewer drafts were accepted than with a draft sampled from its distribution, which the GLM and DeepSeek profiles already use.",
+    "ktsaou's reproduction of his ~10% decode gap to SGLang on 2x RTX PRO 6000 Max-Q, TP2, 32 slots: C1 191 -> 227 tok/s, C8 868 -> 937, C32 1724 -> 1882 (SGLang 188 / 881 / 1858). On the standard TP2 profile (16 slots) the gain at default sampling is 2-4%; greedy (temperature 0) requests stay within measurement noise."
+  ],
+  "pull_requests": [
+    83
+  ],
+  "requires": []
+}
