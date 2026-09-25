@@ -62,7 +62,7 @@ modes:
   off: {}
   mtp:
     draft_tokens: 3
-    config: {method: mtp, moe_backend: b12x}
+    config: {method: mtp, draft_sample_method: probabilistic, rejection_sample_method: standard, moe_backend: b12x}
 cache:
   gpu: implemented
   external: implemented

@@ -90,7 +90,41 @@ def test_explicit_inputs_override_preset_values():
     assert plan.values["kv-cache-memory-bytes"] == 3758096384
     assert plan.environment["NCCL_MIN_NCHANNELS"] == "4"
     assert plan.values["max-cudagraph-capture-size"] == 64
-    assert plan.values["cudagraph-capture-sizes"][-1] == 64
+    assert plan.values["cudagraph-capture-sizes"] == [
+        1,
+        2,
+        4,
+        8,
+        12,
+        16,
+        20,
+        24,
+        28,
+        32,
+        36,
+        40,
+        44,
+        48,
+        52,
+        56,
+        60,
+        64,
+    ]
+
+
+@pytest.mark.parametrize(
+    "seqs,sizes",
+    [
+        (4, [1, 2, 4, 8, 12, 16]),
+        (8, [1, 2, 4, 8, 12, 16, 20, 24, 28, 32]),
+    ],
+)
+def test_more_request_slots_keep_a_graph_for_every_verifier_batch(seqs, sizes):
+    # MTP3 verifies four rows per request. Raising MAX_NUM_SEQS must not leave
+    # 5-7 running requests (20/24/28 rows) without a CUDA graph.
+    plan = spark(cli_env={"MAX_NUM_SEQS": str(seqs)})
+    assert plan.values["max-cudagraph-capture-size"] == sizes[-1]
+    assert plan.values["cudagraph-capture-sizes"] == sizes
 
 
 @pytest.mark.parametrize("mode,input_rows", [("mtp", 4096), ("dflash2", 4124)])
@@ -181,3 +215,25 @@ def test_image_audit_covers_every_preset_environment_name():
 def test_fixed_kv_allocation_must_be_positive(amount):
     with pytest.raises(ConfigError, match="must be positive"):
         spark(argv=["--kv-cache-memory-bytes", amount])
+
+
+def test_glm_tp3_preset_selects_expert_parallel_and_tp3_tuning():
+    plan = resolve("glm53-flash", "rtx-pro-6000-pcie", preset="glm53-tp3", env={})
+    argv = plan.argv
+    assert argv[argv.index("--tensor-parallel-size") + 1] == "3"
+    assert "--enable-expert-parallel" in argv
+    assert "--enable-flashinfer-autotune" in argv
+    assert argv[argv.index("--moe-backend") + 1] == "flashinfer_cutlass"
+    assert argv[argv.index("--max-cudagraph-capture-size") + 1] == "32"
+    assert plan.environment["VLLM_PCIE_ONESHOT_ALLREDUCE_MAX_SIZE"] == "256KB"
+    assert plan.environment["VLLM_GLM53_FP8_DENSE"] == "1"
+
+
+def test_glm_tp3_preset_rejects_the_external_cache():
+    with pytest.raises(ConfigError, match="TP2, TP4 or TP8"):
+        resolve(
+            "glm53-flash",
+            "rtx-pro-6000-pcie",
+            preset="glm53-tp3",
+            env={"CACHE_MODE": "lmcache"},
+        )

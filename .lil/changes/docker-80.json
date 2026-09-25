@@ -1,0 +1,14 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-80",
+  "category": "performance",
+  "summary": "Raising MAX_NUM_SEQS keeps a CUDA graph for every running-request count",
+  "models": ["GLM-5.3-Flash"],
+  "compatibility": "No user action required. Remove a manual --cudagraph-capture-sizes workaround or keep it; an explicit value still wins.",
+  "details": [
+    "When MAX_NUM_SEQS raised the graph cap of a preset with listed capture sizes, the launcher added only the cap. With the GLM Spark TP2 preset and MAX_NUM_SEQS=8 the graphs were 1, 2, 4, 8, 12, 16 and 32, so 5-7 running MTP3 requests (20, 24, 28 rows) ran without a CUDA graph and decoded slower than 4 requests.",
+    "The launcher now continues the listed sizes in steps of one request's verifier rows up to the cap: 1, 2, 4, 8, 12, 16, 20, 24, 28, 32. Reported by hashspamjam, who measured c5/c6/c7 at 352/413/497 tok/s before and 470/522/565 tok/s with these sizes."
+  ],
+  "pull_requests": [80],
+  "requires": []
+}

@@ -37,6 +37,30 @@ presets:
         config: {moe_backend: b12x}
     linked_options:
       cache-object-tokens: max-num-batched-tokens
+  glm53-tp3:
+    profile: glm53-flash
+    hardware: rtx-pro-6000-pcie
+    description: GLM-5.3-Flash on three 96-GB RTX PRO GPUs with TP3, expert parallelism and MTP3. Attention heads are padded for TP3, the vision tower runs data-parallel, and large dense projections decode in FP8. VRAM prefix cache only.
+    options:
+      tensor-parallel-size: 3
+      enable-expert-parallel: true
+      moe-backend: flashinfer_cutlass
+      enable-flashinfer-autotune: true
+      mode: mtp
+      max-num-seqs: 8
+      max-cudagraph-capture-size: 32
+      cudagraph-capture-sizes: [1, 2, 4, 8, 12, 16, 20, 24, 28, 32]
+      additional-config: {glm53_kda_decode_backend: b12x, kda_prefill_backend: flashkda}
+    environment:
+      VLLM_PCIE_ONESHOT_ALLREDUCE_MAX_SIZE: 256KB
+      VLLM_GLM53_L2_PREFETCH_BUDGET_A_MB: "10"
+      VLLM_GLM53_L2_PREFETCH_BUDGET_B_MB: "25"
+      VLLM_GLM53_L2_PREFETCH_BUDGET_C_MB: "7.5"
+      VLLM_GLM53_L2_PREFETCH_BUDGET_A_MLA_MB: "18"
+      VLLM_GLM53_FP8_DENSE: "1"
+      VLLM_GLM53_FP8_PREFILL: w8a8
+    modes: {}
+    linked_options: {}
   qwen38-tp2:
     profile: qwen38-flash-next
     hardware: rtx-pro-6000-pcie

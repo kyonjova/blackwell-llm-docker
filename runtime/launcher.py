@@ -613,6 +613,15 @@ def resolve(
         )
 
     if identifier == "qwen38-flash-next":
+        # B12X QSA shards compressed KV across DCP ranks in groups of four
+        # tokens and refuses vLLM's default interleave of one, so every
+        # DCP > 1 deployment needs this unless the operator chose a value.
+        if values["decode-context-parallel-size"] > 1:
+            for key in ("cp-kv-cache-interleave-size", "dcp-kv-cache-interleave-size"):
+                if key not in values or origins[key].startswith(
+                    ("common:", "model:", "hardware:")
+                ):
+                    derive(key, 4, "QSA DCP interleave")
         context_length = values["max-model-len"]
         base_context_length = 262144
         if context_length > base_context_length and "hf-overrides" not in values:
@@ -773,12 +782,10 @@ def resolve(
             },
             "Engram table placement, not generic CPU offload",
         )
+    width = values.get("speculative-config", {}).get("num_speculative_tokens", 0) + 1
+    if identifier.startswith("ds4-") and mode != "dspark":
+        width = 4 if mode == "off" else 8
     if values.get("max-cudagraph-capture-size") == "auto":
-        width = (
-            values.get("speculative-config", {}).get("num_speculative_tokens", 0) + 1
-        )
-        if identifier.startswith("ds4-") and mode != "dspark":
-            width = 4 if mode == "off" else 8
         derive(
             "max-cudagraph-capture-size",
             max(6, values["max-num-seqs"] * width),
@@ -789,11 +796,16 @@ def resolve(
     ).startswith(("model:", "preset:")):
         cap = values["max-cudagraph-capture-size"]
         if cap != model["defaults"].get("max-cudagraph-capture-size") or deployment:
+            sizes = {n for n in values["cudagraph-capture-sizes"] if n <= cap}
+            # A raised cap (for example more request slots) continues the
+            # listed sizes in steps of one request's verifier rows, so every
+            # running-request count up to the cap still replays a graph.
+            step = width if width > 1 else 8
+            top = max(sizes, default=0)
+            sizes |= {n for n in range(step, cap, step) if n > top}
             derive(
                 "cudagraph-capture-sizes",
-                sorted(
-                    {n for n in values["cudagraph-capture-sizes"] if n <= cap} | {cap}
-                ),
+                sorted(sizes | {cap}),
                 "capture-size cap override",
             )
 

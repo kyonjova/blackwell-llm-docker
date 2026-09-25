@@ -65,6 +65,13 @@ allocator retries with this tight memory budget.
 - Native form: `lil-serve --preset glm53-spark-tp2 -- --port 8000`.
 - Qwen TP2: `PRESET=qwen38-tp2`; CPU PLE placement and MTP defaults still come
   from the Qwen model profile. `PROFILE=qwen38-flash-next TP=2` is equivalent.
+- GLM on three GPUs: `PRESET=glm53-tp3` (TP3 with expert parallelism, MTP3,
+  eight request slots). MLA and KDA heads are padded to divide by three with
+  zero weights, the vision tower runs data-parallel, and the large dense
+  projections decode in FP8 (`-e VLLM_GLM53_FP8_DENSE=0` keeps them BF16).
+  The external cache (`CACHE_MODE=lmcache`) is not available at TP3; the VRAM
+  prefix cache is. The first start tunes FlashInfer MoE kernels and stores the
+  result under `/cache`.
 
 For Qwen, the `rtx-pro-6000-pcie` hardware profile keeps residual-mixing
 projections replicated on each GPU (`VLLM_QWEN3_8_FLASH_NEXT_HC_TP=0`). This
@@ -146,13 +153,24 @@ performance measurements. Source references are recorded inside each profile.
   `--linear-backend b12x` are explicit alternatives requiring dispatch and
   performance checks. Model choice is explicit: changing speculation mode
   never silently changes the checkpoint repository.
+- DS4 text sets `VLLM_ENABLE_STARTUP_PLAN=1`. The first start stores the
+  measured KV budget under the JIT cache. Later starts reuse it when the vLLM
+  configuration, the device and the vLLM, PyTorch and CUDA versions are
+  unchanged, and skip the CUDA-graph memory estimate (about 45-50 s on TP2).
+  A plan is refused when free GPU memory shrank. The key covers CLI settings,
+  not environment variables: after changing an environment variable that
+  affects GPU memory, start once with `-e VLLM_ENABLE_STARTUP_PLAN=0` or set
+  `KV_CACHE_MEMORY_BYTES`.
   The official text/Vision checkpoint and remote-code revisions follow the
   source launcher's pinned revisions. An explicit model override does not
   inherit another repository's revision; `MODEL_REVISION` and
   `MODEL_CODE_REVISION` remain operator controls.
-- DS4.1: DSpark K7 with adaptive verification, greedy proposals, standard
+- DS4.1: DSpark K7 with adaptive verification, sampled proposals, standard
   rejection, B12X target/draft attention and B12X MoE/dense. Engram table
-  placement selects `ram` or `disk` independently of general CPU offload.
+  placement selects `ram` (default) or `disk` independently of general CPU
+  offload. With RAM tables the container uses about 190 GiB of host memory
+  at TP4 after startup and about 230 GiB under load; use
+  `ENGRAM_TABLE_MEMORY=disk` on hosts with less.
   Main/SWA pages remain 256/128. Breakable prefill graphs remain disabled;
   the native graph configuration remains FULL_AND_PIECEWISE.
   JIT monitoring defaults to `warn`: a kernel missed during warmup may compile
@@ -204,7 +222,7 @@ python -m runtime.launcher --profile glm53-flash \
 
 python -m runtime.launcher --profile ds41-flash \
   --hardware rtx-pro-6000-pcie --print-config \
-  --env OMP_NUM_THREADS=1 -- --engram-table-memory ram
+  --env OMP_NUM_THREADS=1 -- --engram-table-memory disk
 ```
 
 Precedence, highest first:
@@ -412,7 +430,20 @@ For the GLM Spark TP2/DCP2 recipe with a 3072-token scheduling budget, replace
 ```
 
 Use `LMCACHE_MODE=ram` to omit disk storage. Keep `/cache` on a persistent
-Docker volume for disk restore.
+Docker volume for disk restore. At startup the disk tier is capped to 90% of
+what its filesystem can give it (free space plus what the tier already holds),
+with a warning, so it cannot fill the disk. A RAM arena left in `/dev/shm` by a
+container that was killed or crashed is removed automatically; an arena whose
+container is still running is refused.
+
+The disk tier lives in `/cache/lmcache/<model>/<layout>/<checkpoint>`. The
+layout covers the image runtime and the cache settings, so a new image or a
+changed setting starts an empty tier, and the previous one stays on disk
+outside `LMCACHE_L2_GB`. The startup log names such tiers with their sizes.
+`-e LMCACHE_L2_PRUNE_STALE=1` deletes them at startup, except tiers held by a
+running container and tiers written in the last 30 minutes. Containers from
+images older than this option do not hold that lock: do not prune a volume
+that such a container still uses.
 
 Each request-boundary checkpoint holds the complete recurrent state, about
 167 MB for Qwen at TP1 and about 215 MB per request for GLM-5.3-Flash at TP4.

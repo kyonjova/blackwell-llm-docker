@@ -22,6 +22,17 @@ def test_glm_non_speculative_override_remains_available(argv):
     assert "speculative-config" not in plan.values
 
 
+@pytest.mark.parametrize(
+    "profile", ["qwen38-flash-next", "glm53-flash", "ds4-flash", "ds41-flash"]
+)
+def test_mtp_drafts_sample_from_the_draft_distribution(profile):
+    # Sampled requests (the models' default T=1) accept more draft tokens when
+    # the drafter samples its distribution than when it proposes the argmax.
+    config = resolve(profile, env={}).values["speculative-config"]
+    assert config["draft_sample_method"] == "probabilistic"
+    assert config["rejection_sample_method"] == "standard"
+
+
 @pytest.mark.parametrize("preset", [None, "qwen38-tp2"])
 def test_qwen_enables_vision_without_changing_table_or_mtp_policy(preset):
     plan = resolve("qwen38-flash-next", env={}, preset=preset)
@@ -37,3 +48,38 @@ def test_qwen_text_only_override_remains_available():
     plan = resolve("qwen38-flash-next", env={}, argv=["--language-model-only"])
     assert plan.values["language-model-only"] is True
     assert "--language-model-only" in plan.argv
+
+
+def _interleave(plan):
+    argv = plan.argv
+    return {
+        key: argv[argv.index(key) + 1]
+        for key in ("--cp-kv-cache-interleave-size", "--dcp-kv-cache-interleave-size")
+        if key in argv
+    }
+
+
+@pytest.mark.parametrize("dcp", ["2", "4"])
+def test_qwen_dcp_derives_the_qsa_kv_interleave(dcp):
+    plan = resolve("qwen38-flash-next", env={"TP": "4", "DCP": dcp})
+    assert _interleave(plan) == {
+        "--cp-kv-cache-interleave-size": "4",
+        "--dcp-kv-cache-interleave-size": "4",
+    }
+
+
+def test_qwen_dcp1_and_explicit_interleave_are_unchanged():
+    assert _interleave(resolve("qwen38-flash-next", env={"TP": "4"})) == {}
+    plan = resolve(
+        "qwen38-flash-next",
+        env={
+            "TP": "4",
+            "DCP": "4",
+            "CP_KV_CACHE_INTERLEAVE_SIZE": "8",
+            "DCP_KV_CACHE_INTERLEAVE_SIZE": "8",
+        },
+    )
+    assert _interleave(plan) == {
+        "--cp-kv-cache-interleave-size": "8",
+        "--dcp-kv-cache-interleave-size": "8",
+    }

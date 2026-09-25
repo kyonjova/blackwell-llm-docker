@@ -383,3 +383,105 @@ def test_docker_is_a_known_required_component_only_with_a_recipe(monkeypatch):
         changelog.collect_release_changelog(current, "example/releases")
     current["recipe_commit"] = "recipe-new"
     changelog.collect_release_changelog(current, "example/releases")
+
+
+def _reviewed(monkeypatch):
+    monkeypatch.setattr(
+        changelog,
+        "_pull_request",
+        lambda repository, number: {
+            "number": number,
+            "url": f"https://github.com/{repository}/pull/{number}",
+            "title": "Reviewed change",
+            "author": "@contributor",
+        },
+    )
+
+
+def _canonical_sources(recipe_old, recipe_new, recipe_fragments, vllm_fragments):
+    return {
+        ("local-inference-lab/vllm", "vllm-old"): {},
+        ("local-inference-lab/vllm", "vllm-new"): vllm_fragments,
+        ("local-inference-lab/b12x", "b12x-old"): {},
+        ("local-inference-lab/b12x", "b12x-new"): {},
+        ("example/releases", recipe_old): {},
+        ("example/releases", recipe_new): recipe_fragments,
+    }
+
+
+def test_fragment_waits_for_a_required_fragment_of_another_component(monkeypatch):
+    """A shared recipe change that needs a beta-only vLLM fix must not fail
+    the canonical publication; it waits until the channel contains the fix."""
+    recipe_payload = {
+        **fragment("docker-79", pull_requests=[79]),
+        "requires": ["vllm-895"],
+    }
+    other_payload = {**fragment("docker-80", pull_requests=[80]), "requires": []}
+    recipe = {
+        "docker-79": record(recipe_payload),
+        "docker-80": record(other_payload),
+    }
+    sources = _canonical_sources("recipe-old", "recipe-new", recipe, {})
+    prior = previous()
+    prior["assembly"]["recipe_commit"] = "recipe-old"
+    current = assembly()
+    current["recipe_commit"] = "recipe-new"
+    current["changelog"] = {"required_components": []}
+    monkeypatch.setattr(changelog, "previous_publication", lambda *args: prior)
+    monkeypatch.setattr(
+        changelog,
+        "load_fragments",
+        lambda repository, commit, component: sources[(repository, commit)],
+    )
+    _reviewed(monkeypatch)
+
+    result = changelog.collect_release_changelog(current, "example/releases")
+
+    assert [change["id"] for change in result["changes"]] == ["docker-80"]
+    assert result["deferred"] == [
+        {"id": "docker-79", "component": "docker", "missing": ["vllm-895"]}
+    ]
+
+    # The next release of the channel carries vllm-895, so docker-79 appears.
+    later_sources = {
+        ("local-inference-lab/vllm", "vllm-old"): {},
+        ("local-inference-lab/vllm", "vllm-new"): {
+            "vllm-895": record(
+                {**fragment("vllm-895", pull_requests=[895]), "requires": []}
+            )
+        },
+        ("local-inference-lab/b12x", "b12x-old"): {},
+        ("local-inference-lab/b12x", "b12x-new"): {},
+        ("example/releases", "recipe-new"): recipe,
+    }
+    later_prior = previous()
+    later_prior["assembly"]["recipe_commit"] = "recipe-new"
+    later_prior["deferred"] = ["docker-79"]
+    monkeypatch.setattr(changelog, "previous_publication", lambda *args: later_prior)
+    monkeypatch.setattr(
+        changelog,
+        "load_fragments",
+        lambda repository, commit, component: later_sources[(repository, commit)],
+    )
+
+    later = changelog.collect_release_changelog(current, "example/releases")
+
+    assert [change["id"] for change in later["changes"]] == ["docker-79", "vllm-895"]
+    assert later["deferred"] == []
+
+
+def test_previous_publication_reads_deferred_fragments(monkeypatch):
+    release = publication("karmic-kraken-beta-prior", "2026-09-24T22:00:00Z")
+    release["assets"].append(
+        {
+            "name": "release-changelog.json",
+            "state": "uploaded",
+            "size": 1,
+            "payload": {"deferred": [{"id": "docker-79", "missing": ["vllm-895"]}]},
+        }
+    )
+    install_release_pages(monkeypatch, [[release]])
+    current = assembly()
+    current["release_tag"] = "karmic-kraken-beta-next"
+    found = changelog.previous_publication("example/releases", current)
+    assert found["deferred"] == ["docker-79"]

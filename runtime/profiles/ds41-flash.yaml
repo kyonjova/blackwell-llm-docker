@@ -32,7 +32,7 @@ defaults:
   decode-refill-target: auto
   generation-config: vllm
   override-generation-config: {temperature: 1.0, top_p: 0.95}
-  engram-table-memory: disk
+  engram-table-memory: ram
   engram-disk-resident-scales: false
   engram-projection-tp: false
   adaptive-verification: true
@@ -59,7 +59,7 @@ modes:
   off: {}
   dspark:
     draft_tokens: 7
-    config: {method: dspark, attention_backend: B12X, draft_sample_method: greedy, rejection_sample_method: standard}
+    config: {method: dspark, attention_backend: B12X, draft_sample_method: probabilistic, rejection_sample_method: standard}
 cache:
   gpu: implemented
   external: implemented

@@ -1,0 +1,14 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-77",
+  "category": "fix",
+  "summary": "Restart after a crash without deleting /dev/shm by hand; keep the LMCache disk tier within its disk",
+  "models": ["all"],
+  "compatibility": "No user action required.",
+  "details": [
+    "A RAM cache arena left in /dev/shm by a container that was killed or crashed no longer blocks the next start with \"Refusing to reuse an existing cache SHM arena\": the supervisor holds a lock for as long as its container runs, and an arena without a live owner is removed.",
+    "At startup the LMCache disk tier (LMCACHE_L2_GB) is capped, with a warning, to 90% of what its filesystem can give it (free space plus the tier's existing files), so it cannot fill the disk and crash the container."
+  ],
+  "pull_requests": [77],
+  "requires": []
+}

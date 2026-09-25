@@ -1,0 +1,14 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-79",
+  "category": "performance",
+  "summary": "DeepSeek-V4-Flash warm starts reuse the measured KV budget",
+  "models": ["DeepSeek-V4-Flash"],
+  "compatibility": "No user action required. After changing an environment variable that affects GPU memory, start once with VLLM_ENABLE_STARTUP_PLAN=0 or set KV_CACHE_MEMORY_BYTES.",
+  "details": [
+    "The ds4-flash profile enables vLLM's startup plan. The first start records the KV budget; later starts with the same configuration skip the CUDA-graph memory estimation pass, which re-prepares every B12X attention plan: about 45-50 s less on TP2.",
+    "A plan is refused when free GPU memory is lower than when it was recorded, and it is keyed by the vLLM configuration, device and versions."
+  ],
+  "pull_requests": [79],
+  "requires": ["vllm-895"]
+}

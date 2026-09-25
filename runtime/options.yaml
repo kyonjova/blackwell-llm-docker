@@ -310,6 +310,12 @@
       "ENABLE_AUTO_TOOL_CHOICE"
     ]
   },
+  "enable-expert-parallel": {
+    "type": "boolean",
+    "env": [
+      "ENABLE_EXPERT_PARALLEL"
+    ]
+  },
   "enable-flashinfer-autotune": {
     "type": "boolean",
     "env": [
@@ -576,6 +582,13 @@
     "control": true,
     "env": [
       "LMCACHE_L2_ODIRECT"
+    ]
+  },
+  "cache-l2-prune-stale": {
+    "type": "boolean",
+    "control": true,
+    "env": [
+      "LMCACHE_L2_PRUNE_STALE"
     ]
   },
   "cache-l2-checkpoint-writes": {
