@@ -169,7 +169,7 @@ performance measurements. Source references are recorded inside each profile.
   rejection, B12X target/draft attention and B12X MoE/dense. Engram table
   placement selects `ram` (default) or `disk` independently of general CPU
   offload. With RAM tables the container uses about 190 GiB of host memory
-  at TP4; use
+  at TP4 after startup and about 230 GiB under load; use
   `ENGRAM_TABLE_MEMORY=disk` on hosts with less.
   Main/SWA pages remain 256/128. Breakable prefill graphs remain disabled;
   the native graph configuration remains FULL_AND_PIECEWISE.
