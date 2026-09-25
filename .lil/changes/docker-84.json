@@ -1,0 +1,14 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-84",
+  "category": "performance",
+  "summary": "DeepSeek-V4.1-Flash keeps its Engram tables in RAM by default",
+  "models": ["DeepSeek-V4.1-Flash"],
+  "compatibility": "The container needs about 190 GiB of host memory at TP4. On hosts with less, set ENGRAM_TABLE_MEMORY=disk.",
+  "details": [
+    "Disk-resident Engram tables made decode speed depend on the page cache: repeated identical DS4.1 runs differed by up to 70%. RAM tables remove that dependency.",
+    "Disk tables still need --security-opt seccomp=unconfined and --ulimit memlock=-1 for io_uring; the configurator adds them."
+  ],
+  "pull_requests": [84],
+  "requires": []
+}
