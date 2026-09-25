@@ -1,0 +1,14 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-85",
+  "category": "fix",
+  "summary": "DeepSeek-V4.1-Flash DSpark drafts sample the draft distribution, as the vLLM recipe does",
+  "models": ["DeepSeek-V4.1-Flash"],
+  "compatibility": "No user action required. The output distribution is unchanged.",
+  "details": [
+    "The ds41-flash profile proposed the argmax draft token. The upstream vLLM DeepSeek-V4.1-Flash recipe samples DSpark drafts, as our other profiles already do.",
+    "DS4.1 TP4 A/B on RTX PRO 6000, RAM Engram tables, default sampling, three pairs: C1 191.8 vs 192.7 tok/s, C8 734 vs 738, C16 1100 vs 1073; acceptance unchanged, 32/32 correct in every run."
+  ],
+  "pull_requests": [85],
+  "requires": []
+}

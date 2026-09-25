@@ -165,7 +165,7 @@ performance measurements. Source references are recorded inside each profile.
   source launcher's pinned revisions. An explicit model override does not
   inherit another repository's revision; `MODEL_REVISION` and
   `MODEL_CODE_REVISION` remain operator controls.
-- DS4.1: DSpark K7 with adaptive verification, greedy proposals, standard
+- DS4.1: DSpark K7 with adaptive verification, sampled proposals, standard
   rejection, B12X target/draft attention and B12X MoE/dense. Engram table
   placement selects `ram` (default) or `disk` independently of general CPU
   offload. With RAM tables the container uses about 190 GiB of host memory
