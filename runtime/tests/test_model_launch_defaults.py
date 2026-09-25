@@ -22,7 +22,9 @@ def test_glm_non_speculative_override_remains_available(argv):
     assert "speculative-config" not in plan.values
 
 
-@pytest.mark.parametrize("profile", ["qwen38-flash-next", "glm53-flash", "ds4-flash"])
+@pytest.mark.parametrize(
+    "profile", ["qwen38-flash-next", "glm53-flash", "ds4-flash", "ds41-flash"]
+)
 def test_mtp_drafts_sample_from_the_draft_distribution(profile):
     # Sampled requests (the models' default T=1) accept more draft tokens when
     # the drafter samples its distribution than when it proposes the argmax.
