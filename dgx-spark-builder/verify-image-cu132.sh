@@ -17,7 +17,7 @@ ENV_FILE="${2:-}"
 # -i is REQUIRED: without it docker does not attach the heredoc to the
 # container's stdin, `python -` reads EOF, runs nothing and exits 0 -- every
 # py check would PASS without executing a line.
-py() { docker run -i --rm --entrypoint /opt/venv/bin/python "$IMAGE" - "$@"; }
+py() { docker run -i --rm --entrypoint /opt/venv/bin/python "$IMAGE" -; }
 sh() { docker run --rm --entrypoint bash "$IMAGE" -c "$1"; }
 pass=0; fail=0
 ok()   { echo "  PASS  $*"; pass=$((pass+1)); }
@@ -120,7 +120,7 @@ want_lmc="$(prof LMCACHE_BUILD_VERSION)"
 img_lmc="$(label local-inference.lmcache.commit)"
 echo "  lmcache commit label: ${img_lmc:-(none)}    profile LMCACHE_COMMIT: $(prof LMCACHE_COMMIT)"
 WANT_LMC="$want_lmc" docker run -i --rm -e WANT_LMC --entrypoint /opt/venv/bin/python "$IMAGE" - <<'PY' \
-  && ok "lmcache ${want_lmc:-(unpinned)} installed; MP server + LMCacheMPConnector + LMCacheRecurrentCheckpointConnector import against this vLLM" \
+  && ok "lmcache ${want_lmc:-(unpinned)} installed; MP server + LMCacheMPConnector import against this vLLM" \
   || bad "LMCache version mismatch or connector import failure (see output above)"
 import importlib.metadata as md, os
 want = os.environ.get("WANT_LMC", "")
@@ -129,8 +129,21 @@ print("  lmcache", have)
 assert not want or have == want, f"installed {have} != profile {want}"
 import lmcache.v1.multiprocess.server  # noqa: F401
 import lmcache.integration.vllm.lmcache_mp_connector  # noqa: F401
+PY
+# The recurrent-checkpoint connector imports vllm.v1.worker.gpu.boundary_checkpoint,
+# which calls tl.constexpr() at module scope: without a GPU driver vLLM swaps
+# triton.language for a placeholder (constexpr=None) and the import raises
+# TypeError. So this one import runs with the GPU (and the cu132 compat shim).
+if command -v nvidia-smi >/dev/null 2>&1; then
+  docker run -i --rm --gpus all -e LD_PRELOAD=/usr/local/cuda/compat/libcuda.so.1 \
+    --entrypoint /opt/venv/bin/python "$IMAGE" - <<'PY' \
+    && ok "LMCacheRecurrentCheckpointConnector imports against this vLLM (GPU container)" \
+    || bad "LMCacheRecurrentCheckpointConnector import failed with a GPU (see output above)"
 import lmcache.integration.vllm.recurrent_checkpoint_connector  # noqa: F401
 PY
+else
+  echo "  NOTE  no nvidia-smi on this host: LMCacheRecurrentCheckpointConnector import skipped (needs a GPU; not used on the pair)"
+fi
 
 echo "== SparkCache (PATCH_SPARKCACHE)"
 img_sc="$(label org.local-inference.sparkcache.commit)"

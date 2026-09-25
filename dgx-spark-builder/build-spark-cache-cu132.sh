@@ -124,6 +124,7 @@ if [[ -n "${ENV_FILE}" ]]; then
       OVERRIDDEN_KEYS="${OVERRIDDEN_KEYS:-} ${key}"
     else
       printf -v "${key}" '%s' "${val}"
+      # shellcheck disable=SC2163  # export by NAME (the key read from the profile)
       export "${key}"
     fi
   done < "${ENV_FILE}"
@@ -425,7 +426,9 @@ for t in PATCH_GPU_ARCH PATCH_HOST_ARCH PATCH_PCIE_ENV \
          PATCH_SPARKCACHE; do
   v="${!t:-auto}"
   case "${v}" in on|off|auto) ;; *) die "${t} must be on, off, or auto: ${v}" ;; esac
-  printf -v "${t}" '%s' "${v}"; export "${t}"
+  printf -v "${t}" '%s' "${v}"
+  # shellcheck disable=SC2163  # export by NAME (the toggle variable)
+  export "${t}"
 done
 if [[ "${PATCH_GPU_ARCH}" == off || "${PATCH_HOST_ARCH}" == off ]]; then
   warn "disabling arch patches produces an x86/sm120 image; that is upstream's stock build, not a Spark image"
@@ -1070,11 +1073,27 @@ new_check = (
     "    )\n"
     "    assert (pair.kv_world_size, pair.kv_worker_id, pair.kv_tp_size) == (1, 0, 1)\n"
     "    assert pair.is_kv_writer and pair.num_kv_readers == 1\n"
-    "# Import the server and both KK-facing connectors now, so an LMCache/vLLM\n"
-    "# API break fails the image build instead of the first boot.\n"
+    "# Import the server and the multi-server MP connector now, so an\n"
+    "# LMCache/vLLM API break fails the image build instead of the first boot.\n"
     "import lmcache.v1.multiprocess.server  # noqa: F401\n"
     "import lmcache.integration.vllm.lmcache_mp_connector  # noqa: F401\n"
-    "import lmcache.integration.vllm.recurrent_checkpoint_connector  # noqa: F401\n"
+    "# The recurrent-checkpoint connector cannot be IMPORTED at build time: it\n"
+    "# imports vllm.v1.worker.gpu.boundary_checkpoint, which calls\n"
+    "# tl.constexpr() at module scope, and without a GPU driver vLLM swaps\n"
+    "# triton.language for a placeholder whose constexpr is None. Check that\n"
+    "# it is present and compiles; verify-image imports it with a GPU.\n"
+    "import importlib.util, py_compile\n"
+    "_spec = importlib.util.find_spec('lmcache.integration.vllm.recurrent_checkpoint_connector')\n"
+    "assert _spec is not None and _spec.origin, 'recurrent_checkpoint_connector missing'\n"
+    "py_compile.compile(_spec.origin, doraise=True, cfile='/tmp/_rcc.pyc')\n"
+    "# One OpenTelemetry SDK minor across the venv (sdk, api, OTLP exporter).\n"
+    "_otel = {}\n"
+    "for _d in ('opentelemetry-sdk', 'opentelemetry-api', 'opentelemetry-exporter-otlp-proto-http', 'opentelemetry-exporter-otlp-proto-grpc'):\n"
+    "    try:\n"
+    "        _otel[_d] = md.version(_d)\n"
+    "    except md.PackageNotFoundError:\n"
+    "        pass\n"
+    "assert len({v.rsplit('.', 1)[0] for v in _otel.values()}) == 1, f'OpenTelemetry versions diverged: {_otel}'\n"
 )
 n = text.count(old_check)
 assert n == 1, f"PATCH_LMCACHE_INTEGRATION: final-stage ParallelStrategy check found {n} times -- update old_check"
@@ -1090,10 +1109,22 @@ n = text.count(old_dep)
 assert n == 1, f"PATCH_LMCACHE_INTEGRATION: final-stage cupy pin found {n} times"
 text = text.replace(old_dep, old_dep + "      cryptography \\\n      httpx \\\n")
 
+# OpenTelemetry: upstream pins opentelemetry-exporter-prometheus==0.65b0,
+# which requires opentelemetry-sdk~=1.44. The KK vLLM venv already carries
+# sdk 1.45 (with the OTLP exporters vLLM tracing uses, which require
+# ~=1.45), so pip DOWNGRADES sdk/api to 1.44 and leaves the OTLP exporters
+# broken (resolver warning in the build log, 2026-09-25). 0.66b0 requires
+# sdk~=1.45 and keeps the venv consistent. Final stage only: the stage-3 test
+# venv is discarded, and leaving it untouched keeps the LMCache wheel cached.
+old_otel = "      redis==8.0.1 \\\n      opentelemetry-exporter-prometheus==0.65b0 \\\n"
+n = text.count(old_otel)
+assert n == 1, f"PATCH_LMCACHE_INTEGRATION: final-stage otel exporter pin found {n} times"
+text = text.replace(old_otel, "      redis==8.0.1 \\\n      opentelemetry-exporter-prometheus==0.66b0 \\\n")
+
 path.write_text(text)
 print(f"PATCH_LMCACHE_INTEGRATION: stage-3 tests {len(old_tests)} -> {len(new_tests)} files; "
       "final check -> mla_only/num_kv_readers + pair geometry + connector imports; "
-      "+cryptography +httpx", file=sys.stderr)
+      "+cryptography +httpx; otel exporter 0.65b0 -> 0.66b0", file=sys.stderr)
 PYEOF
   plog "PATCH_LMCACHE_INTEGRATION: stage-3 test list + final-stage API check rewritten for LMCache ${LMCACHE_COMMIT:0:12}"
 else
