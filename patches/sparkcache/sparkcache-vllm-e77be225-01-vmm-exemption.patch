@@ -1,5 +1,5 @@
 SparkCache vLLM patch 1/2 -- VMM (expandable-segments) connector exemption.
-SparkCache-vLLM-Pin: e77be22511ab91ecf217760524b7579c366cca2a
+SparkCache-vLLM-Pin: 1794dcf18454900263e0c66711af8ea4a1283ac1
 Source: FujitsuPolycom/sparkcache patches/vllm-da4d7be/020-sparkcache-vmm-exemption.patch (applies unchanged).
 See patches/README-sparkcache.md.
 

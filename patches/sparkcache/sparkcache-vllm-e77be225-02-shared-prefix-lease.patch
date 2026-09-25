@@ -1,5 +1,5 @@
 SparkCache vLLM patch 2/2 -- shared-prefix GPU leases (upstream 040 + 041, one feature).
-SparkCache-vLLM-Pin: e77be22511ab91ecf217760524b7579c366cca2a
+SparkCache-vLLM-Pin: 1794dcf18454900263e0c66711af8ea4a1283ac1
 Source: FujitsuPolycom/sparkcache patches/vllm-da4d7be/040 + 041, rebased onto KK e77be225.
 Requires patch 1/2. See patches/README-sparkcache.md.
 

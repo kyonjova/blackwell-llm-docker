@@ -1108,8 +1108,11 @@ fi
 # package is pure Python with no dependencies (--no-deps; torch/vLLM come
 # from the image). The connector needs no vLLM change, but vLLM gatekeeps
 # it, so the profile lists vLLM patches to apply, in order:
-#   SPARKCACHE_VLLM_PATCHES=<file>[,<file>...]   (files in ./patches/)
-# see patches/README-sparkcache.md for what each one changes. They are
+#   SPARKCACHE_VLLM_PATCHES=<path>[,<path>...]
+# Paths are relative to the repo-root patches/ directory -- the same
+# convention as VLLM_PATCH_FILE / B12X_PATCH_FILE / LMCACHE_PATCH_FILE, so a
+# subfolder works (e.g. sparkcache/<file>.patch). See the README next to the
+# patches for what each one changes. They are
 # applied to the INSTALLED vLLM in the final stage (after the wheel build),
 # so the multi-hour vLLM compile cache is untouched. Every file carries a
 # "SparkCache-vLLM-Pin: <sha>" header that must equal VLLM_COMMIT: a vLLM
@@ -1127,18 +1130,22 @@ if [[ "${sc_apply}" == 1 ]]; then
   sc_repo="${SPARKCACHE_REPO:-https://github.com/FujitsuPolycom/sparkcache}"; sc_repo="${sc_repo%.git}"
   case "${sc_repo}" in https://github.com/*) ;; *) die "SPARKCACHE_REPO must be a https://github.com/<owner>/<repo> URL: ${sc_repo}" ;; esac
   [[ -n "${SPARKCACHE_VLLM_PATCHES:-}" ]] \
-    || die "PATCH_SPARKCACHE: SPARKCACHE_VLLM_PATCHES is empty; at least the vmm-exemption patch is required (see patches/README-sparkcache.md)"
+    || die "PATCH_SPARKCACHE: SPARKCACHE_VLLM_PATCHES is empty; at least the vmm-exemption patch is required"
+  # The wrapper cd'ed to the repo root above; resolve against its patches/.
+  sc_patch_root="$(pwd)/patches"
   sc_patches=()
   IFS=',' read -r -a sc_names <<< "${SPARKCACHE_VLLM_PATCHES}"
   for name in "${sc_names[@]}"; do
     [[ -n "${name}" ]] || die "SPARKCACHE_VLLM_PATCHES has an empty entry (stray comma)"
-    [[ "${name}" != */* ]] || die "SPARKCACHE_VLLM_PATCHES entries are file names inside ${SCRIPT_DIR}/patches/, not paths: ${name}"
-    f="${SCRIPT_DIR}/patches/${name}"
+    case "${name}" in
+      /*|..|../*|*/..|*/../*) die "SPARKCACHE_VLLM_PATCHES entries are paths relative to ${sc_patch_root}/ (no absolute paths, no ..): ${name}" ;;
+    esac
+    f="${sc_patch_root}/${name}"
     [[ -f "${f}" ]] || die "PATCH_SPARKCACHE: patch not found: ${f}"
     pin="$(sed -n 's/^SparkCache-vLLM-Pin: *\([0-9a-f]\{40\}\).*/\1/p' "${f}" | head -1)"
     [[ -n "${pin}" ]] || die "PATCH_SPARKCACHE: ${name} has no 'SparkCache-vLLM-Pin: <40-hex>' header"
     [[ "${pin}" == "${VLLM_COMMIT}" ]] \
-      || die "PATCH_SPARKCACHE: ${name} was rebased for vLLM ${pin:0:12}, but this profile builds vLLM ${VLLM_COMMIT:0:12}; rebase the patches for the new pin (patches/README-sparkcache.md)"
+      || die "PATCH_SPARKCACHE: ${name} was rebased for vLLM ${pin:0:12}, but this profile builds vLLM ${VLLM_COMMIT:0:12}; rebase the patches for the new pin and update their header"
     sc_patches+=("${f}")
   done
   # The expandable-segments guard refuses the connector at startup without it.
