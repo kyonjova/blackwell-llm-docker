@@ -6,6 +6,9 @@ description: Single-node RTX PRO 6000 Blackwell PCIe deployment defaults; no clo
 defaults: {}
 environment:
   CUTE_DSL_ARCH: sm_120a
+  # Runtime torch cpp_extension builds target only this GPU; the image
+  # inherits NVIDIA's multi-architecture list from the NGC base.
+  TORCH_CUDA_ARCH_LIST: "12.0a"
   NCCL_IB_DISABLE: "1"
   NCCL_P2P_LEVEL: SYS
   NCCL_PROTO: LL,LL128,Simple

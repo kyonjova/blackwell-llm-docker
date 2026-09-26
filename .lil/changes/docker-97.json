@@ -1,0 +1,13 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-97",
+  "category": "compatibility",
+  "summary": "The RTX PRO 6000 hardware profile sets TORCH_CUDA_ARCH_LIST=12.0a",
+  "models": ["all"],
+  "compatibility": "No user action required; no current component compiles CUDA through torch cpp_extension at runtime.",
+  "details": [
+    "Replaces the NGC base image's multi-architecture list (7.5 to 12.0+PTX) on this hardware, matching CUTE_DSL_ARCH=sm_120a. Other hardware keeps the image value."
+  ],
+  "pull_requests": [97],
+  "requires": []
+}
