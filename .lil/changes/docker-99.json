@@ -1,0 +1,14 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-99",
+  "category": "feature",
+  "summary": "lil-bench: benchmark a running container and upload the result",
+  "models": ["all"],
+  "compatibility": "No user action required; lil-bench runs only when started with docker exec.",
+  "details": [
+    "docker exec -it -e LIL_BENCH_TOKEN=<identifier> <container> lil-bench runs the standard test: p2pmark, prefill 32k and 128k, and decode at C1/C8/C16 with 0/64k/128k context. It records the exact serving command, the hardware and PCIe topology, and GPU clocks and throttling.",
+    "The identifier comes from docker.local-inference-lab.ai/bench/token (GitHub sign-in). Uploaded runs are private to their author."
+  ],
+  "pull_requests": [99],
+  "requires": []
+}

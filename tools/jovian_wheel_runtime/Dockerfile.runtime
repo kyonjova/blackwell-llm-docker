@@ -35,6 +35,7 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv,ro \
       --manifest /source/tools/jovian_wheel_runtime/ngc-venv-python-patches.json \
  && /opt/venv/bin/python /source/tools/jovian_wheel_runtime/install_runtime_auxiliary.py \
       --bundle /runtime-bundle \
+ && /opt/venv/bin/python /source/tools/jovian_wheel_runtime/install_lil_bench.py \
  && /opt/venv/bin/python \
       /source/tools/jovian_wheel_runtime/verify_installed_requirements.py \
  && /opt/venv/bin/qwen38-ngc-runtime /opt/venv/bin/python \

@@ -371,6 +371,24 @@ overrides a preset selecting `none`. Raw commands intentionally bypass profile
 resolution; use the generated native environment or set their NCCL policy
 explicitly. Both interfaces retain the CUDA/NCCL ABI bootstrap.
 
+## Benchmark a running container (`lil-bench`)
+
+The runtime image ships llm-inference-bench at the commit pinned in
+`tools/jovian_wheel_runtime/lil-bench.lock.json` (archive checksum locked),
+installed by `install_lil_bench.py` under `/opt/lil/bench` with p2pmark built
+for sm_100/sm_120/sm_121. With the model loaded and no other traffic:
+
+```bash
+docker exec -it -e LIL_BENCH_TOKEN=lilb_... <container> lil-bench
+```
+
+It reads the serving command from the vLLM process, records hardware and PCIe
+topology, runs p2pmark and the standard prefill/decode matrix while sampling
+GPU clocks and throttle reasons, saves the result to `/cache/lil-bench`, and
+uploads it to docker.local-inference-lab.ai. The identifier comes from
+<https://docker.local-inference-lab.ai/bench/token>; without it the command
+stops with instructions. `lil-bench --no-upload` measures locally.
+
 ## Generated Compose and wiki material
 
 ```bash
