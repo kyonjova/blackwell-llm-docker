@@ -1,16 +1,27 @@
 schema_version: 1
 groups:
-  model: {title: Model and checkpoint}
-  parallelism: {title: GPUs and parallelism}
-  speculation: {title: Speculative decoding}
-  scheduling: {title: Scheduling and batching}
-  memory: {title: Memory and KV cache}
-  cache: {title: Prefix cache and LMCache}
-  kernels: {title: Kernels and backends}
-  communication: {title: Multi-GPU communication}
-  compilation: {title: CUDA graphs and compilation}
-  api: {title: API server and chat}
-  runtime: {title: Container runtime}
+  model:
+    title: Model and checkpoint
+  parallelism:
+    title: GPUs and parallelism
+  speculation:
+    title: Speculative decoding
+  scheduling:
+    title: Scheduling and batching
+  memory:
+    title: Memory and KV cache
+  cache:
+    title: Prefix cache and LMCache
+  kernels:
+    title: Kernels and backends
+  communication:
+    title: Multi-GPU communication
+  compilation:
+    title: CUDA graphs and compilation
+  api:
+    title: API server and chat
+  runtime:
+    title: Container runtime
 options:
   model:
     group: model
@@ -34,7 +45,8 @@ options:
     summary: Weight loader used at startup, for example auto, safetensors or instanttensor. instanttensor
       loads safetensors weights onto the GPUs with pipelined prefetching and direct I/O.
     why: The common layer uses instanttensor. MiMo uses auto because the b12x loader's cuFile setup fails
-      to parse the NGC image's /etc/cufile.json (fixed in b12x PR 431); the GLM Spark TP2 preset uses safetensors.
+      to parse the NGC image's /etc/cufile.json (fixed in b12x PR 431); the GLM Spark TP2 preset uses
+      safetensors.
   dtype:
     group: model
     summary: Data type for model weights and activations that are not otherwise quantized.
@@ -1240,3 +1252,12 @@ environment:
     why: Defaults to /cache/jit/<runtime identity>/<profile>-<policy digest>, so a new image or changed
       profile policy starts a separate cache. An explicit value is kept and does not relocate Hugging
       Face data.
+  TORCH_CUDA_ARCH_LIST:
+    group: runtime
+    summary: GPU architectures that torch.utils.cpp_extension compiles CUDA sources for at runtime. The
+      NGC base image sets 7.5 8.0 8.6 9.0 10.0 12.0+PTX. b12x (CUTE_DSL_ARCH), FlashInfer, Triton and
+      DeepGEMM choose their architecture themselves and do not read it.
+    why: The RTX PRO 6000 hardware profile sets 12.0a so that any runtime cpp_extension build targets
+      only SM 12.0, matching CUTE_DSL_ARCH=sm_120a. No current component compiles CUDA this way, so it
+      does not change startup or speed today; other hardware keeps the image value, whose PTX also runs
+      on SM 12.1 (DGX Spark).
