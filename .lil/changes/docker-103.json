@@ -1,0 +1,13 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-103",
+  "category": "feature",
+  "summary": "Images publish a manifest of their code so benchmark results flag modified containers",
+  "models": ["all"],
+  "compatibility": "No user action required.",
+  "details": [
+    "Every image records the SHA-256 of its vLLM, b12x, FlashInfer, LMCache, torch, triton, launcher and lil-bench files at build time, and the release publishes it. lil-bench compares the running container with it; results from modified containers are marked and show what changed."
+  ],
+  "pull_requests": [103],
+  "requires": []
+}
