@@ -1,0 +1,13 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-101",
+  "category": "feature",
+  "summary": "lil-bench 1.1 records throughput, PCIe traffic and host load over time",
+  "models": ["all"],
+  "compatibility": "No user action required.",
+  "details": [
+    "Benchmark uploads now include vLLM throughput, scheduler and KV cache usage per second, PCIe traffic per GPU, PCIe error counters and host CPU load, shown on the run page at docker.local-inference-lab.ai."
+  ],
+  "pull_requests": [101],
+  "requires": []
+}
