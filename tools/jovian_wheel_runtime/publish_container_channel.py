@@ -346,6 +346,22 @@ def main() -> None:
         timeout=600,
     )
     cache_results = verify_cache_test_report(test_results / "lmcache-contracts.xml")
+    # The file manifest lil-bench checks running containers against; its hash
+    # in the receipt lets the site verify what containers report.
+    runtime_files = args.output / "runtime-files.json.gz"
+    runtime_files.write_bytes(
+        run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--entrypoint",
+                "cat",
+                image,
+                "/opt/venv/share/lil-runtime/runtime-files.json.gz",
+            ]
+        )
+    )
     receipt = {
         **assembly,
         "status": "qualified",
@@ -353,6 +369,7 @@ def main() -> None:
         "model-serving performance and full GLM cache E2E remain unqualified.",
         "runtime_manifest_sha256": digest(manifest_path),
         "release_changelog_sha256": digest(changelog_path),
+        "runtime_files_sha256": digest(runtime_files),
         "layers": 68,
         "cache_contract_tests": cache_results,
     }
@@ -426,6 +443,7 @@ def main() -> None:
             receipt_path,
             manifest_path,
             changelog_path,
+            runtime_files,
             stage_assembly_lock(args.assembly, args.output),
         ],
     )
