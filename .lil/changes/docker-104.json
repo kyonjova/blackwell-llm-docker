@@ -1,0 +1,13 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-104",
+  "category": "feature",
+  "summary": "lil-bench records PCIe ACS of the GPU paths",
+  "models": ["all"],
+  "compatibility": "Run the benchmark as docker exec --privileged … lil-bench to include ACS; without it everything else is measured.",
+  "details": [
+    "Benchmark results show whether ACS on the root ports and PCIe switches redirects GPU peer-to-peer traffic through the CPU, which slows tensor-parallel all-reduce."
+  ],
+  "pull_requests": [104],
+  "requires": []
+}
