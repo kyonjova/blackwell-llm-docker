@@ -1215,6 +1215,15 @@ environment:
     summary: Experimental breakable CUDA graphs that do not rely on torch.compile. Off by default.
     why: DeepSeek profiles set 0; breakable prefill graphs stay disabled and the graph mode remains FULL_AND_PIECEWISE
       (runtime README).
+  VLLM_USE_FASTOKENS:
+    group: runtime
+    summary: When 1, vLLM loads its Hugging Face tokenizers through fastokens, a Rust implementation of
+      the tokenizers backend included in the image, so long prompts are tokenized much faster (27 ms instead
+      of 450 ms for a 300K-token conversation on an EPYC 9575F). Tokenizer classes, chat templates and parsers
+      are unchanged. Unset or 0 keeps the standard backend.
+    why: No profile sets it. fastokens 0.3.2 gave the same token IDs as the standard backend on real
+      text, chat conversations and prompts of up to 1M tokens for every profile's tokenizer, but not on
+      every input; the Tokenizer backend section of runtime/README.md lists the differences.
   VLLM_USE_FLASHINFER_SAMPLER:
     group: kernels
     summary: Uses the FlashInfer top-k and top-p sampler on CUDA; 0 forces the PyTorch-native path. On

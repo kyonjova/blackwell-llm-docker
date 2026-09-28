@@ -17,6 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 EXPECTED_VERSIONS = {
+    "fastokens": "0.3.2",
     "huggingface-hub": "1.31.0",
     "nvidia-modelopt": "0.46.1",
     "quack-kernels": "0.6.4",
@@ -101,6 +102,76 @@ int main(int argc, char **argv) {
     }
     print("liburing=" + json.dumps(receipt, sort_keys=True))
     return receipt
+
+
+def verify_fastokens() -> None:
+    """Check vLLM's VLLM_USE_FASTOKENS dispatch against the tokenizers backend.
+
+    Unset and 0 must keep the tokenizers backend; 1 must swap in fastokens,
+    whose native extension must return the same IDs and text on a byte-level
+    BPE. The process-wide patch is removed again afterwards.
+    """
+    import fastokens
+    import vllm.envs
+    from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers
+    from vllm.tokenizers.registry import get_tokenizer
+
+    if "VLLM_USE_FASTOKENS" not in vllm.envs.environment_variables:
+        raise RuntimeError("the installed vLLM does not recognize VLLM_USE_FASTOKENS")
+    samples = [
+        "P\u0159\u00edli\u0161 \u017elu\u0165ou\u010dk\u00fd k\u016f\u0148 \u00fap\u011bl.",
+        "def main():\n    return {'tokens': [1, 2, 3]}\n\n\n",
+        "\u4e2d\u6587 \u65e5\u672c\u8a9e \U0001f600\U0001f468\u200d\U0001f469 test",
+    ]
+    reference = Tokenizer(models.BPE())
+    reference.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+    reference.decoder = decoders.ByteLevel()
+    reference.train_from_iterator(
+        samples * 8,
+        trainers.BpeTrainer(
+            vocab_size=384,
+            initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
+            show_progress=False,
+        ),
+    )
+    expected = [reference.encode(text).ids for text in samples]
+    backends = {}
+    previous = os.environ.pop("VLLM_USE_FASTOKENS", None)
+    try:
+        with tempfile.TemporaryDirectory(prefix="lil-fastokens-") as directory:
+            reference.save(str(Path(directory) / "tokenizer.json"))
+            # A config lets vLLM's get_config succeed without retrying.
+            (Path(directory) / "config.json").write_text('{"model_type": "gpt2"}')
+            (Path(directory) / "tokenizer_config.json").write_text(
+                json.dumps(
+                    {
+                        "tokenizer_class": "PreTrainedTokenizerFast",
+                        "clean_up_tokenization_spaces": False,
+                    }
+                )
+            )
+            for setting in ("unset", "0", "1"):
+                if setting != "unset":
+                    os.environ["VLLM_USE_FASTOKENS"] = setting
+                tokenizer = get_tokenizer(directory, tokenizer_mode="hf")
+                backends[setting] = type(tokenizer.backend_tokenizer).__module__
+                for text, ids in zip(samples, expected):
+                    actual = tokenizer.encode(text, add_special_tokens=False)
+                    if actual != ids or tokenizer.decode(actual) != reference.decode(ids):
+                        raise RuntimeError(
+                            f"VLLM_USE_FASTOKENS={setting} changed the tokenization"
+                        )
+    finally:
+        fastokens.unpatch_transformers()
+        if previous is None:
+            os.environ.pop("VLLM_USE_FASTOKENS", None)
+        else:
+            os.environ["VLLM_USE_FASTOKENS"] = previous
+    if backends["unset"] != "tokenizers" or backends["0"] != "tokenizers" or not (
+        backends["1"].startswith("fastokens")
+    ):
+        raise RuntimeError(f"VLLM_USE_FASTOKENS selected the wrong backend: {backends}")
+    print("fastokens=PASS")
 
 
 def verify_b12x_package() -> None:
@@ -205,6 +276,7 @@ def main() -> int:
 
     verify_b12x_package()
     verify_b12x_tuning_exchange()
+    verify_fastokens()
     import flashinfer  # noqa: F401
     import flashinfer_jit_cache  # noqa: F401
     import lmcache  # noqa: F401

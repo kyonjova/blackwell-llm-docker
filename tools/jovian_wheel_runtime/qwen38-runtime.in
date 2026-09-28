@@ -55,6 +55,7 @@ rich-toolkit==0.20.5
 rignore==0.8.1
 sentry-sdk==2.69.1
 websockets==17.1
+fastokens==0.3.2
 fastrlock==0.8.3
 frozenlist==1.8.0
 google-api-core==2.34.0
