@@ -1,0 +1,15 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-112",
+  "category": "performance",
+  "summary": "Long prompts are tokenized about 17 times faster: every profile now uses the fastokens tokenizer backend",
+  "models": ["all"],
+  "compatibility": "Set VLLM_USE_FASTOKENS=0 to go back to the standard tokenizer backend. A few rare inputs tokenize differently (listed in the runtime README under Tokenizer backend).",
+  "details": [
+    "vLLM tokenizes the whole prompt on every request before prefill, even when the prefix cache already holds it. With fastokens a 300K-token agent conversation takes 27 ms instead of 450 ms on an EPYC 9575F (1M tokens: 85 ms instead of 1.5 s), which comes straight off the time to first token.",
+    "Chat templates, tokenizer classes and the reasoning and tool parsers are unchanged; chat prompts tokenized identically for every profile in our tests."
+  ],
+  "pull_requests": [112],
+  "authors": ["unat", "Local Inference Lab"],
+  "requires": ["docker-109", "vllm-934"]
+}

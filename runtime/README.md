@@ -255,14 +255,13 @@ remain separate from the text scheduler budget.
 ## Tokenizer backend
 
 The image includes [fastokens](https://github.com/crusoecloud/fastokens) 0.3.2,
-a Rust implementation of the Hugging Face `tokenizers` backend. It is off by
-default. Start the container with `-e VLLM_USE_FASTOKENS=1` and vLLM loads its
-Hugging Face tokenizers through fastokens: prompts are tokenized and output is
-detokenized by fastokens, while tokenizer classes, chat templates and the
-reasoning and tool parsers stay the same. Remove the variable, or set
-`VLLM_USE_FASTOKENS=0`, to go back to the standard backend. With fastokens
-enabled the log shows `[fastokens] patch_transformers: successfully patched
-transformers`.
+a Rust implementation of the Hugging Face `tokenizers` backend, and every
+profile enables it (`VLLM_USE_FASTOKENS=1`): vLLM loads its Hugging Face
+tokenizers through fastokens, so prompts are tokenized and output is detokenized
+by fastokens, while tokenizer classes, chat templates and the reasoning and tool
+parsers stay the same. Set `-e VLLM_USE_FASTOKENS=0` to go back to the standard
+backend. With fastokens enabled the log shows `[fastokens] patch_transformers:
+successfully patched transformers`.
 
 vLLM tokenizes the whole prompt on every request before prefill starts, also
 when the prefix cache already holds it, so this time adds directly to time to
@@ -274,8 +273,8 @@ threads; restricted to a single CPU it still took only 58 ms (1M tokens:
 
 Both backends gave identical token IDs, decoded text and streamed output for
 every profile's tokenizer on multilingual text, code, chat conversations with
-tools and reasoning, and prompts of up to 1M tokens. They differ in these cases,
-so no profile enables fastokens:
+tools and reasoning, and prompts of up to 1M tokens. They differ in these rare
+cases; set `VLLM_USE_FASTOKENS=0` if one of them matters for your clients:
 
 - fastokens reuses the regular-expression splits of the previous prompt on the
   same thread when two prompts without special tokens share at least 4 KiB. When
@@ -289,8 +288,8 @@ so no profile enables fastokens:
   marks can be tokenized differently.
 - DeepSeek: U+180E MONGOLIAN VOWEL SEPARATOR next to a space is tokenized
   differently. fastokens also counts added tokens in the tokenizer's vocabulary
-  size, so vLLM accepts prompt token ID 129280, one past the DeepSeek
-  vocabulary, instead of rejecting it.
+  size; vLLM (vllm #934) derives the largest valid prompt token ID so that ID
+  129280, one past the DeepSeek vocabulary, is still rejected.
 - Character offsets are not available, so `return_token_offsets` on the render
   endpoints enabled by `--enable-scale-out` fails.
 
