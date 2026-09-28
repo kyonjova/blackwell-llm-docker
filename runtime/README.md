@@ -25,6 +25,14 @@ With no profile or command the container prints help, not an implicit model.
 Explicit commands such as `python`, `bash` or `vllm serve` retain the ABI
 bootstrap and bypass profile defaults.
 
+Restarts: when the engine fails (for example a CUDA out-of-memory error on one
+GPU), the server stops within about a second and the container exits with status
+1. The generated Compose files use `restart: on-failure`, and the `docker run -d`
+examples below pass `--restart on-failure`, so Docker starts the server again.
+A container you stop yourself, or one that fails within 10 seconds of starting
+(a configuration error), is not restarted. Use `unless-stopped` to also start the
+server after a host reboot.
+
 Profiles keep downloaded checkpoints and saved HF credentials in
 `/root/.cache/huggingface` (`HF_HOME`), independently of the runtime-keyed JIT
 cache under `/cache/jit`. Updating an image therefore does not move the model
@@ -40,7 +48,7 @@ hardware or replace GLM TP4 defaults.
 
 ```bash
 docker run -d --name glm-spark-tp2 --init --gpus '"device=0,1"' \
-  --network host --ipc host --shm-size 32g \
+  --restart on-failure --network host --ipc host --shm-size 32g \
   --ulimit memlock=-1 --ulimit stack=67108864:67108864 \
   -v model-cache:/root/.cache/huggingface -v glm-spark-runtime:/cache \
   -e PRESET=glm53-spark-tp2 -e PORT=8000 "$LIL_IMAGE"
@@ -124,7 +132,7 @@ settings; use it only when the selected checkpoint needs different RoPE values.
 
 ```bash
 docker run -d --name qwen38-yarn512k --init --gpus '"device=0,1"' \
-  --network host --ipc host --shm-size 32g \
+  --restart on-failure --network host --ipc host --shm-size 32g \
   -v model-cache:/root/.cache/huggingface -v qwen38-runtime:/cache \
   -e PRESET=qwen38-tp2 -e MAX_MODEL_LEN=524288 -e PORT=8000 \
   ghcr.io/local-inference-lab/vllm:karmic-kraken-beta
@@ -429,7 +437,8 @@ cache across restarts. `NATIVE_KV_OFFLOADING_SIZE_GB` sets the total CPU cache
 capacity across all TP ranks (default 64 GiB). For example:
 
 ```bash
-docker run -d --name qwen38-native --gpus '"device=0,1"' --network host --ipc host \
+docker run -d --name qwen38-native --gpus '"device=0,1"' --restart on-failure \
+  --network host --ipc host \
   -v qwen-hf:/root/.cache/huggingface -v qwen-runtime:/cache \
   -e PROFILE=qwen38-flash-next -e TP=2 -e DCP=1 -e PORT=8000 \
   -e CACHE_MODE=native -e NATIVE_KV_OFFLOADING_SIZE_GB=32 \
