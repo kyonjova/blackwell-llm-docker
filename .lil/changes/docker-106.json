@@ -1,0 +1,14 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-106",
+  "category": "fix",
+  "summary": "GLM-5.3-Flash Spark TP2 keeps 0.5 GiB free per GPU, preventing CUDA out-of-memory errors under image-heavy load",
+  "models": ["GLM-5.3-Flash"],
+  "compatibility": "The KV cache of the glm53-spark-tp2 preset shrinks from about 1.15M to about 1.02M tokens (VRAM cache) and from about 998K to about 860K tokens (LMCache). An explicit KV_CACHE_MEMORY_BYTES is still used as given.",
+  "details": [
+    "Under eight concurrent streams with long prompts and up to ten large images per request, the previous 4,556 MiB of KV per rank left 5 MiB of GPU memory free and made the PyTorch allocator free its cache and retry 15 times in 12 minutes; that is the margin users hit as CUDA out-of-memory errors.",
+    "The preset now fixes 4,044 MiB per rank (3,852 MiB with LMCache, 3,532 MiB at 16 slots). The same load then runs with no allocator retry and 422 MiB (VRAM cache) or 589 MiB (LMCache) free at the peak."
+  ],
+  "pull_requests": [106],
+  "requires": []
+}
