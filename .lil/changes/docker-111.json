@@ -1,0 +1,13 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-111",
+  "category": "fix",
+  "summary": "Generated Compose files give the container 60 s to stop, so LMCache can write its checkpoints",
+  "models": ["all"],
+  "compatibility": "Generated Compose files now set stop_grace_period: 60s. A container without an external cache still stops in seconds. For docker run with CACHE_MODE=lmcache, pass --stop-timeout 60 as the README shows.",
+  "details": [
+    "With Docker's default 10 s stop timeout, LMCache's shutdown (finishing the checkpoint stores the model is still copying, then writing checkpoints that are only in RAM) was cut short once CACHE_MODE=lmcache was added to a generated Compose file."
+  ],
+  "pull_requests": [111],
+  "requires": ["lmcache-104"]
+}
