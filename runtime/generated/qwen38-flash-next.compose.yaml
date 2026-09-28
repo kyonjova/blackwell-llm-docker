@@ -6,7 +6,7 @@ services:
     init: true
     network_mode: host
     ipc: host
-    restart: 'no'
+    restart: on-failure
     entrypoint:
     - /usr/local/bin/lil-serve
     command:

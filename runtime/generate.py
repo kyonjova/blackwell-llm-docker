@@ -33,7 +33,9 @@ def compose(
                 "init": True,
                 "network_mode": "host",
                 "ipc": "host",
-                "restart": "no",
+                # The server exits with a failure status when its engine fails (for
+                # example a CUDA out-of-memory error on one GPU); come back from it.
+                "restart": "on-failure",
                 "entrypoint": ["/usr/local/bin/lil-serve"],
                 "command": ["--profile", identifier, "--hardware", hardware],
                 "environment": {

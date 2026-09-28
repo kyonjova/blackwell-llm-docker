@@ -1,0 +1,13 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-107",
+  "category": "fix",
+  "summary": "Generated deployments restart the server after a crash",
+  "models": ["all"],
+  "compatibility": "Generated Compose files now use restart: on-failure and the README docker run examples pass --restart on-failure. A container stopped with docker stop, or one that fails within 10 s of starting, is not restarted. Existing deployments keep their own restart policy.",
+  "details": [
+    "Since vllm #928 the server exits with status 1 within a second when its engine fails, for example after a CUDA out-of-memory error on one GPU, instead of hanging. With restart: no the container then stayed down; now Docker starts it again and LMCache restores conversations from its cache."
+  ],
+  "pull_requests": [107],
+  "requires": ["vllm-928"]
+}
