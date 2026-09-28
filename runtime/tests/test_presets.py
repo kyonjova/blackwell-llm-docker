@@ -31,7 +31,7 @@ def test_spark_overlay_preserves_the_bounded_tp2_memory_recipe():
         "max-num-seqs": 8,
         "max-num-batched-tokens": 3072,
         "max-model-len": -1,
-        "kv-cache-memory-bytes": 4777312256,
+        "kv-cache-memory-bytes": 4240441344,
         "load-format": "safetensors",
         "max-cudagraph-capture-size": 32,
         "cudagraph-capture-sizes": [1, 2, 4, 8, 12, 16, 20, 24, 28, 32],
@@ -66,20 +66,20 @@ def test_spark_overlay_preserves_the_bounded_tp2_memory_recipe():
 def test_spark_extra_request_slots_shrink_the_preset_kv_allocation():
     sixteen = spark(env={"MAX_NUM_SEQS": "16"})
     assert sixteen.values["max-num-seqs"] == 16
-    assert sixteen.values["kv-cache-memory-bytes"] == 4777312256 - 8 * 67108864
+    assert sixteen.values["kv-cache-memory-bytes"] == 4240441344 - 8 * 67108864
     assert sixteen.values["max-cudagraph-capture-size"] == 64
     assert sixteen.origins["kv-cache-memory-bytes"].startswith("derived:")
     fewer = spark(env={"MAX_NUM_SEQS": "4"})
-    assert fewer.values["kv-cache-memory-bytes"] == 4777312256
+    assert fewer.values["kv-cache-memory-bytes"] == 4240441344
     explicit = spark(env={"MAX_NUM_SEQS": "16", "KV_CACHE_MEMORY_BYTES": "5000000000"})
     assert explicit.values["kv-cache-memory-bytes"] == 5000000000
 
 
 def test_spark_external_cache_keeps_room_for_its_gpu_buffers():
     lmcache = spark(argv=["--cache-mode", "lmcache"])
-    assert lmcache.values["kv-cache-memory-bytes"] == 4777312256 - 201326592
+    assert lmcache.values["kv-cache-memory-bytes"] == 4240441344 - 201326592
     both = spark(env={"MAX_NUM_SEQS": "16"}, argv=["--cache-mode", "lmcache"])
-    assert both.values["kv-cache-memory-bytes"] == 4777312256 - 8 * 67108864 - 201326592
+    assert both.values["kv-cache-memory-bytes"] == 4240441344 - 8 * 67108864 - 201326592
 
 
 def test_spark_settings_do_not_leak_into_tp4_or_qwen():
@@ -276,7 +276,7 @@ SAVINGS = frozenset(
 def test_spark_keeps_the_four_slot_recipe_on_a_vllm_without_the_memory_savings():
     current = spark(vllm_environment=SAVINGS | {"VLLM_USE_V2_MODEL_RUNNER"})
     assert current.values["max-num-seqs"] == 8
-    assert current.values["kv-cache-memory-bytes"] == 4777312256
+    assert current.values["kv-cache-memory-bytes"] == 4240441344
     older = spark(vllm_environment=frozenset({"VLLM_USE_V2_MODEL_RUNNER"}))
     assert older.values["max-num-seqs"] == 4
     assert older.values["kv-cache-memory-bytes"] == 4190109696

@@ -61,8 +61,9 @@ options:
     group: memory
     summary: Fixed KV cache size per GPU in bytes. When set, vLLM ignores gpu-memory-utilization for the
       KV allocation.
-    why: The GLM Spark TP2 preset fixes 4,556 MiB per rank (about 1.15M tokens at eight request slots),
-      made possible by vllm PR 898's host embedding, MXFP8 vision and shared NCCL communicator. The launcher
+    why: The GLM Spark TP2 preset fixes 4,044 MiB per rank (about 1.02M tokens at eight request slots),
+      made possible by vllm PR 898's host embedding, MXFP8 vision and shared NCCL communicator, and keeps
+      about 0.5 GiB per GPU free for image-heavy peaks. The launcher
       subtracts 64 MiB per request slot above eight and 192 MiB when an external cache is enabled; an
       explicit value is used as given, and an older vLLM falls back to 3,996 MiB with four slots.
   attention-backend:
@@ -173,7 +174,7 @@ options:
     summary: Number of GPUs within the tensor-parallel group that shard the KV cache along the sequence
       during decode. It must divide tensor-parallel-size and increases KV capacity at the cost of extra
       communication.
-    why: The common layer sets 1. The GLM Spark TP2 preset uses DCP2 to hold about 1.15M KV tokens on
+    why: The common layer sets 1. The GLM Spark TP2 preset uses DCP2 to hold about 1.02M KV tokens on
       two GPUs.
   max-num-seqs:
     group: scheduling

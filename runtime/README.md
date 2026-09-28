@@ -47,7 +47,7 @@ docker run -d --name glm-spark-tp2 --init --gpus '"device=0,1"' \
 ```
 
 This selects TP2/DCP2, MTP3 with B12X draft experts, eight request slots, a
-3,072-token prefill budget, 4,556 MiB fixed KV per rank (about 1.15M tokens)
+3,072-token prefill budget, 4,044 MiB fixed KV per rank (about 1.02M tokens)
 and sparse full/piecewise captures through 32 verifier rows. To make room for
 the KV cache, the input embedding table lives in pinned host RAM (0.59 GiB per
 GPU, read row by row over PCIe), the vision tower runs in MXFP8 (0.24 GiB) and
@@ -58,12 +58,16 @@ imposed.
 
 - Sixteen request slots: add `-e MAX_NUM_SEQS=16`. Each slot above eight takes
   64 MiB from the KV allocation for larger CUDA graphs and buffers, so 16 slots
-  keep 4,044 MiB per rank (about 1.02M tokens). An explicit
-  `KV_CACHE_MEMORY_BYTES` is used as given.
-- Qualified worst case at 8 and 16 slots: 62K-token prompts, a 3840x2160 image,
-  six-image requests and decoding streams at the same time, with at least
-  0.24 GiB of GPU memory still free at the peak. A larger explicit KV size or
-  more slots than 16 can run out of memory under such mixed load.
+  keep 3,532 MiB per rank. An explicit `KV_CACHE_MEMORY_BYTES` is used as given.
+  With LMCache enabled, the launcher keeps a further 192 MiB for its buffers
+  (3,852 MiB per rank, about 860K tokens, at eight slots).
+- Qualified worst case at eight slots: ten minutes of eight concurrent streams
+  mixing 1K-168K-token prompts, one to ten images per request up to 6000x4000,
+  and 64-1,024-token outputs. The PyTorch allocator never had to free its cache
+  to retry an allocation while serving, and about 0.4 GiB (VRAM cache) or
+  0.6 GiB (LMCache) stayed free at the peak. The earlier 4,556 MiB left 5 MiB free
+  and retried 15 times under the same mix. A larger explicit KV size, more
+  slots than 16, or a desktop session on the same GPUs reduces that margin.
 - Images whose vLLM predates these memory savings (checked in the installed
   `vllm/envs.py` at launch) keep the earlier four-slot recipe with 3,996 MiB
   of KV per rank.
