@@ -252,6 +252,48 @@ Request boundaries remain the GLM default. No image-limit-one override is
 introduced for Vision; its native multimodal count and encoder-budget rules
 remain separate from the text scheduler budget.
 
+## Tokenizer backend
+
+The image includes [fastokens](https://github.com/crusoecloud/fastokens) 0.3.2,
+a Rust implementation of the Hugging Face `tokenizers` backend. It is off by
+default. Start the container with `-e VLLM_USE_FASTOKENS=1` and vLLM loads its
+Hugging Face tokenizers through fastokens: prompts are tokenized and output is
+detokenized by fastokens, while tokenizer classes, chat templates and the
+reasoning and tool parsers stay the same. Remove the variable, or set
+`VLLM_USE_FASTOKENS=0`, to go back to the standard backend. With fastokens
+enabled the log shows `[fastokens] patch_transformers: successfully patched
+transformers`.
+
+vLLM tokenizes the whole prompt on every request before prefill starts, also
+when the prefix cache already holds it, so this time adds directly to time to
+first token in long agent conversations. On an EPYC 9575F a 300K-token agent
+conversation took 450 ms with the standard backend and 27 ms with fastokens
+(1M tokens: 1.5 s and 85 ms). fastokens spreads one long prompt over CPU
+threads; restricted to a single CPU it still took only 58 ms (1M tokens:
+180 ms). A slower CPU takes proportionally longer with either backend.
+
+Both backends gave identical token IDs, decoded text and streamed output for
+every profile's tokenizer on multilingual text, code, chat conversations with
+tools and reasoning, and prompts of up to 1M tokens. They differ in these cases,
+so no profile enables fastokens:
+
+- fastokens reuses the regular-expression splits of the previous prompt on the
+  same thread when two prompts without special tokens share at least 4 KiB. When
+  the new prompt continues differently right after whitespace, it can be split
+  differently (GLM, Qwen, MiMo). vLLM's rotating pool of tokenizer copies
+  prevented this in every serving-path test, and chat prompts contain special
+  tokens, which disable the reuse.
+- Qwen3.8 and MiMo normalize text to NFC. fastokens uses Unicode 17 data for
+  this, the standard backend older data, so combining marks added in Unicode 10
+  or later (128 code points, for example U+0898-U+089F) next to other combining
+  marks can be tokenized differently.
+- DeepSeek: U+180E MONGOLIAN VOWEL SEPARATOR next to a space is tokenized
+  differently. fastokens also counts added tokens in the tokenizer's vocabulary
+  size, so vLLM accepts prompt token ID 129280, one past the DeepSeek
+  vocabulary, instead of rejecting it.
+- Character offsets are not available, so `return_token_offsets` on the render
+  endpoints enabled by `--enable-scale-out` fails.
+
 ## Interface and precedence
 
 Use the repository's isolated Python environment with `runtime/requirements.txt`

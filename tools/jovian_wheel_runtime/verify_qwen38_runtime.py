@@ -17,6 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 EXPECTED_VERSIONS = {
+    "fastokens": "0.3.2",
     "huggingface-hub": "1.31.0",
     "nvidia-modelopt": "0.46.1",
     "quack-kernels": "0.6.4",
@@ -101,6 +102,44 @@ int main(int argc, char **argv) {
     }
     print("liburing=" + json.dumps(receipt, sort_keys=True))
     return receipt
+
+
+def verify_fastokens() -> None:
+    """Run the fastokens backend on a byte-level BPE and compare with tokenizers.
+
+    Profiles enable it through vLLM's VLLM_USE_FASTOKENS, so the installed vLLM
+    must recognize the switch and the native extension must agree with the
+    tokenizers library it replaces.
+    """
+    import fastokens
+    import vllm.envs
+    from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers
+
+    if "VLLM_USE_FASTOKENS" not in vllm.envs.environment_variables:
+        raise RuntimeError("the installed vLLM does not recognize VLLM_USE_FASTOKENS")
+    samples = [
+        "P\u0159\u00edli\u0161 \u017elu\u0165ou\u010dk\u00fd k\u016f\u0148 \u00fap\u011bl.",
+        "def main():\n    return {'tokens': [1, 2, 3]}\n\n\n",
+        "\u4e2d\u6587 \u65e5\u672c\u8a9e \U0001f600\U0001f468\u200d\U0001f469 test",
+    ]
+    reference = Tokenizer(models.BPE())
+    reference.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+    reference.decoder = decoders.ByteLevel()
+    reference.train_from_iterator(
+        samples * 8,
+        trainers.BpeTrainer(
+            vocab_size=384,
+            initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
+            show_progress=False,
+        ),
+    )
+    candidate = fastokens.Tokenizer.from_json_str(reference.to_str())
+    for text in samples:
+        expected = reference.encode(text).ids
+        actual = candidate.encode(text).ids
+        if actual != expected or candidate.decode(actual) != reference.decode(expected):
+            raise RuntimeError("fastokens disagrees with tokenizers on a byte-level BPE")
+    print("fastokens=PASS")
 
 
 def verify_b12x_package() -> None:
@@ -205,6 +244,7 @@ def main() -> int:
 
     verify_b12x_package()
     verify_b12x_tuning_exchange()
+    verify_fastokens()
     import flashinfer  # noqa: F401
     import flashinfer_jit_cache  # noqa: F401
     import lmcache  # noqa: F401
