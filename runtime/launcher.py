@@ -42,6 +42,8 @@ JIT_PATHS = {
     "CUPY_CACHE_DIR": "cupy",
 }
 NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# Chat-template settings with this prefix name a file in ROOT / "templates".
+RUNTIME_TEMPLATE_PREFIX = "runtime:"
 SECRET = re.compile(
     r"api[-_]?key|password|secret|authorization|access[-_]?token|hf_token",
     re.IGNORECASE,
@@ -1008,6 +1010,28 @@ def resolve_draft_subfolder(plan: LaunchPlan) -> None:
     plan.argv = make_argv(plan.values, plan.passthrough)
 
 
+def chat_template_path(value: str) -> str | None:
+    """Resolve a chat-template setting to vLLM's --chat-template value.
+
+    ``checkpoint`` keeps the template shipped with the model (no option), and
+    ``runtime:NAME`` names a template installed with these profiles. Any other
+    value is a path or template text for vLLM.
+    """
+    if value == "checkpoint":
+        return None
+    if not value.startswith(RUNTIME_TEMPLATE_PREFIX):
+        return value
+    name = value[len(RUNTIME_TEMPLATE_PREFIX) :]
+    path = ROOT / name
+    if (
+        Path(name).is_absolute()
+        or path.resolve().parent != (ROOT / "templates").resolve()
+        or not path.is_file()
+    ):
+        raise ConfigError(f"Unknown runtime chat template: {value}")
+    return str(path)
+
+
 def make_argv(values: dict, passthrough: list[str]) -> list[str]:
     specs = read_yaml(ROOT / "options.yaml")
     command = [
@@ -1020,6 +1044,10 @@ def make_argv(values: dict, passthrough: list[str]) -> list[str]:
     for key, value in sorted(values.items()):
         if key == "model" or specs.get(key, {}).get("control"):
             continue
+        if key == "chat-template":
+            value = chat_template_path(value)
+            if value is None:
+                continue
         if isinstance(value, bool):
             command.append("--" + ("" if value else "no-") + key)
         elif isinstance(value, dict):

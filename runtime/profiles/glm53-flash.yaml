@@ -49,6 +49,9 @@ defaults:
   reasoning-parser: glm45
   tool-call-parser: glm47
   default-chat-template-kwargs: {reasoning_effort: high, clear_thinking: false}
+  # The official template with assistant content rendered as generated, so a
+  # returned answer re-renders to the same tokens and reuses its checkpoint.
+  chat-template: runtime:templates/glm53-flash.jinja
   override-generation-config: {temperature: 1.0, top_p: 0.95}
 environment:
   B12X_DYNAMIC_SPLIT_ROUTE_COMPUTE: "1"

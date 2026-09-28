@@ -237,6 +237,16 @@ request sampling remains authoritative. GLM retains `reasoning_effort=high`
 and `clear_thinking=false`. No profile changes target weight or KV precision
 to manufacture a speedup.
 
+GLM serves `runtime/templates/glm53-flash.jinja`: the checkpoint's chat
+template with assistant answers rendered exactly as the model generated them.
+The checkpoint's template trims whitespace from a previous answer, so an answer
+that ended in a newline no longer matched the tokens the model produced, and
+the next turn recomputed the whole previous response instead of reusing its
+cached state (in one measured two-turn chat, 77% instead of 99.9% of the prompt
+was reused). Answers without surrounding whitespace render exactly as before.
+`-e CHAT_TEMPLATE=checkpoint` restores the checkpoint's template, and any other
+value is passed to vLLM as `--chat-template`.
+
 The GLM attention page, recurrent checkpoint spacing, and external transfer
 object are different dimensions. The GPU profile uses 2,048-token target
 pages. Aligned-256 requires both recurrent storage spacing and lookup policy:
