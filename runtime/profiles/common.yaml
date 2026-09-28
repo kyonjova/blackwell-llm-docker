@@ -43,3 +43,6 @@ environment:
   SAFETENSORS_FAST_GPU: "1"
   INSTANTTENSOR_BACKEND: BUFFERED
   PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+  # Rust tokenizer backend: long prompts tokenize ~17x faster (runtime README,
+  # "Tokenizer backend"); 0 restores the standard backend.
+  VLLM_USE_FASTOKENS: "1"
