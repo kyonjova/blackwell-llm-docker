@@ -36,6 +36,11 @@ def compose(
                 # The server exits with a failure status when its engine fails (for
                 # example a CUDA out-of-memory error on one GPU); come back from it.
                 "restart": "on-failure",
+                # Docker's default 10 s cuts LMCache's shutdown short once
+                # CACHE_MODE=lmcache is added: it first finishes checkpoint
+                # stores still in flight, then writes RAM-only checkpoints to
+                # disk (30 s budget). A clean stop still exits in seconds.
+                "stop_grace_period": "60s",
                 "entrypoint": ["/usr/local/bin/lil-serve"],
                 "command": ["--profile", identifier, "--hardware", hardware],
                 "environment": {

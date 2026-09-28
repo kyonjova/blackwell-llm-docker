@@ -31,7 +31,10 @@ GPU), the server stops within about a second and the container exits with status
 examples below pass `--restart on-failure`, so Docker starts the server again.
 A container you stop yourself, or one that fails within 10 seconds of starting
 (a configuration error), is not restarted. Use `unless-stopped` to also start the
-server after a host reboot.
+server after a host reboot. The generated Compose files also set
+`stop_grace_period: 60s`, so an external cache has time to write its
+checkpoints when the container stops; a container without one still stops in
+seconds.
 
 Profiles keep downloaded checkpoints and saved HF credentials in
 `/root/.cache/huggingface` (`HF_HOME`), independently of the runtime-keyed JIT
@@ -82,7 +85,8 @@ imposed.
 - BF16 vision tower or GPU-resident embeddings: add
   `-e VLLM_GLM53_VISION_MXFP8=0` or `-e VLLM_GLM53_EMBED_HOST=0` and lower
   `KV_CACHE_MEMORY_BYTES` by 0.24 GiB or 0.59 GiB respectively.
-- CPU/disk LMCache: add `-e CACHE_MODE=lmcache`. GPU-only cache is the default.
+- CPU/disk LMCache: add `-e CACHE_MODE=lmcache` and `--stop-timeout 60`.
+  GPU-only cache is the default.
   The connector's GPU buffers take 192 MiB from the preset KV allocation
   (about 1.0M tokens at eight slots, 0.86M at sixteen).
   Text and image recurrent checkpoints can be restored externally. LMCache
@@ -522,9 +526,14 @@ and response. `LMCACHE_L2_CHECKPOINT_WRITES` selects what reaches the disk:
   superseded are never written. Disk writes fall from every request to about
   one checkpoint per conversation that goes idle, so the disk holds the
   newest state of many more conversations. Give the container time to stop:
-  `docker run --stop-timeout 60` or Compose `stop_grace_period: 60s`; the
-  shutdown write takes up to 30 s. A crash or `docker kill` loses checkpoints
-  that were only in RAM.
+  `docker run --stop-timeout 60` or Compose `stop_grace_period: 60s` (the
+  generated Compose files set it). At SIGTERM LMCache first keeps serving
+  the checkpoint stores the model is still copying (a few seconds at most),
+  then writes the checkpoints that are only in RAM, current ones first,
+  within 30 s. With Docker's default 10 s the current checkpoints are
+  written first; the log names what was left, and after the restart lookups
+  skip those checkpoints instead of failing a restore. A crash or
+  `docker kill` loses checkpoints that were only in RAM.
 - `on-reuse` keeps new checkpoints in RAM and writes each one to disk only
   after a restore from the cache has used it. A follow-up served from GPU
   memory does not count, so with long conversations little reaches the disk.
