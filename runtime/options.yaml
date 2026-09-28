@@ -394,6 +394,12 @@
       "DEFAULT_CHAT_TEMPLATE_KWARGS"
     ]
   },
+  "chat-template": {
+    "type": "string",
+    "env": [
+      "CHAT_TEMPLATE"
+    ]
+  },
   "override-generation-config": {
     "type": "object",
     "env": [

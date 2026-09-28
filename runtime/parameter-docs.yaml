@@ -368,6 +368,14 @@ options:
       request values take precedence.
     why: GLM sets reasoning_effort high and clear_thinking false; DS4 and DS4.1 set thinking true and
       reasoning_effort high, as their source launchers do.
+  chat-template:
+    group: api
+    summary: Chat template that renders chat requests into prompt tokens. runtime:NAME selects a template
+      installed with the profiles, checkpoint keeps the model's own template, and any other value is
+      a file path passed to vLLM.
+    why: GLM uses the checkpoint's template with one change, assistant answers rendered exactly as generated
+      instead of trimmed, so the next turn reuses the cached answer instead of recomputing it. Other profiles
+      keep the checkpoint's template.
   override-generation-config:
     group: api
     summary: Server default sampling parameters that override or extend the generation config. Request
