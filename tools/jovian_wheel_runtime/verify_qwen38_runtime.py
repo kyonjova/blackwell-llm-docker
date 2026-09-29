@@ -229,7 +229,15 @@ def verify_b12x_tuning_exchange() -> None:
             }
         )
     (authorized,) = _authorize_tuning(rows, (0, 1))
-    winner = TuningRequirement(*authorized)
+    fields = tuple(authorized)
+    if len(fields) == 8:
+        # vLLM that fetches winner programs also names the winning rank, before
+        # the CuTe program keys; B12X requirements carry no source rank.
+        key, ranks, assignment, latency_us, index, rejected, source, programs = fields
+        if source != 0:
+            raise RuntimeError("vLLM/B12X tuning exchange named the wrong source rank")
+        fields = (key, ranks, assignment, latency_us, index, rejected, programs)
+    winner = TuningRequirement(*fields)
     if (
         winner.assignment.to_dict() != {"width": 1}
         or winner.latency_us != 1.0
