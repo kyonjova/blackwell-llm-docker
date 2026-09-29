@@ -78,3 +78,59 @@ def test_package_gate_checks_both_sides_of_tuning_exchange(
             VERIFIER.verify_b12x_tuning_exchange()
     else:
         VERIFIER.verify_b12x_tuning_exchange()
+
+
+def test_package_gate_accepts_winner_source_rank_and_program_keys(monkeypatch):
+    """vLLM that fetches winner programs returns the source rank and CuTe keys."""
+
+    @dataclass
+    class Requirement:
+        key: str
+        ranks: tuple
+        assignment: dict
+        latency_us: float
+        candidate_index: int
+        rejected_count: int = 0
+        cute_programs: tuple = ()
+
+        def __post_init__(self):
+            assignment = self.assignment
+            self.assignment = SimpleNamespace(to_dict=lambda: assignment)
+
+    def ready(coordinator):
+        (item,) = coordinator._last_progress.ready_tuning
+        return (
+            (
+                item.key,
+                item.ranks,
+                item.assignment.to_dict(),
+                item.latency_us,
+                item.candidate_index,
+                item.rejected_count,
+                item.cute_programs,
+            ),
+        )
+
+    def authorize(rows, ranks):
+        assert ranks == (0, 1)
+        source, best = min(
+            ((row["global_rank"], row["tuning"][0]) for row in rows),
+            key=lambda pair: pair[1][3],
+        )
+        key, ranks, assignment, latency_us, index, rejected, programs = best
+        return ((key, ranks, assignment, latency_us, index, rejected, source, programs),)
+
+    monkeypatch.setitem(
+        VERIFIER.sys.modules,
+        "b12x.preparation",
+        SimpleNamespace(TuningRequirement=Requirement),
+    )
+    monkeypatch.setitem(
+        VERIFIER.sys.modules,
+        "vllm.v1.worker.b12x_startup",
+        SimpleNamespace(
+            B12xPreparationCoordinator=SimpleNamespace(_ready_tuning=ready),
+            _authorize_tuning=authorize,
+        ),
+    )
+    VERIFIER.verify_b12x_tuning_exchange()
