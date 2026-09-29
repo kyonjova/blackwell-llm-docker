@@ -613,6 +613,8 @@ def test_compose_has_no_second_kernel_policy_copy(model):
         key.startswith(("VLLM_", "B12X_", "NCCL_")) for key in service["environment"]
     )
     assert service["entrypoint"] == ["/usr/local/bin/lil-serve"]
+    # Room for an external cache's shutdown drain and checkpoint flush.
+    assert service["stop_grace_period"] == "60s"
     assert len(
         service["deploy"]["resources"]["reservations"]["devices"][0]["device_ids"]
     ) == int(service["environment"]["TP"])
