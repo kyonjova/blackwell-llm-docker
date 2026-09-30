@@ -1,0 +1,14 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-115",
+  "category": "fix",
+  "summary": "lil-bench shows the real KV capacity of hybrid models such as Qwen3.8-Flash-Next",
+  "models": ["all"],
+  "compatibility": "Rerun lil-bench in the new image; results uploaded earlier keep the KV capacity they showed.",
+  "details": [
+    "lil-bench computed the KV capacity as blocks × block size. Hybrid models share one block pool across their layer groups, so that overstated it many times over: Qwen3.8-Flash-Next TP2 showed 86M KV tokens where the server holds 4.8M, and TP4 100M instead of 6.5M.",
+    "It now uses vLLM's own KV capacity (kv_cache_size_tokens), which already counts every DCP rank. The number is shown at the start of the run and decides which decode cells are skipped for capacity (lil-bench 1.3.2, llm-inference-bench v0.7.5). Reported by auldria."
+  ],
+  "pull_requests": [115],
+  "requires": []
+}
