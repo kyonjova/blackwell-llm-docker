@@ -1056,12 +1056,13 @@ def mtp_expert_formats(model: str, revision: str | None) -> set[str]:
 
 
 def resolve_draft_moe_backend(plan: LaunchPlan) -> None:
-    """Leave the MoE backend of a profile's MTP drafter to vLLM when b12x cannot run it.
+    """Let vLLM choose the MoE backend of a profile's MTP drafter when b12x cannot run it.
 
     Profiles run MTP drafter experts on b12x, which takes NVFP4 and MXFP4
     experts. A checkpoint revision with other MTP experts, such as the MXFP8 of
-    the Qwen3.8 QAD exports, would fail to load; vLLM's own choice (Marlin for
-    MXFP8) runs them. An explicit speculative-config is kept as given.
+    the Qwen3.8 QAD exports, would fail to load. The drafter then gets "auto";
+    without a backend it would inherit the target's --moe-backend b12x. vLLM's
+    choice (Marlin for MXFP8) runs them. An explicit speculative-config is kept.
     """
     spec = plan.values.get("speculative-config")
     if (
@@ -1079,11 +1080,11 @@ def resolve_draft_moe_backend(plan: LaunchPlan) -> None:
     )
     if not unsupported:
         return
-    del spec["moe_backend"]
+    spec["moe_backend"] = "auto"
     plan.argv = make_argv(plan.values, plan.passthrough)
     print(
         f"MTP drafter experts are {', '.join(unsupported)}, which b12x does not "
-        "run; vLLM selects the drafter's MoE backend",
+        "run; the drafter's MoE backend is auto",
         file=sys.stderr,
     )
 

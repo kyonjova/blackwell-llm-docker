@@ -706,13 +706,14 @@ def _spec_argument(plan):
 @pytest.mark.parametrize("nested", [False, True])
 @pytest.mark.parametrize(
     "mtp_format,backend",
-    [("MXFP8", None), ("W4A16_NVFP4", "b12x"), ("NVFP4", "b12x"), (None, "b12x")],
+    [("MXFP8", "auto"), ("W4A16_NVFP4", "b12x"), ("NVFP4", "b12x"), (None, "b12x")],
 )
 def test_mtp_drafter_moe_backend_follows_the_checkpoint(
     tmp_path, mtp_format, backend, nested
 ):
     """The Qwen3.8 QAD revision exports MXFP8 MTP experts, which b12x cannot
-    load; vLLM then picks the drafter's backend (Marlin)."""
+    load. Without a backend the drafter would inherit the target's b12x, so it
+    gets "auto" and vLLM picks Marlin."""
     from runtime.launcher import resolve_draft_moe_backend
 
     _mtp_checkpoint(tmp_path, mtp_format, nested)
@@ -737,7 +738,7 @@ def test_mtp_drafter_backend_follows_a_separate_drafter_checkpoint(tmp_path):
         argv=["--draft-model", str(drafter)],
     )
     resolve_draft_moe_backend(plan)
-    assert "moe_backend" not in _spec_argument(plan)
+    assert _spec_argument(plan)["moe_backend"] == "auto"
 
 
 def test_explicit_mtp_drafter_backend_is_kept(tmp_path):
