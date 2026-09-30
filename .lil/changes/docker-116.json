@@ -1,0 +1,14 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-116",
+  "category": "internal",
+  "summary": "The runtime image moves to CUTLASS DSL 4.7.1, which B12X now requires; canonical images publish again",
+  "models": ["all"],
+  "compatibility": "No user action required. The first start after updating compiles B12X and FlashInfer CUTLASS DSL kernels again, so it takes longer once.",
+  "details": [
+    "B12X master moved to CUTLASS DSL 4.7.1, and canonical image builds stopped at the runtime dependency check because the image still installed 4.6.2. The image now installs 4.7.1 for B12X, FlashInfer and vLLM together, with QuACK 0.6.5, the release that supports it.",
+    "The dispatch fix for CUTLASS DSL's jit_executor is applied to 4.7.1 unchanged; the runtime self-check expects the patched 4.7.1 file."
+  ],
+  "pull_requests": [116],
+  "requires": []
+}

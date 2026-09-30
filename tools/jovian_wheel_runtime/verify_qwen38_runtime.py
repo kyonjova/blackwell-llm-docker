@@ -20,7 +20,7 @@ EXPECTED_VERSIONS = {
     "fastokens": "0.3.2",
     "huggingface-hub": "1.31.0",
     "nvidia-modelopt": "0.46.1",
-    "quack-kernels": "0.6.4",
+    "quack-kernels": "0.6.5",
     "torch-c-dlpack-ext": "0.1.5",
     "tilelang": "0.1.12",
     "z3-solver": "4.15.4.0",
@@ -40,6 +40,11 @@ NGC_PYTHON_HASHES = {
     ),
 }
 NGC_VENV_CUTLASS = "nvidia_cutlass_dsl/dsl_packages/cutlass/base_dsl/jit_executor.py"
+# The venv's CUTLASS DSL comes from qwen38-runtime.lock (4.7.1), not the NGC
+# foundation's (4.6.2), so its patched file has its own hash.
+NGC_VENV_CUTLASS_SHA256 = (
+    "9627ce4157dc7eecb58cbbf35f87a25ef92296e17f7ebbb4c5ea8d194e4959f0"
+)
 
 
 def sha256(path: Path) -> str:
@@ -343,7 +348,7 @@ def main() -> int:
         venv_cutlass = (
             Path(sys.prefix) / "lib/python3.12/site-packages" / NGC_VENV_CUTLASS
         )
-        expected_cutlass = NGC_PYTHON_HASHES[NGC_VENV_CUTLASS]
+        expected_cutlass = NGC_VENV_CUTLASS_SHA256
         if not venv_cutlass.is_file() or sha256(venv_cutlass) != expected_cutlass:
             raise RuntimeError(f"NGC venv dependency contract mismatch: {venv_cutlass}")
         from verify_torch_operator_contract import verify as verify_torch_operators
