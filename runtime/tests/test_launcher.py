@@ -685,36 +685,37 @@ def test_mimo_drafter_resolves_inside_a_local_checkpoint(tmp_path):
     ] == str(tmp_path / "dflash")
 
 
-def _mtp_checkpoint(path, mtp_format):
-    layers = {"model.layers.0.mlp.experts": {"quant_algo": "NVFP4"}}
+def _mtp_checkpoint(path, mtp_format, nested=False):
+    """hf_quant_config.json as the Qwen3.8 exports write it (top-level
+    quantized_layers), or ModelOpt's nested layout."""
+    layers = {"model.language_model.layers.0.mlp.experts": {"quant_algo": "NVFP4"}}
     if mtp_format:
         layers["mtp.layers.0.mlp.experts"] = {"quant_algo": mtp_format}
-    (path / "hf_quant_config.json").write_text(
-        json.dumps(
-            {
-                "quantization": {
-                    "quant_algo": "MIXED_PRECISION",
-                    "quantized_layers": layers,
-                }
-            }
-        )
-    )
+    config = {"quant_method": "modelopt", "quant_algo": "MIXED_PRECISION"}
+    if nested:
+        config = {"quantization": {**config, "quantized_layers": layers}}
+    else:
+        config["quantized_layers"] = layers
+    (path / "hf_quant_config.json").write_text(json.dumps(config))
 
 
 def _spec_argument(plan):
     return json.loads(plan.argv[plan.argv.index("--speculative-config") + 1])
 
 
+@pytest.mark.parametrize("nested", [False, True])
 @pytest.mark.parametrize(
     "mtp_format,backend",
     [("MXFP8", None), ("W4A16_NVFP4", "b12x"), ("NVFP4", "b12x"), (None, "b12x")],
 )
-def test_mtp_drafter_moe_backend_follows_the_checkpoint(tmp_path, mtp_format, backend):
+def test_mtp_drafter_moe_backend_follows_the_checkpoint(
+    tmp_path, mtp_format, backend, nested
+):
     """The Qwen3.8 QAD revision exports MXFP8 MTP experts, which b12x cannot
     load; vLLM then picks the drafter's backend (Marlin)."""
     from runtime.launcher import resolve_draft_moe_backend
 
-    _mtp_checkpoint(tmp_path, mtp_format)
+    _mtp_checkpoint(tmp_path, mtp_format, nested)
     plan = resolve("qwen38-flash-next", env={"MODEL": str(tmp_path)})
     assert plan.values["speculative-config"]["moe_backend"] == "b12x"
     resolve_draft_moe_backend(plan)

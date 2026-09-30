@@ -1041,7 +1041,13 @@ def mtp_expert_formats(model: str, revision: str | None) -> set[str]:
         config = json.loads(path.read_text())
     except (OSError, ValueError):
         return set()
-    layers = (config.get("quantization") or {}).get("quantized_layers") or {}
+    # Local Inference Lab exports list quantized_layers at the top level;
+    # ModelOpt nests them under "quantization".
+    layers = (
+        config.get("quantized_layers")
+        or (config.get("quantization") or {}).get("quantized_layers")
+        or {}
+    )
     return {
         str(entry.get("quant_algo"))
         for name, entry in layers.items()
