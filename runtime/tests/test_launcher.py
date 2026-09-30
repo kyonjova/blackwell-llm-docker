@@ -685,6 +685,65 @@ def test_mimo_drafter_resolves_inside_a_local_checkpoint(tmp_path):
     ] == str(tmp_path / "dflash")
 
 
+def _mtp_checkpoint(path, mtp_format):
+    layers = {"model.layers.0.mlp.experts": {"quant_algo": "NVFP4"}}
+    if mtp_format:
+        layers["mtp.layers.0.mlp.experts"] = {"quant_algo": mtp_format}
+    (path / "hf_quant_config.json").write_text(
+        json.dumps(
+            {
+                "quantization": {
+                    "quant_algo": "MIXED_PRECISION",
+                    "quantized_layers": layers,
+                }
+            }
+        )
+    )
+
+
+def _spec_argument(plan):
+    return json.loads(plan.argv[plan.argv.index("--speculative-config") + 1])
+
+
+@pytest.mark.parametrize(
+    "mtp_format,backend",
+    [("MXFP8", None), ("W4A16_NVFP4", "b12x"), ("NVFP4", "b12x"), (None, "b12x")],
+)
+def test_mtp_drafter_moe_backend_follows_the_checkpoint(tmp_path, mtp_format, backend):
+    """The Qwen3.8 QAD revision exports MXFP8 MTP experts, which b12x cannot
+    load; vLLM then picks the drafter's backend (Marlin)."""
+    from runtime.launcher import resolve_draft_moe_backend
+
+    _mtp_checkpoint(tmp_path, mtp_format)
+    plan = resolve("qwen38-flash-next", env={"MODEL": str(tmp_path)})
+    assert plan.values["speculative-config"]["moe_backend"] == "b12x"
+    resolve_draft_moe_backend(plan)
+    assert plan.values["speculative-config"].get("moe_backend") == backend
+    assert _spec_argument(plan).get("moe_backend") == backend
+
+
+def test_explicit_mtp_drafter_backend_is_kept(tmp_path):
+    from runtime.launcher import resolve_draft_moe_backend
+
+    _mtp_checkpoint(tmp_path, "MXFP8")
+    spec = {"method": "mtp", "num_speculative_tokens": 3, "moe_backend": "b12x"}
+    plan = resolve(
+        "qwen38-flash-next",
+        env={"MODEL": str(tmp_path)},
+        argv=["--speculative-config", json.dumps(spec)],
+    )
+    resolve_draft_moe_backend(plan)
+    assert _spec_argument(plan)["moe_backend"] == "b12x"
+
+
+def test_mtp_drafter_backend_is_kept_without_a_quant_config(tmp_path):
+    from runtime.launcher import resolve_draft_moe_backend
+
+    plan = resolve("qwen38-flash-next", env={"MODEL": str(tmp_path)})
+    resolve_draft_moe_backend(plan)
+    assert _spec_argument(plan)["moe_backend"] == "b12x"
+
+
 def test_mimo_drafter_requires_its_config(tmp_path):
     from runtime.launcher import resolve_draft_subfolder
 
