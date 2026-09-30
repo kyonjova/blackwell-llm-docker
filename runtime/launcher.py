@@ -1010,6 +1010,85 @@ def resolve_draft_subfolder(plan: LaunchPlan) -> None:
     plan.argv = make_argv(plan.values, plan.passthrough)
 
 
+def mtp_expert_formats(model: str, revision: str | None) -> set[str]:
+    """Quantization formats of the MTP experts named by a ModelOpt checkpoint.
+
+    Empty when the checkpoint has no hf_quant_config.json, it cannot be read,
+    or it does not list the MTP experts.
+    """
+    path = Path(model) / "hf_quant_config.json"
+    if not Path(model).is_dir():
+        from huggingface_hub import hf_hub_download
+
+        # One small file; a cached snapshot is used as is, also offline.
+        try:
+            path = Path(
+                hf_hub_download(
+                    model,
+                    "hf_quant_config.json",
+                    revision=revision,
+                    local_files_only=True,
+                )
+            )
+        except OSError:
+            try:
+                path = Path(
+                    hf_hub_download(model, "hf_quant_config.json", revision=revision)
+                )
+            except OSError:
+                return set()
+    try:
+        config = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return set()
+    # Local Inference Lab exports list quantized_layers at the top level;
+    # ModelOpt nests them under "quantization".
+    layers = (
+        config.get("quantized_layers")
+        or (config.get("quantization") or {}).get("quantized_layers")
+        or {}
+    )
+    return {
+        str(entry.get("quant_algo"))
+        for name, entry in layers.items()
+        if name.startswith("mtp.") and name.endswith(".experts")
+    }
+
+
+def resolve_draft_moe_backend(plan: LaunchPlan) -> None:
+    """Let vLLM choose the MoE backend of a profile's MTP drafter when b12x cannot run it.
+
+    Profiles run MTP drafter experts on b12x, which takes NVFP4 and MXFP4
+    experts. A checkpoint revision with other MTP experts, such as the MXFP8 of
+    the Qwen3.8 QAD exports, would fail to load. The drafter then gets "auto";
+    without a backend it would inherit the target's --moe-backend b12x. vLLM's
+    choice (Marlin for MXFP8) runs them. An explicit speculative-config is kept.
+    """
+    spec = plan.values.get("speculative-config")
+    if (
+        not spec
+        or spec.get("method") != "mtp"
+        or spec.get("moe_backend") != "b12x"
+        or not plan.origins["speculative-config"].startswith("derived:")
+    ):
+        return
+    # The drafter's own checkpoint when one is set (--draft-model), else the target.
+    drafter = spec.get("model") or plan.values["model"]
+    formats = mtp_expert_formats(drafter, spec.get("revision"))
+    unsupported = sorted(
+        name for name in formats if "NVFP4" not in name and "MXFP4" not in name
+    )
+    if not unsupported:
+        return
+    spec["moe_backend"] = "auto"
+    plan.argv = make_argv(plan.values, plan.passthrough)
+    print(
+        f"MTP drafter experts are {', '.join(unsupported)}, which b12x does not "
+        "run; the drafter's MoE backend is auto",
+        file=sys.stderr,
+    )
+
+
 def chat_template_path(value: str) -> str | None:
     """Resolve a chat-template setting to vLLM's --chat-template value.
 
@@ -1236,6 +1315,7 @@ def execute(plan: LaunchPlan, contract_path: Path) -> None:
         environment.pop("NCCL_GRAPH_FILE")
     environment.update(plan.environment)
     resolve_draft_subfolder(plan)
+    resolve_draft_moe_backend(plan)
     if plan.cache_service:
         from runtime.cache import resolve_identity, verify_installed_transfer
         from runtime.supervisor import supervise

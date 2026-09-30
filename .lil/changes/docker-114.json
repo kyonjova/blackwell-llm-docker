@@ -1,0 +1,14 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-114",
+  "category": "fix",
+  "summary": "Qwen3.8-Flash-Next starts from checkpoint revisions whose MTP layer is MXFP8, such as the QAD export qad-step5500-ple1000",
+  "models": ["Qwen3.8-Flash-Next"],
+  "compatibility": "No user action required. An explicit speculative-config is used as given.",
+  "details": [
+    "The Qwen3.8-Flash-Next and DeepSeek-V4 profiles run the MTP drafter's experts on b12x, which takes NVFP4 and MXFP4 experts. The QAD revision qad-step5500-ple1000 of local-inference-lab/Qwen3.8-Flash-Next-NVFP4 exports its MTP experts as MXFP8, so starting it with --revision stopped at model load with \"moe_backend='b12x' is not supported for MXFP8 MoE\".",
+    "At launch the runtime now reads hf_quant_config.json of the selected revision. When the MTP experts use a format b12x does not run, it sets the drafter's MoE backend to auto (without one the drafter would inherit the target's b12x), vLLM picks Marlin for MXFP8, and one line in the log says so. Reported by shieldstarx."
+  ],
+  "pull_requests": [114],
+  "requires": []
+}
