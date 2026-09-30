@@ -1065,7 +1065,9 @@ def resolve_draft_moe_backend(plan: LaunchPlan) -> None:
         or not plan.origins["speculative-config"].startswith("derived:")
     ):
         return
-    formats = mtp_expert_formats(plan.values["model"], spec.get("revision"))
+    # The drafter's own checkpoint when one is set (--draft-model), else the target.
+    drafter = spec.get("model") or plan.values["model"]
+    formats = mtp_expert_formats(drafter, spec.get("revision"))
     unsupported = sorted(
         name for name in formats if "NVFP4" not in name and "MXFP4" not in name
     )

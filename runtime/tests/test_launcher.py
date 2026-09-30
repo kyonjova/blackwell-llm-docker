@@ -722,6 +722,23 @@ def test_mtp_drafter_moe_backend_follows_the_checkpoint(tmp_path, mtp_format, ba
     assert _spec_argument(plan).get("moe_backend") == backend
 
 
+def test_mtp_drafter_backend_follows_a_separate_drafter_checkpoint(tmp_path):
+    from runtime.launcher import resolve_draft_moe_backend
+
+    target, drafter = tmp_path / "target", tmp_path / "drafter"
+    target.mkdir()
+    drafter.mkdir()
+    _mtp_checkpoint(target, "W4A16_NVFP4")
+    _mtp_checkpoint(drafter, "MXFP8")
+    plan = resolve(
+        "qwen38-flash-next",
+        env={"MODEL": str(target)},
+        argv=["--draft-model", str(drafter)],
+    )
+    resolve_draft_moe_backend(plan)
+    assert "moe_backend" not in _spec_argument(plan)
+
+
 def test_explicit_mtp_drafter_backend_is_kept(tmp_path):
     from runtime.launcher import resolve_draft_moe_backend
 
