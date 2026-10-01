@@ -181,26 +181,48 @@ def deployment_presets() -> dict:
     return presets
 
 
-def installed_vllm_environment() -> frozenset[str] | None:
-    """Environment names the installed vLLM declares, or None without vLLM.
+def installed_source(package: str, relative: str) -> str | None:
+    """Text of a file in an installed package, or None when it is missing.
 
-    Reads vllm/envs.py as text; the launcher must not import vLLM or CUDA.
+    The launcher must not import vLLM, B12X or CUDA, so it reads source text.
     """
     import importlib.util
 
     try:
-        spec = importlib.util.find_spec("vllm")
+        spec = importlib.util.find_spec(package)
     except (ImportError, ValueError):
         return None
     if spec is None or not spec.submodule_search_locations:
         return None
     for location in spec.submodule_search_locations:
-        path = Path(location) / "envs.py"
+        path = Path(location) / relative
         if path.is_file():
-            return frozenset(
-                re.findall(r'^    "(VLLM_[A-Z0-9_]+)"', path.read_text(), re.MULTILINE)
-            )
+            return path.read_text()
     return None
+
+
+def installed_vllm_environment() -> frozenset[str] | None:
+    """Environment names the installed vLLM declares, or None without vLLM."""
+    source = installed_source("vllm", "envs.py")
+    if source is None:
+        return None
+    return frozenset(re.findall(r'^    "(VLLM_[A-Z0-9_]+)"', source, re.MULTILINE))
+
+
+def installed_b12x_mxfp8_moe() -> bool:
+    """Whether the installed vLLM and B12X run MXFP8 MoE experts on B12X.
+
+    vLLM maps moe_backend b12x to its B12X_MXFP8 backend (vllm #958) and B12X
+    prepares the mxfp8_e8m0_k32 source format (b12x #453).
+    """
+    oracle = installed_source("vllm", "model_executor/layers/fused_moe/oracle/mxfp8.py")
+    formats = installed_source("b12x", "moe/fused_moe/source.py")
+    return (
+        oracle is not None
+        and "Fp8MoeBackend.B12X_MXFP8" in oracle
+        and formats is not None
+        and '"mxfp8_e8m0_k32"' in formats
+    )
 
 
 def deployment_preset(identifier: str) -> dict:
@@ -1102,10 +1124,11 @@ def resolve_draft_moe_backend(plan: LaunchPlan) -> None:
     """Let vLLM choose the MoE backend of a profile's MTP drafter when b12x cannot run it.
 
     Profiles run MTP drafter experts on b12x, which takes NVFP4 and MXFP4
-    experts. A checkpoint revision with other MTP experts, such as the MXFP8 of
-    the Qwen3.8 QAD exports, would fail to load. The drafter then gets "auto";
-    without a backend it would inherit the target's --moe-backend b12x. vLLM's
-    choice (Marlin for MXFP8) runs them. An explicit speculative-config is kept.
+    experts, and MXFP8 experts (the Qwen3.8 QAD exports) when the installed
+    vLLM and B12X have the MXFP8 path. A checkpoint revision with other MTP
+    experts would fail to load. The drafter then gets "auto"; without a
+    backend it would inherit the target's --moe-backend b12x. vLLM's choice
+    (Marlin for MXFP8) runs them. An explicit speculative-config is kept.
     """
     spec = plan.values.get("speculative-config")
     if (
@@ -1118,8 +1141,11 @@ def resolve_draft_moe_backend(plan: LaunchPlan) -> None:
     # The drafter's own checkpoint when one is set (--draft-model), else the target.
     drafter = spec.get("model") or plan.values["model"]
     formats = mtp_expert_formats(drafter, spec.get("revision"))
+    supported = ("NVFP4", "MXFP4")
+    if any("MXFP8" in name for name in formats) and installed_b12x_mxfp8_moe():
+        supported += ("MXFP8",)
     unsupported = sorted(
-        name for name in formats if "NVFP4" not in name and "MXFP4" not in name
+        name for name in formats if not any(kind in name for kind in supported)
     )
     if not unsupported:
         return

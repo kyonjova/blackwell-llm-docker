@@ -1,0 +1,21 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-118",
+  "category": "performance",
+  "summary": "The Qwen3.8-Flash-Next QAD drafter runs its MXFP8 experts on B12X again when the image supports it",
+  "models": [
+    "Qwen3.8-Flash-Next"
+  ],
+  "compatibility": "No user action required. Applies to checkpoint revisions with MXFP8 MTP experts, such as qad-step5500-ple1000. Images whose vLLM or B12X lacks the B12X MXFP8 path keep moe_backend auto (Marlin), and an explicit --speculative-config is kept.",
+  "details": [
+    "docker-114 moved MXFP8 MTP drafter experts to moe_backend auto (Marlin) because B12X could not load them. With vllm-957 and b12x-452 in the image, the launcher keeps the profile's b12x for them.",
+    "On RTX PRO 6000 TP2 the B12X drafter decodes as fast as Marlin (steps per second within 2.5%, decode tok/s within noise) and accepts slightly more draft tokens (2.34-2.37 against 2.30-2.34 per step)."
+  ],
+  "authors": [
+    "voipmonitor"
+  ],
+  "pull_requests": [
+    118
+  ],
+  "requires": []
+}
