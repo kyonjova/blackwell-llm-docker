@@ -705,17 +705,25 @@ def _spec_argument(plan):
 
 @pytest.mark.parametrize("nested", [False, True])
 @pytest.mark.parametrize(
-    "mtp_format,backend",
-    [("MXFP8", "auto"), ("W4A16_NVFP4", "b12x"), ("NVFP4", "b12x"), (None, "b12x")],
+    "mtp_format,b12x_mxfp8,backend",
+    [
+        ("MXFP8", False, "auto"),
+        ("MXFP8", True, "b12x"),
+        ("W4A16_NVFP4", False, "b12x"),
+        ("NVFP4", False, "b12x"),
+        (None, False, "b12x"),
+    ],
 )
 def test_mtp_drafter_moe_backend_follows_the_checkpoint(
-    tmp_path, mtp_format, backend, nested
+    tmp_path, monkeypatch, mtp_format, b12x_mxfp8, backend, nested
 ):
-    """The Qwen3.8 QAD revision exports MXFP8 MTP experts, which b12x cannot
-    load. Without a backend the drafter would inherit the target's b12x, so it
-    gets "auto" and vLLM picks Marlin."""
+    """The Qwen3.8 QAD revision exports MXFP8 MTP experts, which b12x loads
+    only with its MXFP8 path. Without it the drafter would inherit the
+    target's b12x, so it gets "auto" and vLLM picks Marlin."""
+    from runtime import launcher
     from runtime.launcher import resolve_draft_moe_backend
 
+    monkeypatch.setattr(launcher, "installed_b12x_mxfp8_moe", lambda: b12x_mxfp8)
     _mtp_checkpoint(tmp_path, mtp_format, nested)
     plan = resolve("qwen38-flash-next", env={"MODEL": str(tmp_path)})
     assert plan.values["speculative-config"]["moe_backend"] == "b12x"
@@ -724,8 +732,13 @@ def test_mtp_drafter_moe_backend_follows_the_checkpoint(
     assert _spec_argument(plan).get("moe_backend") == backend
 
 
-def test_mtp_drafter_backend_follows_a_separate_drafter_checkpoint(tmp_path):
+def test_mtp_drafter_backend_follows_a_separate_drafter_checkpoint(
+    tmp_path, monkeypatch
+):
+    from runtime import launcher
     from runtime.launcher import resolve_draft_moe_backend
+
+    monkeypatch.setattr(launcher, "installed_b12x_mxfp8_moe", lambda: False)
 
     target, drafter = tmp_path / "target", tmp_path / "drafter"
     target.mkdir()

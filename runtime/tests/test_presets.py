@@ -303,3 +303,47 @@ def test_installed_vllm_environment_reads_envs_without_importing(tmp_path, monke
     )
     monkeypatch.syspath_prepend(str(tmp_path))
     assert installed_vllm_environment() == frozenset({"VLLM_GLM53_EMBED_HOST"})
+
+
+@pytest.mark.parametrize(
+    "oracle,formats,expected",
+    [
+        (
+            '    "b12x": Fp8MoeBackend.B12X_MXFP8,\n',
+            '    MXFP8 = "mxfp8_e8m0_k32"\n',
+            True,
+        ),
+        (
+            '    "marlin": Fp8MoeBackend.MARLIN,\n',
+            '    MXFP8 = "mxfp8_e8m0_k32"\n',
+            False,
+        ),
+        (
+            '    "b12x": Fp8MoeBackend.B12X_MXFP8,\n',
+            '    MXFP4 = "fp4_e8m0_k32"\n',
+            False,
+        ),
+        ('    "b12x": Fp8MoeBackend.B12X_MXFP8,\n', None, False),
+    ],
+)
+def test_installed_b12x_mxfp8_moe_needs_both_packages(
+    tmp_path, monkeypatch, oracle, formats, expected
+):
+    """The MXFP8 drafter stays on b12x only when vLLM maps b12x to its
+    B12X_MXFP8 backend and B12X prepares the MXFP8 source format."""
+    from runtime.launcher import installed_b12x_mxfp8_moe
+
+    vllm_oracle = tmp_path / "vllm/model_executor/layers/fused_moe/oracle"
+    vllm_oracle.mkdir(parents=True)
+    (tmp_path / "vllm/__init__.py").write_text(
+        "raise RuntimeError('must not import')\n"
+    )
+    (vllm_oracle / "mxfp8.py").write_text(oracle)
+    b12x = tmp_path / "b12x"
+    b12x.mkdir()
+    (b12x / "__init__.py").write_text("raise RuntimeError('must not import')\n")
+    if formats is not None:
+        (b12x / "moe/fused_moe").mkdir(parents=True)
+        (b12x / "moe/fused_moe/source.py").write_text(formats)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    assert installed_b12x_mxfp8_moe() is expected
