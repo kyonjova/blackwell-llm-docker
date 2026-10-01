@@ -349,7 +349,34 @@ def supervise(
     environment: dict,
     bootstrap: list[str],
 ) -> int:
-    preflight(service, environment)
+    return _supervise(
+        service, [("Model server", model_command, environment)], environment, bootstrap
+    )
+
+
+def supervise_replicas(
+    service: CacheService | None,
+    servers: list[tuple[str, list[str], dict]],
+    environment: dict,
+    bootstrap: list[str],
+    stop_grace: int = 60,
+) -> int:
+    """Run replica servers and their proxy; the first to exit stops all of them."""
+    return _supervise(service, servers, environment, bootstrap, stop_grace)
+
+
+def _supervise(
+    service: CacheService | None,
+    servers: list[tuple[str, list[str], dict]],
+    environment: dict,
+    bootstrap: list[str],
+    stop_grace: int = 60,
+) -> int:
+    single = len(servers) == 1
+    running = "the model server was" if single else "the replicas were"
+    stopping_servers = "the model server" if single else "the replicas and the proxy"
+    if service is not None:
+        preflight(service, environment)
     children = []
     requested_signal = 0
 
@@ -362,65 +389,85 @@ def supervise(
         for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
     }
     try:
-        cache = subprocess.Popen(
-            [*bootstrap, *service.argv],
-            env={**environment, **service.environment},
-            start_new_session=True,
-        )
-        children.append(cache)
-        deadline = time.monotonic() + service.startup_timeout
-        while not requested_signal:
-            status = cache.poll()
-            if status is not None:
-                raise ConfigError(f"LMCache exited before readiness (status {status})")
-            if time.monotonic() >= deadline:
-                raise ConfigError("LMCache startup timed out")
-            try:
-                # /healthcheck can be non-JSON; /status is the transport contract.
-                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-                with opener.open(service.health_url, timeout=1):
-                    pass
-                if service.shm_bytes:
-                    validate_pool(
-                        read_json(service.health_url.rsplit("/", 1)[0] + "/status"),
-                        service,
-                    )
-                break
-            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
-                time.sleep(0.1)
-        if requested_signal:
-            announce(
-                f"Received {signal.Signals(requested_signal).name} before the model "
-                "server started; stopping LMCache"
+        cache = None
+        if service is not None:
+            cache = subprocess.Popen(
+                [*bootstrap, *service.argv],
+                env={**environment, **service.environment},
+                start_new_session=True,
             )
-            return 128 + requested_signal
-        if cache.poll() is not None:
-            raise ConfigError("LMCache exited after its readiness response")
-        model = subprocess.Popen(model_command, env=environment, start_new_session=True)
-        children.append(model)
-        while not requested_signal:
-            status = cache.poll()
-            if status is not None:
-                reason = (
-                    f"LMCache exited ({describe_exit(status)}) while the model "
-                    "server was running"
-                )
-                announce(f"{reason}; stopping the model server")
-                raise ConfigError(reason)
-            status = model.poll()
-            if status is not None:
+            children.append(cache)
+            deadline = time.monotonic() + service.startup_timeout
+            while not requested_signal:
+                status = cache.poll()
+                if status is not None:
+                    raise ConfigError(
+                        f"LMCache exited before readiness (status {status})"
+                    )
+                if time.monotonic() >= deadline:
+                    raise ConfigError("LMCache startup timed out")
+                try:
+                    # /healthcheck can be non-JSON; /status is the transport contract.
+                    opener = urllib.request.build_opener(
+                        urllib.request.ProxyHandler({})
+                    )
+                    with opener.open(service.health_url, timeout=1):
+                        pass
+                    if service.shm_bytes:
+                        validate_pool(
+                            read_json(service.health_url.rsplit("/", 1)[0] + "/status"),
+                            service,
+                        )
+                    break
+                except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+                    time.sleep(0.1)
+            if requested_signal:
                 announce(
-                    f"Model server exited ({describe_exit(status)}); stopping LMCache"
+                    f"Received {signal.Signals(requested_signal).name} before the model "
+                    "server started; stopping LMCache"
                 )
-                return status if status >= 0 else 128 - status
+                return 128 + requested_signal
+            if cache.poll() is not None:
+                raise ConfigError("LMCache exited after its readiness response")
+        processes = []
+        for name, command, server_environment in servers:
+            process = subprocess.Popen(
+                command, env=server_environment, start_new_session=True
+            )
+            children.append(process)
+            processes.append((name, process))
+        while not requested_signal:
+            if cache is not None:
+                status = cache.poll()
+                if status is not None:
+                    reason = (
+                        f"LMCache exited ({describe_exit(status)}) while {running} "
+                        "running"
+                    )
+                    announce(f"{reason}; stopping {stopping_servers}")
+                    raise ConfigError(reason)
+            for name, process in processes:
+                status = process.poll()
+                if status is not None:
+                    others = (
+                        "LMCache"
+                        if single
+                        else "the other servers"
+                        + (" and LMCache" if cache is not None else "")
+                    )
+                    announce(
+                        f"{name} exited ({describe_exit(status)}); stopping {others}"
+                    )
+                    return status if status >= 0 else 128 - status
             time.sleep(0.1)
         announce(
             f"Received {signal.Signals(requested_signal).name} from outside the "
             "container, usually docker stop, a Compose recreation or an image "
-            "updater; stopping the model server and LMCache"
+            f"updater; stopping {stopping_servers}"
+            + (" and LMCache" if cache is not None else "")
         )
         return 128 + requested_signal
     finally:
-        stop_groups(children, service.stop_grace)
+        stop_groups(children, service.stop_grace if service is not None else stop_grace)
         for sig, handler in previous.items():
             signal.signal(sig, handler)

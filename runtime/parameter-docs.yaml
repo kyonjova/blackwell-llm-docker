@@ -164,6 +164,17 @@ options:
       KV cache at the cost of more cross-GPU communication.
     why: Profile defaults are 4 for GLM, DS4.1 and MiMo, 2 for DS4 and DS4 Vision, and 1 for Qwen. Presets
       select 2 (Spark, Qwen, MiMo) or 3 (GLM TP3).
+  replicas:
+    group: parallelism
+    summary: Runs this many independent single-GPU servers (TP1) in the container, one per visible GPU,
+      behind one endpoint on host and port. The endpoint sends the next turn of a conversation to the
+      replica that served the previous turn and every other request to the least busy replica; /health
+      reports ready when every replica is, and /metrics labels each replica. Replicas share the LMCache service, and
+      Qwen3.8-Flash-Next maps one host-RAM copy of its PLE table (about 27 GiB) for all of them. The
+      first replica to exit stops the container. 1 runs one server.
+    why: The common default is 1. Every option applies to each replica, so max-num-seqs and the KV
+      size are per GPU. On PCIe systems two TP1 replicas of Qwen3.8-Flash-Next serve concurrent
+      conversations faster than one TP2 server, because no layer waits on cross-GPU communication.
   pipeline-parallel-size:
     group: parallelism
     summary: Number of pipeline stages the model layers are split into.
@@ -1165,6 +1176,25 @@ environment:
       inputs above the one-shot limit on the fallback path.
     why: GLM, DS4.1 and the GLM Spark TP2 preset set off. MiMo sets 2MB as part of its qualified configuration
       (vllm PR 881).
+  VLLM_PLE_TABLE_MEMORY:
+    group: memory
+    summary: Places the Qwen3.8-Flash-Next PLE table. ram keeps one CUDA-mapped host-RAM copy per
+      process, shared maps one host-RAM copy per host for every process serving the same checkpoint,
+      disk reads the needed rows from the checkpoint with io_uring. It takes precedence over
+      VLLM_PLE_CPU_OFFLOAD.
+    why: replicas sets shared when the profile keeps the table in RAM, so N replicas hold it once.
+  VLLM_PLE_SHARED_TABLE_DIR:
+    group: memory
+    summary: tmpfs directory of shared PLE tables, one subdirectory per checkpoint and table geometry.
+      Tables stay after the server stops, so the next start attaches instead of loading; list or remove
+      them with python -m vllm.models.qwen4_exp.nvidia.ple_shared_table list|prune.
+    why: replicas uses /dev/shm/lil-ple; with --ipc host that is the host's /dev/shm.
+  VLLM_PLE_SHARED_TABLE_IDENTITY:
+    group: memory
+    summary: Checkpoint identity in the shared PLE table key, so a changed checkpoint never attaches to
+      an old table.
+    why: replicas sets the content identity of the target checkpoint (the pinned Hub commit or a hash
+      of a local checkpoint's files).
   VLLM_PLE_CPU_OFFLOAD:
     group: memory
     summary: Stores n-gram (PLE/Engram) embedding tables in pinned CPU memory for UVA lookup. For Qwen

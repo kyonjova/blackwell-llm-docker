@@ -85,6 +85,15 @@ presets:
     environment: {}
     modes: {}
     linked_options: {}
+  qwen38-tp1x2:
+    profile: qwen38-flash-next
+    hardware: rtx-pro-6000-pcie
+    description: Qwen3.8 Flash Next as two TP1 replicas on two GPUs behind one endpoint that keeps each conversation on one replica. The replicas share one host-RAM PLE table and, with an external cache, one LMCache service.
+    options:
+      replicas: 2
+    environment: {}
+    modes: {}
+    linked_options: {}
   mimo26-flash-tp2:
     profile: mimo26-flash
     hardware: rtx-pro-6000-pcie
