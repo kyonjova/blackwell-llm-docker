@@ -126,7 +126,7 @@ def request_affinity(path: str, body: bytes, headers: dict[str, str]) -> Affinit
         return Affinity()
     model = request.get("model")
     tools = request.get("tools")
-    if path.endswith("/chat/completions") or path.endswith("/messages"):
+    if path.endswith(("/chat/completions", "/messages")):
         messages = request.get("messages")
         if isinstance(messages, list) and messages:
             keys = _chain(["chat", model, request.get("system"), tools], messages)
