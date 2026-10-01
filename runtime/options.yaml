@@ -424,6 +424,13 @@
       "CUDAGRAPH_CAPTURE_SIZES"
     ]
   },
+  "replicas": {
+    "type": "integer",
+    "control": true,
+    "env": [
+      "REPLICAS"
+    ]
+  },
   "mode": {
     "type": "string",
     "control": true,

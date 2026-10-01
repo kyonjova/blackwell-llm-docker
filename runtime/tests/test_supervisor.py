@@ -185,6 +185,56 @@ def test_supervisor_names_the_stop_reason_before_stopping(
     assert stopped == children
 
 
+@pytest.mark.parametrize("with_cache", [False, True])
+def test_replicas_stop_together_when_one_exits(monkeypatch, capsys, with_cache):
+    service = (
+        replace(
+            resolve("ds4-flash", env={"LMCACHE_MODE": "ram"}).cache_service,
+            shm_bytes=0,
+        )
+        if with_cache
+        else None
+    )
+    servers = [
+        ("Replica 0", ["replica-0"], {"CUDA_VISIBLE_DEVICES": "0"}),
+        ("Replica 1", ["replica-1"], {"CUDA_VISIBLE_DEVICES": "1"}),
+        ("Replica proxy", ["proxy"], {}),
+    ]
+    children, stopped = [], []
+
+    class Child:
+        def __init__(self, command, **kwargs):
+            self.command, self.environment = command, kwargs["env"]
+            children.append(self)
+
+        def poll(self):
+            started = len(children) == len(servers) + int(with_cache)
+            return 3 if started and self.command == ["replica-1"] else None
+
+    class HTTP:
+        def open(self, *_args, **_kwargs):
+            return BytesIO(b"{}")
+
+    monkeypatch.setattr(supervisor, "preflight", lambda *_: None)
+    monkeypatch.setattr(subprocess, "Popen", Child)
+    monkeypatch.setattr(
+        supervisor, "stop_groups", lambda processes, grace: stopped.extend(processes)
+    )
+    monkeypatch.setattr(supervisor.urllib.request, "build_opener", lambda *_: HTTP())
+    monkeypatch.setattr(supervisor.time, "sleep", lambda *_: None)
+
+    assert supervisor.supervise_replicas(service, servers, {}, []) == 3
+    assert [child.command for child in children[int(with_cache) :]] == [
+        ["replica-0"],
+        ["replica-1"],
+        ["proxy"],
+    ]
+    assert children[-2].environment["CUDA_VISIBLE_DEVICES"] == "1"
+    assert stopped == children
+    others = "the other servers" + (" and LMCache" if with_cache else "")
+    assert f"Replica 1 exited (status 3); stopping {others}" in capsys.readouterr().err
+
+
 def _free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))

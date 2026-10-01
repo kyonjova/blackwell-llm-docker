@@ -99,6 +99,8 @@ imposed.
 - Native form: `lil-serve --preset glm53-spark-tp2 -- --port 8000`.
 - Qwen TP2: `PRESET=qwen38-tp2`; CPU PLE placement and MTP defaults still come
   from the Qwen model profile. `PROFILE=qwen38-flash-next TP=2` is equivalent.
+- Qwen as two TP1 replicas: `PRESET=qwen38-tp1x2` runs one complete server per
+  GPU behind one endpoint, see [Replicas](#replicas-several-tp1-servers-behind-one-endpoint).
 - GLM on three GPUs: `PRESET=glm53-tp3` (TP3 with expert parallelism, MTP3,
   eight request slots). MLA and KDA heads are padded to divide by three with
   zero weights, the vision tower runs data-parallel, and the large dense
@@ -437,6 +439,55 @@ and explicit user settings. An explicit `-e NCCL_NET_PLUGIN=spcx` therefore stil
 overrides a preset selecting `none`. Raw commands intentionally bypass profile
 resolution; use the generated native environment or set their NCCL policy
 explicitly. Both interfaces retain the CUDA/NCCL ABI bootstrap.
+
+## Replicas: several TP1 servers behind one endpoint
+
+`REPLICAS=N` (or `replicas: N` in a settings file, or the `qwen38-tp1x2`
+preset) runs N complete single-GPU servers in the container, one per visible
+GPU, instead of one server split across GPUs:
+
+```bash
+docker run -d --name qwen38-tp1x2 --restart on-failure --init \
+  --gpus '"device=0,1"' --network host --ipc host \
+  -v /root/.cache/huggingface:/root/.cache/huggingface -v lil-cache:/cache \
+  -e PRESET=qwen38-tp1x2 -e PORT=8000 "$LIL_IMAGE"
+```
+
+- Each replica gets one GPU, in `CUDA_VISIBLE_DEVICES` order, and a loopback
+  port. Every option applies per replica, so `MAX_NUM_SEQS` and the KV size are
+  per GPU. `TP`, `DCP` and pipeline parallelism must stay 1.
+- The public port is a proxy. It records which replica served each request's
+  whole history (chat, messages or Responses input, or a completion prompt).
+  The next turn of a conversation extends that history, so it goes to the same
+  replica, and its prefix cache and recurrent checkpoints stay on one GPU.
+  First turns, and identical prompts sent side by side, go to the replica with
+  the fewest requests in flight. Responses follow-ups with
+  `previous_response_id` go to the replica that produced the previous response,
+  and requests with the same `X-LIL-Affinity` header value share a replica.
+  Other requests, such as `/v1/models`, go to replica 0.
+- `/health` returns 200 once every replica is ready, and `/metrics` carries
+  each replica's metrics with a `replica` label.
+- With `CACHE_MODE=lmcache`, all replicas use one LMCache service.
+- Qwen3.8-Flash-Next keeps one host-RAM copy of its 26.8 GiB PLE table for
+  all replicas (`VLLM_PLE_TABLE_MEMORY=shared` under `/dev/shm/lil-ple`, keyed
+  by the checkpoint content). The first replica loads it while the others
+  wait, then they map it. With `--ipc host` the table outlives the container,
+  so the next start maps it instead of loading it; it uses host RAM until
+  removed. `docker exec <container> python -m
+  vllm.models.qwen4_exp.nvidia.ple_shared_table list` shows the tables and
+  `prune --keep <key>` removes the others.
+- When a replica or the proxy exits, the others stop and the container exits,
+  so `--restart on-failure` restarts all of them.
+- Benchmark through the proxy: `lil-bench --url http://127.0.0.1:<PORT>`.
+
+Two TP1 replicas avoid the cross-GPU communication of every TP2 layer and keep
+separate KV caches; a single request still gets only one GPU. How much that
+pays depends on what TP2 communication costs on the host. On two PCIe RTX PRO
+6000 Max-Q GPUs, awsdl measured 12-20% more decode throughput than TP2 at 8-16
+concurrent requests, with the same single-request speed. On two PCIe RTX PRO
+6000 Server Edition GPUs (MTP, no context, two runs each), two replicas matched
+TP2 at 8 requests (1016 vs 1012 tok/s), were 2% ahead at 16 (1531 vs 1497) and
+22% slower for a single request (187 vs 240 tok/s).
 
 ## Benchmark a running container (`lil-bench`)
 

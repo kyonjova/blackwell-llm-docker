@@ -34,6 +34,7 @@ defaults:
   enable-chunked-prefill: true
   enable-auto-tool-choice: true
   cache-mode: vram
+  replicas: 1
 environment:
   # Checkpoints and saved credentials must not inherit the runtime-keyed JIT root.
   HF_HOME: /root/.cache/huggingface

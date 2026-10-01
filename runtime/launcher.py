@@ -745,6 +745,44 @@ def resolve(
                 f"Qwen3.8 YaRN for {context_length} tokens",
             )
 
+    replicas = values["replicas"]
+    ple_copy_per_replica = False
+    if replicas < 1:
+        raise ConfigError("replicas must be at least 1")
+    if replicas > 1:
+        for key in (
+            "tensor-parallel-size",
+            "pipeline-parallel-size",
+            "decode-context-parallel-size",
+            "data-parallel-size",
+        ):
+            if values.get(key, 1) != 1:
+                raise ConfigError(
+                    f"replicas runs independent single-GPU servers; {key} must be 1, "
+                    f"got {values[key]}"
+                )
+        # One host-RAM PLE table serves every replica instead of one each; a
+        # vLLM without shared tables keeps a copy per replica.
+        if (
+            identifier == "qwen38-flash-next"
+            and environment.get("VLLM_PLE_CPU_OFFLOAD") == "1"
+            and "VLLM_PLE_TABLE_MEMORY" not in explicit_env
+        ):
+            ple_copy_per_replica = (
+                vllm_environment is not None
+                and "VLLM_PLE_SHARED_TABLE_DIR" not in vllm_environment
+            )
+            if not ple_copy_per_replica:
+                from runtime.replicas import PLE_SHARED_DIRECTORY
+
+                set_env("VLLM_PLE_TABLE_MEMORY", "shared", "derived:replicas")
+                if "VLLM_PLE_SHARED_TABLE_DIR" not in explicit_env:
+                    set_env(
+                        "VLLM_PLE_SHARED_TABLE_DIR",
+                        PLE_SHARED_DIRECTORY,
+                        "derived:replicas",
+                    )
+
     if explicit_env.get("EXTRA_VLLM_ARGS"):
         raise ConfigError(
             "EXTRA_VLLM_ARGS is ambiguous shell text; pass native CLI arguments after --"
@@ -940,6 +978,11 @@ def resolve(
     if passthrough:
         warnings.append(
             "Unmanaged native options are forwarded to vLLM; their values are not validated by the profile schema."
+        )
+    if replicas > 1 and identifier == "qwen38-flash-next" and ple_copy_per_replica:
+        warnings.append(
+            "The installed vLLM cannot share the PLE table, so every replica keeps "
+            "its own host-RAM copy (about 27 GiB each)."
         )
     from runtime.cache import configure as configure_cache
 
@@ -1316,6 +1359,27 @@ def execute(plan: LaunchPlan, contract_path: Path) -> None:
     environment.update(plan.environment)
     resolve_draft_subfolder(plan)
     resolve_draft_moe_backend(plan)
+    if plan.values["replicas"] > 1:
+        from runtime import replicas
+
+        helper = ROOT / "checkpoint_identity.py"
+        if plan.cache_service:
+            from runtime.cache import resolve_identity, verify_installed_transfer
+
+            verify_installed_transfer(plan)
+            if not helper.is_file():
+                raise ConfigError(
+                    "The image must package its source-locked checkpoint identity helper"
+                )
+            resolve_identity(plan, contract, helper)
+        if (
+            environment.get("VLLM_PLE_TABLE_MEMORY") == "shared"
+            and "VLLM_PLE_SHARED_TABLE_IDENTITY" not in environment
+        ):
+            environment["VLLM_PLE_SHARED_TABLE_IDENTITY"] = (
+                replicas.checkpoint_identity(plan, helper)
+            )
+        raise SystemExit(replicas.run(plan, environment, contract.get("bootstrap", [])))
     if plan.cache_service:
         from runtime.cache import resolve_identity, verify_installed_transfer
         from runtime.supervisor import supervise
