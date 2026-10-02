@@ -12,7 +12,7 @@ import pytest
 from runtime import ConfigError
 from runtime.explicit import document, load_plan
 from runtime.image_install import install
-from runtime.launcher import resolve
+from runtime.launcher import ROOT, resolve
 
 IDENTITY = "a" * 64
 CASES = [
@@ -303,7 +303,11 @@ def test_installed_explicit_execution_invokes_bootstrap_once(tmp_path):
         check=True,
         timeout=20,
     )
+    # The installed runtime serves the chat template from its own copy.
+    templates = str(ROOT / "templates")
     assert json.loads(result.stdout) == {
-        "argv": plan.argv,
+        "argv": [
+            arg.replace(templates, str(package / "templates")) for arg in plan.argv
+        ],
         "nccl": plan.environment["NCCL_MIN_NCHANNELS"],
     }

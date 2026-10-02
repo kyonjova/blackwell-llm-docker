@@ -74,13 +74,14 @@ def payload_sources(root: Path = ROOT) -> dict[str, Path]:
         *root.iterdir(),
         *(root / "profiles").glob("*.yaml"),
         *(root / "hardware").glob("*.yaml"),
+        *(root / "templates").glob("*.jinja"),
     ]
     for path in sorted(candidates):
         relative = path.relative_to(root)
         if (
             path.is_file()
             and (
-                path.suffix in {".py", ".json", ".yaml", ".txt", ".sh"}
+                path.suffix in {".py", ".json", ".yaml", ".txt", ".sh", ".jinja"}
                 or path.name in {"lil-serve", "lil-entrypoint"}
             )
             and relative.parts[0] not in {"tests", "generated", "__pycache__"}

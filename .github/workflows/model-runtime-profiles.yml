@@ -36,7 +36,7 @@ jobs:
           python-version: '3.12'
       - run: |
           python -m venv .venv-profile-tests
-          .venv-profile-tests/bin/pip install -r runtime/requirements.txt pytest ruff
+          .venv-profile-tests/bin/pip install -r runtime/requirements.txt pytest ruff jinja2
           .venv-profile-tests/bin/python -m pytest -q runtime/tests
           .venv-profile-tests/bin/python -m pytest -q tools/jovian_wheel_runtime/tests/test_runtime_foundation.py tools/jovian_wheel_runtime/tests/test_runtime_dockerfile.py
           .venv-profile-tests/bin/ruff check runtime

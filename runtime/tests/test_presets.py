@@ -12,9 +12,13 @@ from runtime.launcher import ROOT, ConfigError, deployment_presets, resolve
 from runtime.packaging import audit_image_metadata, owned_environment, payload_sources
 
 
-def spark(**kwargs):
+def spark(env=None, **kwargs):
     return resolve(
-        "glm53-flash", "rtx-pro-6000-pcie", preset="glm53-spark-tp2", env={}, **kwargs
+        "glm53-flash",
+        "rtx-pro-6000-pcie",
+        preset="glm53-spark-tp2",
+        env=env or {},
+        **kwargs,
     )
 
 
@@ -24,13 +28,13 @@ def test_spark_overlay_preserves_the_bounded_tp2_memory_recipe():
         "model": "local-inference-lab/GLM-5.3-Flash-NVFP4-Spark",
         "tensor-parallel-size": 2,
         "decode-context-parallel-size": 2,
-        "max-num-seqs": 4,
+        "max-num-seqs": 8,
         "max-num-batched-tokens": 3072,
         "max-model-len": -1,
-        "kv-cache-memory-bytes": 4190109696,
+        "kv-cache-memory-bytes": 4240441344,
         "load-format": "safetensors",
-        "max-cudagraph-capture-size": 16,
-        "cudagraph-capture-sizes": [1, 2, 4, 8, 12, 16],
+        "max-cudagraph-capture-size": 32,
+        "cudagraph-capture-sizes": [1, 2, 4, 8, 12, 16, 20, 24, 28, 32],
     }
     assert {key: plan.values[key] for key in expected} == expected
     assert plan.values["speculative-config"] == {
@@ -51,6 +55,31 @@ def test_spark_overlay_preserves_the_bounded_tp2_memory_recipe():
     )
     assert "--limit-mm-per-prompt" not in plan.argv
     assert plan.values["additional-config"]["kda_prefill_backend"] == "b12x"
+    for name in (
+        "VLLM_GLM53_EMBED_HOST",
+        "VLLM_GLM53_VISION_MXFP8",
+        "VLLM_SHARE_PYNCCL_COMMS",
+    ):
+        assert plan.environment[name] == "1"
+
+
+def test_spark_extra_request_slots_shrink_the_preset_kv_allocation():
+    sixteen = spark(env={"MAX_NUM_SEQS": "16"})
+    assert sixteen.values["max-num-seqs"] == 16
+    assert sixteen.values["kv-cache-memory-bytes"] == 4240441344 - 8 * 67108864
+    assert sixteen.values["max-cudagraph-capture-size"] == 64
+    assert sixteen.origins["kv-cache-memory-bytes"].startswith("derived:")
+    fewer = spark(env={"MAX_NUM_SEQS": "4"})
+    assert fewer.values["kv-cache-memory-bytes"] == 4240441344
+    explicit = spark(env={"MAX_NUM_SEQS": "16", "KV_CACHE_MEMORY_BYTES": "5000000000"})
+    assert explicit.values["kv-cache-memory-bytes"] == 5000000000
+
+
+def test_spark_external_cache_keeps_room_for_its_gpu_buffers():
+    lmcache = spark(argv=["--cache-mode", "lmcache"])
+    assert lmcache.values["kv-cache-memory-bytes"] == 4240441344 - 201326592
+    both = spark(env={"MAX_NUM_SEQS": "16"}, argv=["--cache-mode", "lmcache"])
+    assert both.values["kv-cache-memory-bytes"] == 4240441344 - 8 * 67108864 - 201326592
 
 
 def test_spark_settings_do_not_leak_into_tp4_or_qwen():
@@ -127,7 +156,7 @@ def test_more_request_slots_keep_a_graph_for_every_verifier_batch(seqs, sizes):
     assert plan.values["cudagraph-capture-sizes"] == sizes
 
 
-@pytest.mark.parametrize("mode,input_rows", [("mtp", 4096), ("dflash2", 4124)])
+@pytest.mark.parametrize("mode,input_rows", [("mtp", 4096), ("dflash2", 4096 + 8 * 7)])
 def test_lmcache_target_budget_follows_the_changed_prefill_budget(mode, input_rows):
     plan = spark(
         argv=[
@@ -237,3 +266,84 @@ def test_glm_tp3_preset_rejects_the_external_cache():
             preset="glm53-tp3",
             env={"CACHE_MODE": "lmcache"},
         )
+
+
+SAVINGS = frozenset(
+    {"VLLM_GLM53_EMBED_HOST", "VLLM_GLM53_VISION_MXFP8", "VLLM_SHARE_PYNCCL_COMMS"}
+)
+
+
+def test_spark_keeps_the_four_slot_recipe_on_a_vllm_without_the_memory_savings():
+    current = spark(vllm_environment=SAVINGS | {"VLLM_USE_V2_MODEL_RUNNER"})
+    assert current.values["max-num-seqs"] == 8
+    assert current.values["kv-cache-memory-bytes"] == 4240441344
+    older = spark(vllm_environment=frozenset({"VLLM_USE_V2_MODEL_RUNNER"}))
+    assert older.values["max-num-seqs"] == 4
+    assert older.values["kv-cache-memory-bytes"] == 4190109696
+    assert older.values["cudagraph-capture-sizes"] == [1, 2, 4, 8, 12, 16]
+    assert not SAVINGS & set(older.environment)
+    assert "fallback" in older.origins["kv-cache-memory-bytes"]
+    # Explicit choices still win over the fallback recipe.
+    chosen = spark(
+        env={"MAX_NUM_SEQS": "6", "KV_CACHE_MEMORY_BYTES": "3758096384"},
+        vllm_environment=frozenset(),
+    )
+    assert chosen.values["max-num-seqs"] == 6
+    assert chosen.values["kv-cache-memory-bytes"] == 3758096384
+
+
+def test_installed_vllm_environment_reads_envs_without_importing(tmp_path, monkeypatch):
+    from runtime.launcher import installed_vllm_environment
+
+    package = tmp_path / "vllm"
+    package.mkdir()
+    (package / "__init__.py").write_text("raise RuntimeError('must not import')\n")
+    (package / "envs.py").write_text(
+        'environment_variables = {\n    "VLLM_GLM53_EMBED_HOST": lambda: False,\n}\n'
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    assert installed_vllm_environment() == frozenset({"VLLM_GLM53_EMBED_HOST"})
+
+
+@pytest.mark.parametrize(
+    "oracle,formats,expected",
+    [
+        (
+            '    "b12x": Fp8MoeBackend.B12X_MXFP8,\n',
+            '    MXFP8 = "mxfp8_e8m0_k32"\n',
+            True,
+        ),
+        (
+            '    "marlin": Fp8MoeBackend.MARLIN,\n',
+            '    MXFP8 = "mxfp8_e8m0_k32"\n',
+            False,
+        ),
+        (
+            '    "b12x": Fp8MoeBackend.B12X_MXFP8,\n',
+            '    MXFP4 = "fp4_e8m0_k32"\n',
+            False,
+        ),
+        ('    "b12x": Fp8MoeBackend.B12X_MXFP8,\n', None, False),
+    ],
+)
+def test_installed_b12x_mxfp8_moe_needs_both_packages(
+    tmp_path, monkeypatch, oracle, formats, expected
+):
+    """The MXFP8 drafter stays on b12x only when vLLM maps b12x to its
+    B12X_MXFP8 backend and B12X prepares the MXFP8 source format."""
+    from runtime.launcher import installed_b12x_mxfp8_moe
+
+    vllm_oracle = tmp_path / "vllm/model_executor/layers/fused_moe/oracle"
+    vllm_oracle.mkdir(parents=True)
+    (tmp_path / "vllm/__init__.py").write_text(
+        "raise RuntimeError('must not import')\n"
+    )
+    (vllm_oracle / "mxfp8.py").write_text(oracle)
+    b12x = tmp_path / "b12x"
+    b12x.mkdir()
+    (b12x / "__init__.py").write_text("raise RuntimeError('must not import')\n")
+    if formats is not None:
+        (b12x / "moe/fused_moe").mkdir(parents=True)
+        (b12x / "moe/fused_moe/source.py").write_text(formats)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    assert installed_b12x_mxfp8_moe() is expected

@@ -1,0 +1,13 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-113",
+  "category": "internal",
+  "summary": "The image gate accepts the tuning-winner source rank that current vLLM reports, so canonical images publish again",
+  "models": ["all"],
+  "compatibility": "No user action required.",
+  "details": [
+    "vLLM that fetches B12X winner programs from the tuning rank reports the winning rank alongside the winner. The runtime self-check passed it to B12X's tuning requirement, which has no such field, and the canonical image build failed."
+  ],
+  "pull_requests": [113],
+  "requires": []
+}

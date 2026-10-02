@@ -1,0 +1,13 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-100",
+  "category": "fix",
+  "summary": "Runtime images build again after the RTX PRO TORCH_CUDA_ARCH_LIST change",
+  "models": ["all"],
+  "compatibility": "No user action required.",
+  "details": [
+    "The NGC foundation's TORCH_CUDA_ARCH_LIST is now a platform default re-applied by the launcher, so the RTX PRO 6000 hardware profile can set 12.0a without the image audit rejecting the foundation value. Other hardware keeps the foundation value."
+  ],
+  "pull_requests": [100],
+  "requires": []
+}

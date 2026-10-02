@@ -22,11 +22,11 @@ def test_quack_kernel_dependency_is_locked_and_verified():
     lock = (tool_dir / "ngc-runtime-overlay.lock").read_text()
     verifier = (tool_dir / "verify_qwen38_runtime.py").read_text()
     recipe = (tool_dir / "Dockerfile.runtime").read_text()
-    assert "quack-kernels==0.6.4" in lock
+    assert "quack-kernels==0.6.5" in lock
     assert "torch-c-dlpack-ext==0.1.5" in lock
     assert "e6f9da4bb9af70e27facc777458be62e10dbbbddda7672d16138db0553c5a524" in lock
-    assert "e77c5d1f1299b0b38487fe8737df6c6975daa16bca7f7eb883bd1a74d09e7e78" in lock
-    assert '"quack-kernels": "0.6.4"' in verifier
+    assert "df1ddd31366c82eb9692fe087c671209189dcbde53c909c81a865d4ee66b158d" in lock
+    assert '"quack-kernels": "0.6.5"' in verifier
     assert "import quack" in verifier
     assert "import torch_c_dlpack_ext" in verifier
     assert (
@@ -71,3 +71,17 @@ def test_ngc_runtime_installs_disk_table_build_dependencies():
     )
     for path in ("/var/cache/apt", "/var/lib/apt"):
         assert f"target={path},sharing=locked" in recipe
+
+
+def test_fastokens_backend_is_locked_and_verified():
+    """VLLM_USE_FASTOKENS=1 stops vLLM at tokenizer load unless fastokens is installed."""
+    tool_dir = Path(__file__).resolve().parents[1]
+    inputs = (tool_dir / "qwen38-runtime.in").read_text()
+    lock = (tool_dir / "qwen38-runtime.lock").read_text()
+    verifier = (tool_dir / "verify_qwen38_runtime.py").read_text()
+    assert "fastokens==0.3.2" in inputs
+    assert "fastokens==0.3.2 \\\n    --hash=sha256:" in lock
+    # The cp39-abi3 manylinux_2_17 x86_64 wheel installed in the image.
+    assert "d077e3b0bd04cc3da6d0f6ac9fff7b9ea1ae95c6a08fee5226d77bbc3764911c" in lock
+    assert '"fastokens": "0.3.2"' in verifier
+    assert "verify_fastokens()" in verifier

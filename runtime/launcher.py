@@ -42,6 +42,8 @@ JIT_PATHS = {
     "CUPY_CACHE_DIR": "cupy",
 }
 NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# Chat-template settings with this prefix name a file in ROOT / "templates".
+RUNTIME_TEMPLATE_PREFIX = "runtime:"
 SECRET = re.compile(
     r"api[-_]?key|password|secret|authorization|access[-_]?token|hf_token",
     re.IGNORECASE,
@@ -146,8 +148,26 @@ def deployment_presets() -> dict:
             "modes",
             "linked_options",
         }
-        if set(item) != required:
+        kv_fields = {"kv_bytes_per_extra_slot", "kv_bytes_for_external_cache"}
+        optional = kv_fields | {"vllm_fallback"}
+        if not required <= set(item) <= required | optional:
             raise ConfigError(f"Invalid deployment preset fields: {name}")
+        fallback = item.get("vllm_fallback")
+        if fallback is not None and (
+            not isinstance(fallback, dict)
+            or set(fallback) != {"requires_environment", "options"}
+            or not isinstance(fallback["options"], dict)
+            or not isinstance(fallback["requires_environment"], list)
+            or not all(
+                isinstance(key, str) and key in item["environment"]
+                for key in fallback["requires_environment"]
+            )
+        ):
+            raise ConfigError(f"Invalid preset vllm_fallback: {name}")
+        for field in kv_fields:
+            value = item.get(field, 0)
+            if type(value) is not int or value < 0:
+                raise ConfigError(f"Invalid preset {field}: {name}")
         for key in ("profile", "hardware"):
             if not isinstance(item[key], str) or not re.fullmatch(
                 r"[a-z][a-z0-9-]*", item[key]
@@ -159,6 +179,50 @@ def deployment_presets() -> dict:
         ):
             raise ConfigError(f"Invalid deployment preset values: {name}")
     return presets
+
+
+def installed_source(package: str, relative: str) -> str | None:
+    """Text of a file in an installed package, or None when it is missing.
+
+    The launcher must not import vLLM, B12X or CUDA, so it reads source text.
+    """
+    import importlib.util
+
+    try:
+        spec = importlib.util.find_spec(package)
+    except (ImportError, ValueError):
+        return None
+    if spec is None or not spec.submodule_search_locations:
+        return None
+    for location in spec.submodule_search_locations:
+        path = Path(location) / relative
+        if path.is_file():
+            return path.read_text()
+    return None
+
+
+def installed_vllm_environment() -> frozenset[str] | None:
+    """Environment names the installed vLLM declares, or None without vLLM."""
+    source = installed_source("vllm", "envs.py")
+    if source is None:
+        return None
+    return frozenset(re.findall(r'^    "(VLLM_[A-Z0-9_]+)"', source, re.MULTILINE))
+
+
+def installed_b12x_mxfp8_moe() -> bool:
+    """Whether the installed vLLM and B12X run MXFP8 MoE experts on B12X.
+
+    vLLM maps moe_backend b12x to its B12X_MXFP8 backend (vllm #958) and B12X
+    prepares the mxfp8_e8m0_k32 source format (b12x #453).
+    """
+    oracle = installed_source("vllm", "model_executor/layers/fused_moe/oracle/mxfp8.py")
+    formats = installed_source("b12x", "moe/fused_moe/source.py")
+    return (
+        oracle is not None
+        and "Fp8MoeBackend.B12X_MXFP8" in oracle
+        and formats is not None
+        and '"mxfp8_e8m0_k32"' in formats
+    )
 
 
 def deployment_preset(identifier: str) -> dict:
@@ -307,6 +371,9 @@ class LaunchPlan:
     passthrough: list[str]
     warnings: list[str]
     cache_service: Any = None
+    # Drafter shipped inside the target checkpoint; resolved to a local path
+    # at launch, so printing a configuration never downloads anything.
+    draft_subfolder: str | None = None
 
     def public(self) -> dict:
         # Build public argv from redacted values; never dump the process environment.
@@ -366,6 +433,7 @@ def resolve(
     cli_env: dict[str, str] | None = None,
     runtime_identity: str | None = None,
     preset: str | None = None,
+    vllm_environment: frozenset[str] | None = None,
 ) -> LaunchPlan:
     incoming = dict(os.environ if env is None else env)
     config = config or {}
@@ -388,6 +456,18 @@ def resolve(
     deployment = deployment_preset(preset) if preset else None
     if deployment and deployment["profile"] != identifier:
         raise ConfigError("The deployment preset belongs to a different model profile")
+    fallback_reason = None
+    if deployment and deployment.get("vllm_fallback") and vllm_environment is not None:
+        # A preset that relies on vLLM features newer than the installed vLLM
+        # (for example the same recipe in a channel with an older vLLM) keeps
+        # its previously qualified values instead.
+        fallback = deployment["vllm_fallback"]
+        missing = sorted(set(fallback["requires_environment"]) - vllm_environment)
+        if missing:
+            deployment["options"].update(fallback["options"])
+            for name in fallback["requires_environment"]:
+                deployment["environment"].pop(name, None)
+            fallback_reason = "installed vLLM lacks " + ", ".join(missing)
     if deployment:
         model = copy.deepcopy(model)
         for mode_name, overrides in deployment["modes"].items():
@@ -435,8 +515,11 @@ def resolve(
     for key, value in hw.get("model_environment", {}).get(identifier, {}).items():
         set_env(key, value, f"hardware:{hardware}/{identifier}")
     if deployment:
+        source = f"preset:{preset}"
+        if fallback_reason:
+            source += f" (fallback: {fallback_reason})"
         for key, value in deployment["options"].items():
-            set_value(key, value, f"preset:{preset}")
+            set_value(key, value, source)
         for key, value in deployment["environment"].items():
             set_env(key, value, f"preset:{preset}")
 
@@ -591,6 +674,29 @@ def resolve(
                 raise ConfigError("Preset option dependency is not declared")
             if origins.get(target, "").startswith(("preset:", "model:", "common:")):
                 set_value(target, values[source], f"derived:preset link to {source}")
+        # A preset's fixed KV size is qualified at its own request-slot count.
+        # Each additional slot needs working memory (CUDA graphs up to the
+        # larger verifier-row count, sampler and state buffers), so the KV
+        # allocation shrinks unless the operator set it explicitly.
+        # The external cache connector keeps its own GPU buffers.
+        preset_kv = origins.get("kv-cache-memory-bytes", "").startswith("preset:")
+        per_slot = deployment.get("kv_bytes_per_extra_slot", 0)
+        base_slots = deployment["options"].get("max-num-seqs")
+        reductions = []
+        if per_slot and base_slots and values.get("max-num-seqs", 0) > base_slots:
+            extra = values["max-num-seqs"] - base_slots
+            reductions.append(
+                (extra * per_slot, f"{extra} request slots above the preset")
+            )
+        external = deployment.get("kv_bytes_for_external_cache", 0)
+        if external and values.get("cache-mode", "vram") != "vram":
+            reductions.append((external, "external cache buffers"))
+        if preset_kv and reductions:
+            derive(
+                "kv-cache-memory-bytes",
+                values["kv-cache-memory-bytes"] - sum(size for size, _ in reductions),
+                "; ".join(reason for _, reason in reductions),
+            )
 
     # A repository-specific code revision must not leak to an operator's model.
     if (
@@ -610,6 +716,15 @@ def resolve(
             "code-revision",
             values["revision"],
             "remote code follows selected checkpoint",
+        )
+
+    if identifier == "mimo26-flash" and "max-num-scheduled-tokens" not in values:
+        # Qualified MiMo split: half of each step's rows for target tokens,
+        # the rest for DFlash verification rows (vllm #881: 4096 / 2048).
+        derive(
+            "max-num-scheduled-tokens",
+            values["max-num-batched-tokens"] // 2,
+            "MiMo target share of the step",
         )
 
     if identifier == "qwen38-flash-next":
@@ -652,6 +767,44 @@ def resolve(
                 f"Qwen3.8 YaRN for {context_length} tokens",
             )
 
+    replicas = values["replicas"]
+    ple_copy_per_replica = False
+    if replicas < 1:
+        raise ConfigError("replicas must be at least 1")
+    if replicas > 1:
+        for key in (
+            "tensor-parallel-size",
+            "pipeline-parallel-size",
+            "decode-context-parallel-size",
+            "data-parallel-size",
+        ):
+            if values.get(key, 1) != 1:
+                raise ConfigError(
+                    f"replicas runs independent single-GPU servers; {key} must be 1, "
+                    f"got {values[key]}"
+                )
+        # One host-RAM PLE table serves every replica instead of one each; a
+        # vLLM without shared tables keeps a copy per replica.
+        if (
+            identifier == "qwen38-flash-next"
+            and environment.get("VLLM_PLE_CPU_OFFLOAD") == "1"
+            and "VLLM_PLE_TABLE_MEMORY" not in explicit_env
+        ):
+            ple_copy_per_replica = (
+                vllm_environment is not None
+                and "VLLM_PLE_SHARED_TABLE_DIR" not in vllm_environment
+            )
+            if not ple_copy_per_replica:
+                from runtime.replicas import PLE_SHARED_DIRECTORY
+
+                set_env("VLLM_PLE_TABLE_MEMORY", "shared", "derived:replicas")
+                if "VLLM_PLE_SHARED_TABLE_DIR" not in explicit_env:
+                    set_env(
+                        "VLLM_PLE_SHARED_TABLE_DIR",
+                        PLE_SHARED_DIRECTORY,
+                        "derived:replicas",
+                    )
+
     if explicit_env.get("EXTRA_VLLM_ARGS"):
         raise ConfigError(
             "EXTRA_VLLM_ARGS is ambiguous shell text; pass native CLI arguments after --"
@@ -685,6 +838,7 @@ def resolve(
     ):
         derive("mode", "mtp", "positive MTP depth")
     mode = values["mode"]
+    draft_subfolder = None
     if mode not in model["modes"]:
         raise ConfigError(f"{identifier} does not define mode {mode}")
     if "speculative-config" not in values:
@@ -707,10 +861,15 @@ def resolve(
                         "adaptive-verification-cost-scale"
                     ],
                 )
+            elif identifier == "mimo26-flash":
+                spec["draft_tensor_parallel_size"] = values["tensor-parallel-size"]
             elif identifier.startswith("ds4-") and mode == "dspark":
                 spec["model"] = values["model"]
             if "draft-model" in values:
                 spec["model"] = values["draft-model"]
+            elif model["modes"][mode].get("draft_subfolder"):
+                draft_subfolder = model["modes"][mode]["draft_subfolder"]
+                spec["model"] = f"{values['model']}/{draft_subfolder}"
             if "draft-revision" in values:
                 spec["revision"] = values["draft-revision"]
             elif mode in {"mtp", "dspark"} and "revision" in values:
@@ -842,6 +1001,11 @@ def resolve(
         warnings.append(
             "Unmanaged native options are forwarded to vLLM; their values are not validated by the profile schema."
         )
+    if replicas > 1 and identifier == "qwen38-flash-next" and ple_copy_per_replica:
+        warnings.append(
+            "The installed vLLM cannot share the PLE table, so every replica keeps "
+            "its own host-RAM copy (about 27 GiB each)."
+        )
     from runtime.cache import configure as configure_cache
 
     if (
@@ -877,7 +1041,143 @@ def resolve(
         passthrough,
         warnings,
         cache_service,
+        draft_subfolder,
     )
+
+
+def resolve_draft_subfolder(plan: LaunchPlan) -> None:
+    """Point the speculative config at the drafter inside the target checkpoint."""
+    if not plan.draft_subfolder or "speculative-config" not in plan.values:
+        return
+    target = plan.values["model"]
+    if Path(target).is_dir():
+        root = Path(target)
+    else:
+        from huggingface_hub import snapshot_download
+        from huggingface_hub.errors import LocalEntryNotFoundError
+
+        # Fetches only the drafter's files; vLLM downloads the target itself.
+        # A cached snapshot is used as is, which also works offline.
+        options = {
+            "revision": plan.values.get("revision"),
+            "allow_patterns": [f"{plan.draft_subfolder}/*"],
+        }
+        try:
+            root = Path(snapshot_download(target, local_files_only=True, **options))
+        except LocalEntryNotFoundError:
+            root = None
+        if root is None or not (root / plan.draft_subfolder / "config.json").is_file():
+            root = Path(snapshot_download(target, **options))
+    draft = root / plan.draft_subfolder
+    if not (draft / "config.json").is_file():
+        raise ConfigError(f"Drafter config not found: {draft}/config.json")
+    plan.values["speculative-config"]["model"] = str(draft)
+    plan.argv = make_argv(plan.values, plan.passthrough)
+
+
+def mtp_expert_formats(model: str, revision: str | None) -> set[str]:
+    """Quantization formats of the MTP experts named by a ModelOpt checkpoint.
+
+    Empty when the checkpoint has no hf_quant_config.json, it cannot be read,
+    or it does not list the MTP experts.
+    """
+    path = Path(model) / "hf_quant_config.json"
+    if not Path(model).is_dir():
+        from huggingface_hub import hf_hub_download
+
+        # One small file; a cached snapshot is used as is, also offline.
+        try:
+            path = Path(
+                hf_hub_download(
+                    model,
+                    "hf_quant_config.json",
+                    revision=revision,
+                    local_files_only=True,
+                )
+            )
+        except OSError:
+            try:
+                path = Path(
+                    hf_hub_download(model, "hf_quant_config.json", revision=revision)
+                )
+            except OSError:
+                return set()
+    try:
+        config = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return set()
+    # Local Inference Lab exports list quantized_layers at the top level;
+    # ModelOpt nests them under "quantization".
+    layers = (
+        config.get("quantized_layers")
+        or (config.get("quantization") or {}).get("quantized_layers")
+        or {}
+    )
+    return {
+        str(entry.get("quant_algo"))
+        for name, entry in layers.items()
+        if name.startswith("mtp.") and name.endswith(".experts")
+    }
+
+
+def resolve_draft_moe_backend(plan: LaunchPlan) -> None:
+    """Let vLLM choose the MoE backend of a profile's MTP drafter when b12x cannot run it.
+
+    Profiles run MTP drafter experts on b12x, which takes NVFP4 and MXFP4
+    experts, and MXFP8 experts (the Qwen3.8 QAD exports) when the installed
+    vLLM and B12X have the MXFP8 path. A checkpoint revision with other MTP
+    experts would fail to load. The drafter then gets "auto"; without a
+    backend it would inherit the target's --moe-backend b12x. vLLM's choice
+    (Marlin for MXFP8) runs them. An explicit speculative-config is kept.
+    """
+    spec = plan.values.get("speculative-config")
+    if (
+        not spec
+        or spec.get("method") != "mtp"
+        or spec.get("moe_backend") != "b12x"
+        or not plan.origins["speculative-config"].startswith("derived:")
+    ):
+        return
+    # The drafter's own checkpoint when one is set (--draft-model), else the target.
+    drafter = spec.get("model") or plan.values["model"]
+    formats = mtp_expert_formats(drafter, spec.get("revision"))
+    supported = ("NVFP4", "MXFP4")
+    if any("MXFP8" in name for name in formats) and installed_b12x_mxfp8_moe():
+        supported += ("MXFP8",)
+    unsupported = sorted(
+        name for name in formats if not any(kind in name for kind in supported)
+    )
+    if not unsupported:
+        return
+    spec["moe_backend"] = "auto"
+    plan.argv = make_argv(plan.values, plan.passthrough)
+    print(
+        f"MTP drafter experts are {', '.join(unsupported)}, which b12x does not "
+        "run; the drafter's MoE backend is auto",
+        file=sys.stderr,
+    )
+
+
+def chat_template_path(value: str) -> str | None:
+    """Resolve a chat-template setting to vLLM's --chat-template value.
+
+    ``checkpoint`` keeps the template shipped with the model (no option), and
+    ``runtime:NAME`` names a template installed with these profiles. Any other
+    value is a path or template text for vLLM.
+    """
+    if value == "checkpoint":
+        return None
+    if not value.startswith(RUNTIME_TEMPLATE_PREFIX):
+        return value
+    name = value[len(RUNTIME_TEMPLATE_PREFIX) :]
+    path = ROOT / name
+    if (
+        Path(name).is_absolute()
+        or path.resolve().parent != (ROOT / "templates").resolve()
+        or not path.is_file()
+    ):
+        raise ConfigError(f"Unknown runtime chat template: {value}")
+    return str(path)
 
 
 def make_argv(values: dict, passthrough: list[str]) -> list[str]:
@@ -892,6 +1192,10 @@ def make_argv(values: dict, passthrough: list[str]) -> list[str]:
     for key, value in sorted(values.items()):
         if key == "model" or specs.get(key, {}).get("control"):
             continue
+        if key == "chat-template":
+            value = chat_template_path(value)
+            if value is None:
+                continue
         if isinstance(value, bool):
             command.append("--" + ("" if value else "no-") + key)
         elif isinstance(value, dict):
@@ -929,6 +1233,9 @@ def validate(values: dict, environment: dict, identifier: str) -> None:
     supported_kv = {"fp8", "fp8_e4m3"}
     if identifier == "glm53-flash":
         supported_kv.add("nvfp4_ds_mla")
+    if identifier == "mimo26-flash":
+        # vllm #882 qualified the exact BF16 cache (half the FP8 capacity).
+        supported_kv.add("bfloat16")
     if values["kv-cache-dtype"] not in supported_kv:
         raise ConfigError(
             f"{identifier} supports target KV settings {sorted(supported_kv)}; other precisions require separate qualification"
@@ -1076,6 +1383,29 @@ def execute(plan: LaunchPlan, contract_path: Path) -> None:
     if environment.get("NCCL_GRAPH_FILE") == "":
         environment.pop("NCCL_GRAPH_FILE")
     environment.update(plan.environment)
+    resolve_draft_subfolder(plan)
+    resolve_draft_moe_backend(plan)
+    if plan.values["replicas"] > 1:
+        from runtime import replicas
+
+        helper = ROOT / "checkpoint_identity.py"
+        if plan.cache_service:
+            from runtime.cache import resolve_identity, verify_installed_transfer
+
+            verify_installed_transfer(plan)
+            if not helper.is_file():
+                raise ConfigError(
+                    "The image must package its source-locked checkpoint identity helper"
+                )
+            resolve_identity(plan, contract, helper)
+        if (
+            environment.get("VLLM_PLE_TABLE_MEMORY") == "shared"
+            and "VLLM_PLE_SHARED_TABLE_IDENTITY" not in environment
+        ):
+            environment["VLLM_PLE_SHARED_TABLE_IDENTITY"] = (
+                replicas.checkpoint_identity(plan, helper)
+            )
+        raise SystemExit(replicas.run(plan, environment, contract.get("bootstrap", [])))
     if plan.cache_service:
         from runtime.cache import resolve_identity, verify_installed_transfer
         from runtime.supervisor import supervise
@@ -1106,7 +1436,7 @@ def main() -> int:
     parser.add_argument(
         "--profile",
         default=os.environ.get("PROFILE"),
-        help="Model profile (or PROFILE): glm53-flash, qwen38-flash-next, ds4-flash, ds4-vision, ds41-flash",
+        help="Model profile (or PROFILE): glm53-flash, qwen38-flash-next, ds4-flash, ds4-vision, ds41-flash, mimo26-flash",
     )
     parser.add_argument("--hardware", default=os.environ.get("HARDWARE_PROFILE"))
     parser.add_argument(
@@ -1150,6 +1480,9 @@ def main() -> int:
             cli_env=explicit_env,
             runtime_identity=runtime_identity,
             preset=args.preset,
+            # Inside an image, check the installed vLLM; a CPU-only
+            # --print-config outside one resolves the preset as written.
+            vllm_environment=installed_vllm_environment() if contract else None,
         )
         if args.print_config:
             public = plan.public()

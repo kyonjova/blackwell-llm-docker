@@ -55,6 +55,7 @@ rich-toolkit==0.20.5
 rignore==0.8.1
 sentry-sdk==2.69.1
 websockets==17.1
+fastokens==0.3.2
 fastrlock==0.8.3
 frozenlist==1.8.0
 google-api-core==2.34.0
@@ -103,11 +104,11 @@ ninja==1.13.0
 numba==0.65.0
 nvidia-cuda-nvdisasm==13.3.73
 nvidia-cudnn-frontend==1.27.0
-nvidia-cutlass-dsl==4.6.2
-nvidia-cutlass-dsl-libs-base==4.6.2
-nvidia-cutlass-dsl-libs-core==4.6.2
-nvidia-cutlass-dsl-libs-cu12==4.6.2
-nvidia-cutlass-dsl-libs-cu13==4.6.2
+nvidia-cutlass-dsl==4.7.1
+nvidia-cutlass-dsl-libs-base==4.7.1
+nvidia-cutlass-dsl-libs-core==4.7.1
+nvidia-cutlass-dsl-libs-cu12==4.7.1
+nvidia-cutlass-dsl-libs-cu13==4.7.1
 nvidia-ml-py==13.610.43
 nvidia-modelopt==0.46.1
 nvtx==0.2.15

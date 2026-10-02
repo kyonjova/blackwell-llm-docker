@@ -1,0 +1,16 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-108",
+  "category": "fix",
+  "summary": "lil-bench shows p2pmark on every run and no longer reports idle GPUs speeding up their PCIe link as a PCIe recovery",
+  "models": ["all"],
+  "compatibility": "Rerun lil-bench in the new image; results uploaded earlier keep their old warnings. p2pmark now always leaves 256 MiB free on every GPU, so on nearly full GPUs it measures GPU-to-GPU bandwidth and latency without the NCCL all-reduce comparison.",
+  "details": [
+    "After the first lil-bench run the vLLM server keeps about 600 MiB more memory on each GPU, so later runs had no room for p2pmark and skipped it. They now reuse the p2pmark result of an earlier run on the same GPUs, driver and P2P settings since the last boot, marked as reused; without one, the skip says how much memory is missing and what to do.",
+    "p2pmark starts only while the server has no requests, keeps 256 MiB free on every GPU for it, and is stopped within a fraction of a second if a request arrives or a GPU runs low on memory.",
+    "An idle GPU link that speeds up from Gen1 when the load starts is no longer reported as a PCIe recovery or a marginal link, riser or cable. Other link retraining, replays, correctable errors and links that drop below their full speed under load are still reported.",
+    "Decode cells above --max-num-seqs, such as C16 with --max-num-seqs 8, now say that the server runs at most that many requests at once and that this is expected for the configuration."
+  ],
+  "pull_requests": [108],
+  "requires": []
+}

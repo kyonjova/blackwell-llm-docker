@@ -361,6 +361,14 @@ A chat request can override the reasoning default with
 chat template selects `max`. Direct `vllm serve` commands bypass this launcher's
 defaults and must provide the option themselves.
 
+The launcher also serves `runtime/templates/glm53-flash.jinja` as
+`--chat-template`. It is the checkpoint's template except that assistant
+content is rendered as generated instead of `content.strip()`. With the vLLM
+GLM parser returning reasoning and content with their generated whitespace,
+the previous assistant turn re-renders to the tokens the model produced, so
+the next request reuses the response checkpoint rather than recomputing the
+response. `CHAT_TEMPLATE=checkpoint` selects the checkpoint's template.
+
 The `clear_thinking=false` agent profile follows the
 [model author's preserved-thinking guidance](https://docs.z.ai/guides/capabilities/thinking-mode#preserved-thinking).
 Clients must return the complete, ordered assistant reasoning with the message

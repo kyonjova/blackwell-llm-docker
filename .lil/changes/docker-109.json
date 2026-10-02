@@ -1,0 +1,13 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-109",
+  "category": "feature",
+  "summary": "The image includes the fastokens tokenizer backend, enabled with VLLM_USE_FASTOKENS=1",
+  "models": ["all"],
+  "compatibility": "No user action required.",
+  "details": [
+    "fastokens 0.3.2 is off by default. With -e VLLM_USE_FASTOKENS=1, vLLM tokenizes a 300K-token agent conversation in 27 ms instead of 450 ms on an EPYC 9575F, which shortens time to first token for long prompts; -e VLLM_USE_FASTOKENS=0 or leaving it unset keeps the standard backend.",
+    "No profile enables it yet: token IDs matched the standard backend on real multilingual text, code, chat conversations and 1M-token prompts, but not on every input. The Tokenizer backend section of runtime/README.md lists the differences."
+  ],
+  "pull_requests": [109]
+}

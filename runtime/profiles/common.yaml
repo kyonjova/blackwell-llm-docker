@@ -34,6 +34,7 @@ defaults:
   enable-chunked-prefill: true
   enable-auto-tool-choice: true
   cache-mode: vram
+  replicas: 1
 environment:
   # Checkpoints and saved credentials must not inherit the runtime-keyed JIT root.
   HF_HOME: /root/.cache/huggingface
@@ -43,3 +44,6 @@ environment:
   SAFETENSORS_FAST_GPU: "1"
   INSTANTTENSOR_BACKEND: BUFFERED
   PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+  # Rust tokenizer backend: long prompts tokenize ~17x faster (runtime README,
+  # "Tokenizer backend"); 0 restores the standard backend.
+  VLLM_USE_FASTOKENS: "1"

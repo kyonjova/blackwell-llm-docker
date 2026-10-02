@@ -1,0 +1,23 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-117",
+  "category": "feature",
+  "summary": "REPLICAS=N runs one single-GPU server per GPU behind one endpoint that keeps each conversation on its replica",
+  "models": [
+    "all"
+  ],
+  "compatibility": "No user action required; the default stays one server (REPLICAS=1). Opt in with REPLICAS=2 or PRESET=qwen38-tp1x2. TP, DCP and pipeline parallelism must be 1 in this mode.",
+  "details": [
+    "Each replica is a complete TP1 server on its own GPU. A proxy on the public port sends the next turn of a conversation to the replica that served the previous one, so its prefix cache and recurrent checkpoints are reused, and spreads new conversations over the least busy replica. /health and /metrics cover all replicas.",
+    "With CACHE_MODE=lmcache all replicas use one LMCache service. Qwen3.8-Flash-Next replicas share one host-RAM copy of the 26.8 GiB PLE table when the image's vLLM supports it (vllm-961), otherwise each keeps its own.",
+    "When one replica stops, the container stops, so --restart on-failure restarts all of them.",
+    "On two PCIe RTX PRO 6000 Max-Q GPUs, awsdl measured 12-20% more decode throughput than TP2 at 8-16 concurrent requests. On two RTX PRO 6000 Server Edition GPUs it matched TP2 at 8 requests, was 2% ahead at 16 and 22% slower for a single request. Suggested by awsdl (carrion256), who runs this setup."
+  ],
+  "authors": [
+    "voipmonitor"
+  ],
+  "pull_requests": [
+    117
+  ],
+  "requires": []
+}

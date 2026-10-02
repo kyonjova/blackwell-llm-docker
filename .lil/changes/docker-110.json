@@ -1,0 +1,14 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-110",
+  "category": "fix",
+  "summary": "GLM-5.3-Flash reuses the cached previous answer in multi-turn chats when that answer ends in whitespace",
+  "models": ["GLM-5.3-Flash"],
+  "compatibility": "The GLM profile now passes --chat-template with the runtime's copy of the official GLM-5.3 template, changed only to render assistant content as generated instead of stripped. CHAT_TEMPLATE=checkpoint restores the checkpoint's template; any other CHAT_TEMPLATE value, or --chat-template, is passed to vLLM.",
+  "details": [
+    "The checkpoint's template renders a previous answer with content.strip(). An answer the model ended with a newline, for example after a code block, no longer matched the generated tokens, so the next request recomputed the whole previous response: ktsaou measured 6,026 instead of 7,848 of 7,853 prompt tokens reused.",
+    "Answers without leading or trailing whitespace render exactly as before. When whitespace is present, the history now holds exactly the tokens the model produced."
+  ],
+  "pull_requests": [110],
+  "requires": ["vllm-932"]
+}

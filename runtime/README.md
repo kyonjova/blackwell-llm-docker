@@ -25,6 +25,17 @@ With no profile or command the container prints help, not an implicit model.
 Explicit commands such as `python`, `bash` or `vllm serve` retain the ABI
 bootstrap and bypass profile defaults.
 
+Restarts: when the engine fails (for example a CUDA out-of-memory error on one
+GPU), the server stops within about a second and the container exits with status
+1. The generated Compose files use `restart: on-failure`, and the `docker run -d`
+examples below pass `--restart on-failure`, so Docker starts the server again.
+A container you stop yourself, or one that fails within 10 seconds of starting
+(a configuration error), is not restarted. Use `unless-stopped` to also start the
+server after a host reboot. The generated Compose files also set
+`stop_grace_period: 60s`, so an external cache has time to write its
+checkpoints when the container stops; a container without one still stops in
+seconds.
+
 Profiles keep downloaded checkpoints and saved HF credentials in
 `/root/.cache/huggingface` (`HF_HOME`), independently of the runtime-keyed JIT
 cache under `/cache/jit`. Updating an image therefore does not move the model
@@ -40,23 +51,46 @@ hardware or replace GLM TP4 defaults.
 
 ```bash
 docker run -d --name glm-spark-tp2 --init --gpus '"device=0,1"' \
-  --network host --ipc host --shm-size 32g \
+  --restart on-failure --network host --ipc host --shm-size 32g \
   --ulimit memlock=-1 --ulimit stack=67108864:67108864 \
   -v model-cache:/root/.cache/huggingface -v glm-spark-runtime:/cache \
   -e PRESET=glm53-spark-tp2 -e PORT=8000 "$LIL_IMAGE"
 ```
 
-This selects TP2/DCP2, MTP3 with B12X draft experts, four request slots, a
-3,072-token prefill budget, 3,996 MiB fixed KV per rank and sparse full/piecewise
-captures through 16 verifier rows. The allocator uses 12 MiB large segments;
-NCCL uses two channels and 1 MiB buffers. No image-count limit is imposed.
-Only this bounded configuration is qualified; other slot, context or speculation
-choices may need less KV memory. Long mixed vision/text traffic can still cause
-allocator retries with this tight memory budget.
+This selects TP2/DCP2, MTP3 with B12X draft experts, eight request slots, a
+3,072-token prefill budget, 4,044 MiB fixed KV per rank (about 1.02M tokens)
+and sparse full/piecewise captures through 32 verifier rows. To make room for
+the KV cache, the input embedding table lives in pinned host RAM (0.59 GiB per
+GPU, read row by row over PCIe), the vision tower runs in MXFP8 (0.24 GiB) and
+the TP, DCP and EP groups share one NCCL communicator (74 MiB). Decode speed is
+unchanged; long prefills are 1-3% slower. The allocator uses 12 MiB large
+segments; NCCL uses two channels and 1 MiB buffers. No image-count limit is
+imposed.
 
-- CPU/disk LMCache: add `-e CACHE_MODE=lmcache`. GPU-only cache is the default.
-  Text recurrent checkpoints can be restored externally; vision requests
-  recompute. LMCache retains fewer KV tokens than the GPU-only configuration.
+- Sixteen request slots: add `-e MAX_NUM_SEQS=16`. Each slot above eight takes
+  64 MiB from the KV allocation for larger CUDA graphs and buffers, so 16 slots
+  keep 3,532 MiB per rank. An explicit `KV_CACHE_MEMORY_BYTES` is used as given.
+  With LMCache enabled, the launcher keeps a further 192 MiB for its buffers
+  (3,852 MiB per rank, about 860K tokens, at eight slots).
+- Qualified worst case at eight slots: ten minutes of eight concurrent streams
+  mixing 1K-168K-token prompts, one to ten images per request up to 6000x4000,
+  and 64-1,024-token outputs. The PyTorch allocator never had to free its cache
+  to retry an allocation while serving, and about 0.4 GiB (VRAM cache) or
+  0.6 GiB (LMCache) stayed free at the peak. The earlier 4,556 MiB left 5 MiB free
+  and retried 15 times under the same mix. A larger explicit KV size, more
+  slots than 16, or a desktop session on the same GPUs reduces that margin.
+- Images whose vLLM predates these memory savings (checked in the installed
+  `vllm/envs.py` at launch) keep the earlier four-slot recipe with 3,996 MiB
+  of KV per rank.
+- BF16 vision tower or GPU-resident embeddings: add
+  `-e VLLM_GLM53_VISION_MXFP8=0` or `-e VLLM_GLM53_EMBED_HOST=0` and lower
+  `KV_CACHE_MEMORY_BYTES` by 0.24 GiB or 0.59 GiB respectively.
+- CPU/disk LMCache: add `-e CACHE_MODE=lmcache` and `--stop-timeout 60`.
+  GPU-only cache is the default.
+  The connector's GPU buffers take 192 MiB from the preset KV allocation
+  (about 1.0M tokens at eight slots, 0.86M at sixteen).
+  Text and image recurrent checkpoints can be restored externally. LMCache
+  retains fewer KV tokens than the GPU-only configuration.
 - Smaller KV allocation: add `-e KV_CACHE_MEMORY_BYTES=3758096384` for 3.5 GiB.
 - Change serving choices with the same `SPECULATOR`, `MTP_DEPTH`, `TP`, `DCP`,
   `MAX_NUM_SEQS`, and `MAX_NUM_BATCHED_TOKENS` controls as other profiles.
@@ -65,6 +99,8 @@ allocator retries with this tight memory budget.
 - Native form: `lil-serve --preset glm53-spark-tp2 -- --port 8000`.
 - Qwen TP2: `PRESET=qwen38-tp2`; CPU PLE placement and MTP defaults still come
   from the Qwen model profile. `PROFILE=qwen38-flash-next TP=2` is equivalent.
+- Qwen as two TP1 replicas: `PRESET=qwen38-tp1x2` runs one complete server per
+  GPU behind one endpoint, see [Replicas](#replicas-several-tp1-servers-behind-one-endpoint).
 - GLM on three GPUs: `PRESET=glm53-tp3` (TP3 with expert parallelism, MTP3,
   eight request slots). MLA and KDA heads are padded to divide by three with
   zero weights, the vision tower runs data-parallel, and the large dense
@@ -72,6 +108,19 @@ allocator retries with this tight memory budget.
   The external cache (`CACHE_MODE=lmcache`) is not available at TP3; the VRAM
   prefix cache is. The first start tunes FlashInfer MoE kernels and stores the
   result under `/cache`.
+- MiMo-V2.6-Flash on two GPUs: `PRESET=mimo26-flash-tp2` serves
+  `XiaomiMiMo/MiMo-V2.6-Flash-RL` (FP8 weights, text, images and audio) on
+  b12x with the checkpoint's own DFlash drafter: seven draft tokens, adaptive
+  verification, drafts sharded across both GPUs. The FP8 KV cache holds about
+  1.31M tokens, enough for the full 1M context. Video input is off at TP2,
+  because vLLM would reserve about 6 GiB per GPU for a maximum-size video.
+  `PROFILE=mimo26-flash` is the four-GPU default and keeps video. The profile
+  pins checkpoint revision `5711b268`, because older snapshots ship an invalid
+  `dflash/config.json`. The drafter is read from the `dflash/` folder of that
+  snapshot. Sampling defaults to temperature 1.0, top_p 0.95; top_p 1.0 makes
+  the model ramble. `KV_CACHE_DTYPE=bfloat16` selects the exact BF16 cache at
+  half the capacity. The first start autotunes b12x kernels for about 15
+  minutes and stores the result under `/cache`.
 
 For Qwen, the `rtx-pro-6000-pcie` hardware profile keeps residual-mixing
 projections replicated on each GPU (`VLLM_QWEN3_8_FLASH_NEXT_HC_TP=0`). This
@@ -89,7 +138,7 @@ settings; use it only when the selected checkpoint needs different RoPE values.
 
 ```bash
 docker run -d --name qwen38-yarn512k --init --gpus '"device=0,1"' \
-  --network host --ipc host --shm-size 32g \
+  --restart on-failure --network host --ipc host --shm-size 32g \
   -v model-cache:/root/.cache/huggingface -v qwen38-runtime:/cache \
   -e PRESET=qwen38-tp2 -e MAX_MODEL_LEN=524288 -e PORT=8000 \
   ghcr.io/local-inference-lab/vllm:karmic-kraken-beta
@@ -194,6 +243,16 @@ request sampling remains authoritative. GLM retains `reasoning_effort=high`
 and `clear_thinking=false`. No profile changes target weight or KV precision
 to manufacture a speedup.
 
+GLM serves `runtime/templates/glm53-flash.jinja`: the checkpoint's chat
+template with assistant answers rendered exactly as the model generated them.
+The checkpoint's template trims whitespace from a previous answer, so an answer
+that ended in a newline no longer matched the tokens the model produced, and
+the next turn recomputed the whole previous response instead of reusing its
+cached state (in one measured two-turn chat, 77% instead of 99.9% of the prompt
+was reused). Answers without surrounding whitespace render exactly as before.
+`-e CHAT_TEMPLATE=checkpoint` restores the checkpoint's template, and any other
+value is passed to vLLM as `--chat-template`.
+
 The GLM attention page, recurrent checkpoint spacing, and external transfer
 object are different dimensions. The GPU profile uses 2,048-token target
 pages. Aligned-256 requires both recurrent storage spacing and lookup policy:
@@ -208,6 +267,47 @@ python -m runtime.launcher --profile glm53-flash --print-config -- \
 Request boundaries remain the GLM default. No image-limit-one override is
 introduced for Vision; its native multimodal count and encoder-budget rules
 remain separate from the text scheduler budget.
+
+## Tokenizer backend
+
+The image includes [fastokens](https://github.com/crusoecloud/fastokens) 0.3.2,
+a Rust implementation of the Hugging Face `tokenizers` backend, and every
+profile enables it (`VLLM_USE_FASTOKENS=1`): vLLM loads its Hugging Face
+tokenizers through fastokens, so prompts are tokenized and output is detokenized
+by fastokens, while tokenizer classes, chat templates and the reasoning and tool
+parsers stay the same. Set `-e VLLM_USE_FASTOKENS=0` to go back to the standard
+backend. With fastokens enabled the log shows `[fastokens] patch_transformers:
+successfully patched transformers`.
+
+vLLM tokenizes the whole prompt on every request before prefill starts, also
+when the prefix cache already holds it, so this time adds directly to time to
+first token in long agent conversations. On an EPYC 9575F a 300K-token agent
+conversation took 450 ms with the standard backend and 27 ms with fastokens
+(1M tokens: 1.5 s and 85 ms). fastokens spreads one long prompt over CPU
+threads; restricted to a single CPU it still took only 58 ms (1M tokens:
+180 ms). A slower CPU takes proportionally longer with either backend.
+
+Both backends gave identical token IDs, decoded text and streamed output for
+every profile's tokenizer on multilingual text, code, chat conversations with
+tools and reasoning, and prompts of up to 1M tokens. They differ in these rare
+cases; set `VLLM_USE_FASTOKENS=0` if one of them matters for your clients:
+
+- fastokens reuses the regular-expression splits of the previous prompt on the
+  same thread when two prompts without special tokens share at least 4 KiB. When
+  the new prompt continues differently right after whitespace, it can be split
+  differently (GLM, Qwen, MiMo). vLLM's rotating pool of tokenizer copies
+  prevented this in every serving-path test, and chat prompts contain special
+  tokens, which disable the reuse.
+- Qwen3.8 and MiMo normalize text to NFC. fastokens uses Unicode 17 data for
+  this, the standard backend older data, so combining marks added in Unicode 10
+  or later (128 code points, for example U+0898-U+089F) next to other combining
+  marks can be tokenized differently.
+- DeepSeek: U+180E MONGOLIAN VOWEL SEPARATOR next to a space is tokenized
+  differently. fastokens also counts added tokens in the tokenizer's vocabulary
+  size; vLLM (vllm #934) derives the largest valid prompt token ID so that ID
+  129280, one past the DeepSeek vocabulary, is still rejected.
+- Character offsets are not available, so `return_token_offsets` on the render
+  endpoints enabled by `--enable-scale-out` fails.
 
 ## Interface and precedence
 
@@ -340,6 +440,73 @@ overrides a preset selecting `none`. Raw commands intentionally bypass profile
 resolution; use the generated native environment or set their NCCL policy
 explicitly. Both interfaces retain the CUDA/NCCL ABI bootstrap.
 
+## Replicas: several TP1 servers behind one endpoint
+
+`REPLICAS=N` (or `replicas: N` in a settings file, or the `qwen38-tp1x2`
+preset) runs N complete single-GPU servers in the container, one per visible
+GPU, instead of one server split across GPUs:
+
+```bash
+docker run -d --name qwen38-tp1x2 --restart on-failure --init \
+  --gpus '"device=0,1"' --network host --ipc host \
+  -v /root/.cache/huggingface:/root/.cache/huggingface -v lil-cache:/cache \
+  -e PRESET=qwen38-tp1x2 -e PORT=8000 "$LIL_IMAGE"
+```
+
+- Each replica gets one GPU, in `CUDA_VISIBLE_DEVICES` order, and a loopback
+  port. Every option applies per replica, so `MAX_NUM_SEQS` and the KV size are
+  per GPU. `TP`, `DCP` and pipeline parallelism must stay 1.
+- The public port is a proxy. It records which replica served each request's
+  whole history (chat, messages or Responses input, or a completion prompt).
+  The next turn of a conversation extends that history, so it goes to the same
+  replica, and its prefix cache and recurrent checkpoints stay on one GPU.
+  First turns, and identical prompts sent side by side, go to the replica with
+  the fewest requests in flight. Responses follow-ups with
+  `previous_response_id` go to the replica that produced the previous response,
+  and requests with the same `X-LIL-Affinity` header value share a replica.
+  Other requests, such as `/v1/models`, go to replica 0.
+- `/health` returns 200 once every replica is ready, and `/metrics` carries
+  each replica's metrics with a `replica` label.
+- With `CACHE_MODE=lmcache`, all replicas use one LMCache service.
+- Qwen3.8-Flash-Next keeps one host-RAM copy of its 26.8 GiB PLE table for
+  all replicas (`VLLM_PLE_TABLE_MEMORY=shared` under `/dev/shm/lil-ple`, keyed
+  by the checkpoint content). The first replica loads it while the others
+  wait, then they map it. With `--ipc host` the table outlives the container,
+  so the next start maps it instead of loading it; it uses host RAM until
+  removed. `docker exec <container> python -m
+  vllm.models.qwen4_exp.nvidia.ple_shared_table list` shows the tables and
+  `prune --keep <key>` removes the others.
+- When a replica or the proxy exits, the others stop and the container exits,
+  so `--restart on-failure` restarts all of them.
+- Benchmark through the proxy: `lil-bench --url http://127.0.0.1:<PORT>`.
+
+Two TP1 replicas avoid the cross-GPU communication of every TP2 layer and keep
+separate KV caches; a single request still gets only one GPU. How much that
+pays depends on what TP2 communication costs on the host. On two PCIe RTX PRO
+6000 Max-Q GPUs, awsdl measured 12-20% more decode throughput than TP2 at 8-16
+concurrent requests, with the same single-request speed. On two PCIe RTX PRO
+6000 Server Edition GPUs (MTP, no context, two runs each), two replicas matched
+TP2 at 8 requests (1016 vs 1012 tok/s), were 2% ahead at 16 (1531 vs 1497) and
+22% slower for a single request (187 vs 240 tok/s).
+
+## Benchmark a running container (`lil-bench`)
+
+The runtime image ships llm-inference-bench at the commit pinned in
+`tools/jovian_wheel_runtime/lil-bench.lock.json` (archive checksum locked),
+installed by `install_lil_bench.py` under `/opt/lil/bench` with p2pmark built
+for sm_100/sm_120/sm_121. With the model loaded and no other traffic:
+
+```bash
+docker exec -it -e LIL_BENCH_TOKEN=lilb_... <container> lil-bench
+```
+
+It reads the serving command from the vLLM process, records hardware and PCIe
+topology, runs p2pmark and the standard prefill/decode matrix while sampling
+GPU clocks and throttle reasons, saves the result to `/cache/lil-bench`, and
+uploads it to docker.local-inference-lab.ai. The identifier comes from
+<https://docker.local-inference-lab.ai/bench/token>; without it the command
+stops with instructions. `lil-bench --no-upload` measures locally.
+
 ## Generated Compose and wiki material
 
 ```bash
@@ -376,7 +543,8 @@ cache across restarts. `NATIVE_KV_OFFLOADING_SIZE_GB` sets the total CPU cache
 capacity across all TP ranks (default 64 GiB). For example:
 
 ```bash
-docker run -d --name qwen38-native --gpus '"device=0,1"' --network host --ipc host \
+docker run -d --name qwen38-native --gpus '"device=0,1"' --restart on-failure \
+  --network host --ipc host \
   -v qwen-hf:/root/.cache/huggingface -v qwen-runtime:/cache \
   -e PROFILE=qwen38-flash-next -e TP=2 -e DCP=1 -e PORT=8000 \
   -e CACHE_MODE=native -e NATIVE_KV_OFFLOADING_SIZE_GB=32 \
@@ -393,9 +561,9 @@ The model and cache use distinct ports, defaulting to API port plus
 
 | Contract | Required preserved behavior | Resolver disposition |
 |---|---|---|
-| GLM atomic recurrent cache | Target/recurrent/draft all-rank bundles, request/SYSTEM boundaries, identity checks and restart restore | Implemented for text; TP2 requires engine-driven request-boundary transfer. TP4/TP8 also accept aligned transfer. |
+| GLM atomic recurrent cache | Target/recurrent/draft all-rank bundles, request/SYSTEM boundaries, identity checks and restart restore | Implemented for text and image/video-bearing requests (placeholders keyed by content hash); TP2 requires engine-driven request-boundary transfer. TP4/TP8 also accept aligned transfer. |
 | DS4 engine-driven cache | Worker-owned pinned SHM, CPU-only service, RAM/disk storage and coordinated shutdown | Implemented for text and authenticated image-bearing prefixes. |
-| Qwen atomic recurrent cache | Complete target/GDN/draft checkpoint bundles | Implemented for text with engine-driven transfer; external image-bearing checkpoint reuse is unsupported. |
+| Qwen atomic recurrent cache | Complete target/GDN/draft checkpoint bundles | Implemented for text with engine-driven transfer; image-bearing requests use the same content-hash placeholder keys (GPU-validated on GLM-5.3-Flash only). |
 | DS4.1 engine-driven cache | Target and auxiliary cache groups with independent Engram placement | Implemented; RAM/disk Engram placement is separate from prefix offload. |
 
 Typed settings include `cache-mode`, `cache-transfer-mode`, `cache-l1-gib`,
@@ -451,16 +619,23 @@ With disk storage, a chat turn writes two or three of them even when the next
 turn cannot use them, because the chat template rewrites the previous prompt
 and response. `LMCACHE_L2_CHECKPOINT_WRITES` selects what reaches the disk:
 
-- `always` (default) writes every checkpoint to disk.
-- `on-evict` writes the current checkpoint of a conversation once, when it
+- `always` writes every checkpoint to disk. It is the default for models
+  without request-boundary checkpoints.
+- `on-evict` (default for GLM-5.3-Flash and Qwen3.8) writes the current
+  checkpoint of a conversation once, when it
   leaves RAM, and again for everything still only in RAM when the container
   stops. Checkpoints that a newer turn of the same conversation has
   superseded are never written. Disk writes fall from every request to about
   one checkpoint per conversation that goes idle, so the disk holds the
   newest state of many more conversations. Give the container time to stop:
-  `docker run --stop-timeout 60` or Compose `stop_grace_period: 60s`; the
-  shutdown write takes up to 30 s. A crash or `docker kill` loses checkpoints
-  that were only in RAM.
+  `docker run --stop-timeout 60` or Compose `stop_grace_period: 60s` (the
+  generated Compose files set it). At SIGTERM LMCache first keeps serving
+  the checkpoint stores the model is still copying (a few seconds at most),
+  then writes the checkpoints that are only in RAM, current ones first,
+  within 30 s. With Docker's default 10 s the current checkpoints are
+  written first; the log names what was left, and after the restart lookups
+  skip those checkpoints instead of failing a restore. A crash or
+  `docker kill` loses checkpoints that were only in RAM.
 - `on-reuse` keeps new checkpoints in RAM and writes each one to disk only
   after a restore from the cache has used it. A follow-up served from GPU
   memory does not count, so with long conversations little reaches the disk.
@@ -473,8 +648,11 @@ divided by the checkpoint bytes written per minute; check
 metrics port. The engine-driven service uses CPU memory,
 not a separate GPU. The profile selects request-boundary checkpoints and a
 matching target scheduling budget. It does not enable aligned/direct transfer
-for TP2. GLM vision remains available, but image-bearing requests recompute
-instead of restoring external recurrent checkpoints. The auto-fit context
+for TP2. Image-bearing requests restore external recurrent checkpoints too:
+each image's placeholder positions are keyed by its content hash (and the
+vision precision), so a checkpoint is never restored for a different image
+and an image at the start of a conversation no longer blocks reuse of the
+text after it. The auto-fit context
 limit can differ from the VRAM-only recipe because external-cache geometry
 and transfer buffers differ; inspect the reported capacity at startup.
 

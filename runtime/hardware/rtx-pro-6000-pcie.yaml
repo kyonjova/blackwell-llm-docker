@@ -6,6 +6,9 @@ description: Single-node RTX PRO 6000 Blackwell PCIe deployment defaults; no clo
 defaults: {}
 environment:
   CUTE_DSL_ARCH: sm_120a
+  # Runtime torch cpp_extension builds target only this GPU; the image
+  # inherits NVIDIA's multi-architecture list from the NGC base.
+  TORCH_CUDA_ARCH_LIST: "12.0a"
   NCCL_IB_DISABLE: "1"
   NCCL_P2P_LEVEL: SYS
   NCCL_PROTO: LL,LL128,Simple
@@ -29,3 +32,12 @@ model_environment:
   qwen38-flash-next:
     NCCL_CUMEM_ENABLE: "0"
     VLLM_QWEN3_8_FLASH_NEXT_HC_TP: "0"
+  mimo26-flash:
+    # b12x PCIe all-reduce carries the traffic; small NCCL communicators keep
+    # startup memory within the qualified 0.985 utilization at TP2.
+    NCCL_MIN_NCHANNELS: "2"
+    NCCL_MAX_NCHANNELS: "2"
+    NCCL_BUFFSIZE: "1048576"
+    VLLM_PCIE_ONESHOT_ALLREDUCE_MAX_SIZE: 64KB
+    VLLM_PCIE_TWOSHOT_ALLREDUCE_MAX_SIZE: 2MB
+    VLLM_PCIE_DMA_MIN_BYTES: "off"

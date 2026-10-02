@@ -17,7 +17,14 @@ from runtime.packaging import (
     payload_hashes,
 )
 
-MODELS = ["glm53-flash", "ds4-flash", "ds4-vision", "ds41-flash", "qwen38-flash-next"]
+MODELS = [
+    "glm53-flash",
+    "ds4-flash",
+    "ds4-vision",
+    "ds41-flash",
+    "qwen38-flash-next",
+    "mimo26-flash",
+]
 
 
 @pytest.mark.parametrize("tp", [1, 2, 4])
@@ -606,6 +613,8 @@ def test_compose_has_no_second_kernel_policy_copy(model):
         key.startswith(("VLLM_", "B12X_", "NCCL_")) for key in service["environment"]
     )
     assert service["entrypoint"] == ["/usr/local/bin/lil-serve"]
+    # Room for an external cache's shutdown drain and checkpoint flush.
+    assert service["stop_grace_period"] == "60s"
     assert len(
         service["deploy"]["resources"]["reservations"]["devices"][0]["device_ids"]
     ) == int(service["environment"]["TP"])
@@ -658,3 +667,130 @@ def test_glm_base_recipe_semantic_parity_for_model_arguments():
             if isinstance(resolved, dict)
             else value == str(resolved)
         )
+
+
+def test_mimo_drafter_resolves_inside_a_local_checkpoint(tmp_path):
+    from runtime.launcher import resolve_draft_subfolder
+
+    (tmp_path / "dflash").mkdir()
+    (tmp_path / "dflash" / "config.json").write_text("{}")
+    plan = resolve("mimo26-flash", env={"MODEL": str(tmp_path), "TP": "2"})
+    spec = plan.values["speculative-config"]
+    assert spec["method"] == "dflash" and spec["draft_tensor_parallel_size"] == 2
+    assert plan.values["max-num-scheduled-tokens"] == 2048
+    resolve_draft_subfolder(plan)
+    assert spec["model"] == str(tmp_path / "dflash")
+    assert json.loads(plan.argv[plan.argv.index("--speculative-config") + 1])[
+        "model"
+    ] == str(tmp_path / "dflash")
+
+
+def _mtp_checkpoint(path, mtp_format, nested=False):
+    """hf_quant_config.json as the Qwen3.8 exports write it (top-level
+    quantized_layers), or ModelOpt's nested layout."""
+    layers = {"model.language_model.layers.0.mlp.experts": {"quant_algo": "NVFP4"}}
+    if mtp_format:
+        layers["mtp.layers.0.mlp.experts"] = {"quant_algo": mtp_format}
+    config = {"quant_method": "modelopt", "quant_algo": "MIXED_PRECISION"}
+    if nested:
+        config = {"quantization": {**config, "quantized_layers": layers}}
+    else:
+        config["quantized_layers"] = layers
+    (path / "hf_quant_config.json").write_text(json.dumps(config))
+
+
+def _spec_argument(plan):
+    return json.loads(plan.argv[plan.argv.index("--speculative-config") + 1])
+
+
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize(
+    "mtp_format,b12x_mxfp8,backend",
+    [
+        ("MXFP8", False, "auto"),
+        ("MXFP8", True, "b12x"),
+        ("W4A16_NVFP4", False, "b12x"),
+        ("NVFP4", False, "b12x"),
+        (None, False, "b12x"),
+    ],
+)
+def test_mtp_drafter_moe_backend_follows_the_checkpoint(
+    tmp_path, monkeypatch, mtp_format, b12x_mxfp8, backend, nested
+):
+    """The Qwen3.8 QAD revision exports MXFP8 MTP experts, which b12x loads
+    only with its MXFP8 path. Without it the drafter would inherit the
+    target's b12x, so it gets "auto" and vLLM picks Marlin."""
+    from runtime import launcher
+    from runtime.launcher import resolve_draft_moe_backend
+
+    monkeypatch.setattr(launcher, "installed_b12x_mxfp8_moe", lambda: b12x_mxfp8)
+    _mtp_checkpoint(tmp_path, mtp_format, nested)
+    plan = resolve("qwen38-flash-next", env={"MODEL": str(tmp_path)})
+    assert plan.values["speculative-config"]["moe_backend"] == "b12x"
+    resolve_draft_moe_backend(plan)
+    assert plan.values["speculative-config"].get("moe_backend") == backend
+    assert _spec_argument(plan).get("moe_backend") == backend
+
+
+def test_mtp_drafter_backend_follows_a_separate_drafter_checkpoint(
+    tmp_path, monkeypatch
+):
+    from runtime import launcher
+    from runtime.launcher import resolve_draft_moe_backend
+
+    monkeypatch.setattr(launcher, "installed_b12x_mxfp8_moe", lambda: False)
+
+    target, drafter = tmp_path / "target", tmp_path / "drafter"
+    target.mkdir()
+    drafter.mkdir()
+    _mtp_checkpoint(target, "W4A16_NVFP4")
+    _mtp_checkpoint(drafter, "MXFP8")
+    plan = resolve(
+        "qwen38-flash-next",
+        env={"MODEL": str(target)},
+        argv=["--draft-model", str(drafter)],
+    )
+    resolve_draft_moe_backend(plan)
+    assert _spec_argument(plan)["moe_backend"] == "auto"
+
+
+def test_explicit_mtp_drafter_backend_is_kept(tmp_path):
+    from runtime.launcher import resolve_draft_moe_backend
+
+    _mtp_checkpoint(tmp_path, "MXFP8")
+    spec = {"method": "mtp", "num_speculative_tokens": 3, "moe_backend": "b12x"}
+    plan = resolve(
+        "qwen38-flash-next",
+        env={"MODEL": str(tmp_path)},
+        argv=["--speculative-config", json.dumps(spec)],
+    )
+    resolve_draft_moe_backend(plan)
+    assert _spec_argument(plan)["moe_backend"] == "b12x"
+
+
+def test_mtp_drafter_backend_is_kept_without_a_quant_config(tmp_path):
+    from runtime.launcher import resolve_draft_moe_backend
+
+    plan = resolve("qwen38-flash-next", env={"MODEL": str(tmp_path)})
+    resolve_draft_moe_backend(plan)
+    assert _spec_argument(plan)["moe_backend"] == "b12x"
+
+
+def test_mimo_drafter_requires_its_config(tmp_path):
+    from runtime.launcher import resolve_draft_subfolder
+
+    plan = resolve("mimo26-flash", env={"MODEL": str(tmp_path)})
+    with pytest.raises(ConfigError, match="Drafter config not found"):
+        resolve_draft_subfolder(plan)
+
+
+def test_mimo_without_speculation_has_no_drafter():
+    plan = resolve("mimo26-flash", env={"SPECULATOR": "off"})
+    assert "speculative-config" not in plan.values
+
+
+def test_mimo_accepts_the_exact_bf16_cache():
+    plan = resolve("mimo26-flash", env={"KV_CACHE_DTYPE": "bfloat16"})
+    assert plan.values["kv-cache-dtype"] == "bfloat16"
+    with pytest.raises(ConfigError, match="supports target KV"):
+        resolve("qwen38-flash-next", env={"KV_CACHE_DTYPE": "bfloat16"})
