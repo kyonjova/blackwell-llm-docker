@@ -53,17 +53,6 @@ defaults:
   # returned answer re-renders to the same tokens and reuses its checkpoint.
   chat-template: runtime:templates/glm53-flash.jinja
   override-generation-config: {temperature: 1.0, top_p: 0.95}
-  # BF16 activations into the routed experts (W4A16): no FP4 rounding of the
-  # expert inputs, 1-3% slower decode and about 20% slower prefill at TP2.
-  expert-activations: bf16
-  router-weights: fp32
-  expert-scale-compression: "off"
-  # Projections kept in BF16 unless a preset trades them for KV memory.
-  mxfp8-kda-attention: false
-  mxfp8-mla-attention: false
-  mxfp8-shared-experts: false
-  mxfp8-vision: false
-  mtp-experts: checkpoint
 environment:
   B12X_DYNAMIC_SPLIT_ROUTE_COMPUTE: "1"
   B12X_DYNAMIC_DIRECT_EXPERT_SCALES: "1"
@@ -90,6 +79,7 @@ environment:
   VLLM_GLM53_ONLINE_DENSE_MXFP8: "0"
   VLLM_DISABLE_SHARED_EXPERTS_STREAM: "0"
   VLLM_DISABLED_KERNELS: MarlinFP8ScaledMMLinearKernel
+  VLLM_B12X_MOE_FP4_FORCE_A16: "0"
   VLLM_PLUGINS: ""
 modes:
   off: {}
