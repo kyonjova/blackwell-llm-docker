@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import functools
 import hashlib
 import json
 import math
@@ -49,12 +48,6 @@ SECRET = re.compile(
     r"api[-_]?key|password|secret|authorization|access[-_]?token|hf_token",
     re.IGNORECASE,
 )
-
-
-# The smallest per-GPU KV cache a preset's option costs may leave.
-MIN_PRESET_KV_BYTES = 1 << 30
-# GLM-5.3 projection groups that can be quantized to MXFP8 while loading BF16 weights.
-GLM53_MXFP8_AREAS = ("kda-attention", "mla-attention", "shared-experts")
 
 
 class UniqueLoader(yaml.SafeLoader):
@@ -156,7 +149,7 @@ def deployment_presets() -> dict:
             "linked_options",
         }
         kv_fields = {"kv_bytes_per_extra_slot", "kv_bytes_for_external_cache"}
-        optional = kv_fields | {"vllm_fallback", "kv_bytes_for_options"}
+        optional = kv_fields | {"vllm_fallback"}
         if not required <= set(item) <= required | optional:
             raise ConfigError(f"Invalid deployment preset fields: {name}")
         fallback = item.get("vllm_fallback")
@@ -175,19 +168,6 @@ def deployment_presets() -> dict:
             value = item.get(field, 0)
             if type(value) is not int or value < 0:
                 raise ConfigError(f"Invalid preset {field}: {name}")
-        # Option values that need more (positive) or less (negative) GPU memory
-        # than the preset was sized with, as {option: {value: bytes}}.
-        costs = item.get("kv_bytes_for_options", {})
-        if not isinstance(costs, dict) or not all(
-            isinstance(option, str)
-            and isinstance(by_value, dict)
-            and all(
-                isinstance(value, str) and type(size) is int
-                for value, size in by_value.items()
-            )
-            for option, by_value in costs.items()
-        ):
-            raise ConfigError(f"Invalid preset kv_bytes_for_options: {name}")
         for key in ("profile", "hardware"):
             if not isinstance(item[key], str) or not re.fullmatch(
                 r"[a-z][a-z0-9-]*", item[key]
@@ -688,111 +668,6 @@ def resolve(
         values[key] = value
         origins[key] = f"derived:{reason}"
 
-    def option_env(option, name, value):
-        """An option's environment variable, unless an operator set the variable
-        itself, a preset pinned it while the option kept its profile default, or
-        the installed vLLM does not define it."""
-        if option not in values or name in explicit_env:
-            return
-        if (
-            name.startswith("VLLM_")
-            and vllm_environment is not None
-            and name not in vllm_environment
-        ):
-            return
-        profile_default = origins[option].startswith(("common:", "model:", "hardware:"))
-        if profile_default and env_origins.get(name, "").startswith("preset:"):
-            return
-        set_env(name, value, origins[option])
-
-    def explicit(option):
-        return origins.get(option, "").startswith(("cli", "settings:", "environment"))
-
-    def effective(option, value, reason):
-        """Make an option describe what actually runs; refuse an explicit contradiction."""
-        if option not in values or values[option] == value:
-            return
-        if explicit(option):
-            raise ConfigError(f"{reason} conflicts with {option} {values[option]}")
-        derive(option, value, reason)
-
-    # Variables these options set, given explicitly, decide what runs (and what
-    # GPU memory a preset has to leave for it).
-    for option, name, decode in (
-        (
-            "expert-activations",
-            "VLLM_B12X_MOE_FP4_FORCE_A16",
-            {"1": "bf16", "0": "fp4"},
-        ),
-        ("router-weights", "B12X_W4A16_FP32_TOPK_WEIGHTS", {"1": "fp32", "0": "bf16"}),
-        (
-            "expert-scale-compression",
-            "VLLM_B12X_MOE_FP4_CSF",
-            {"1": "lossless", "0": "off"},
-        ),
-        ("mxfp8-vision", "VLLM_GLM53_VISION_MXFP8", {"1": True, "0": False}),
-    ):
-        if name in explicit_env and explicit_env[name] in decode:
-            effective(
-                option, decode[explicit_env[name]], f"{name}={explicit_env[name]}"
-            )
-    if identifier == "glm53-flash":
-        if "quantization-config" in values:
-            # An explicit online quantization config replaces the MXFP8 areas; an
-            # area counts only when the config converts all of its projections.
-            targets = values["quantization-config"].get("targets")
-            targets = targets if isinstance(targets, dict) else {}
-            manifest = glm53_mxfp8_manifest()
-            for area in GLM53_MXFP8_AREAS:
-                covered = all(
-                    str(targets.get(name, "")).lower() == "mxfp8"
-                    for name in manifest["main"][area]
-                )
-                effective(f"mxfp8-{area}", covered, "the explicit quantization-config")
-        if "draft-model" in values and values.get("mode") == "mtp":
-            # Online MTP quantization targets the checkpoint's own MTP layer.
-            effective("mtp-experts", "checkpoint", "an explicit draft-model")
-
-    # Precision and memory of FP4 routed experts on b12x.
-    bf16_activations = values.get("expert-activations") == "bf16"
-    option_env(
-        "expert-activations",
-        "VLLM_B12X_MOE_FP4_FORCE_A16",
-        "1" if bf16_activations else "0",
-    )
-    option_env(
-        "router-weights",
-        "B12X_W4A16_FP32_TOPK_WEIGHTS",
-        "1" if bf16_activations and values.get("router-weights") == "fp32" else "0",
-    )
-    lossless = values.get("expert-scale-compression") == "lossless"
-    option_env(
-        "expert-scale-compression", "VLLM_B12X_MOE_FP4_CSF", "1" if lossless else "0"
-    )
-    if lossless:
-        needs = [
-            text
-            for unmet, text in (
-                (values.get("moe-backend") != "b12x", "moe-backend b12x"),
-                (
-                    values.get("pipeline-parallel-size", 1) != 1,
-                    "pipeline-parallel-size 1",
-                ),
-                (values.get("data-parallel-size", 1) != 1, "data-parallel-size 1"),
-                (bool(values.get("enable-expert-parallel")), "no expert parallelism"),
-            )
-            if unmet
-        ]
-        if needs:
-            raise ConfigError(
-                "Lossless expert-scale compression needs " + ", ".join(needs)
-            )
-    option_env(
-        "mxfp8-vision",
-        "VLLM_GLM53_VISION_MXFP8",
-        "1" if values.get("mxfp8-vision") else "0",
-    )
-
     if deployment:
         for target, source in deployment["linked_options"].items():
             if target not in specs or source not in values:
@@ -816,29 +691,12 @@ def resolve(
         external = deployment.get("kv_bytes_for_external_cache", 0)
         if external and values.get("cache-mode", "vram") != "vram":
             reductions.append((external, "external cache buffers"))
-        # Option costs are relative to the main recipe, not to a fallback's own KV size.
-        option_costs = (
-            {} if fallback_reason else deployment.get("kv_bytes_for_options", {})
-        )
-        for option, by_value in option_costs.items():
-            if option not in specs:
-                raise ConfigError(f"Preset KV cost names an unknown option: {option}")
-            value = values.get(option)
-            label = str(value).lower() if isinstance(value, bool) else str(value)
-            if by_value.get(label):
-                reductions.append((by_value[label], f"{option} {label}"))
         if preset_kv and reductions:
             derive(
                 "kv-cache-memory-bytes",
                 values["kv-cache-memory-bytes"] - sum(size for size, _ in reductions),
                 "; ".join(reason for _, reason in reductions),
             )
-            if values["kv-cache-memory-bytes"] < MIN_PRESET_KV_BYTES:
-                raise ConfigError(
-                    f"These settings leave {values['kv-cache-memory-bytes'] / 2**30:.2f} GiB "
-                    f"per GPU for the KV cache on the {preset} preset; turn a memory "
-                    "saving back on or use fewer request slots"
-                )
 
     # A repository-specific code revision must not leak to an operator's model.
     if (
@@ -1016,15 +874,6 @@ def resolve(
                 spec["revision"] = values["draft-revision"]
             elif mode in {"mtp", "dspark"} and "revision" in values:
                 spec["revision"] = values["revision"]
-            if (
-                identifier == "glm53-flash"
-                and mode == "mtp"
-                and "draft-model" not in values
-            ):
-                quantization = glm53_mtp_quantization(values)
-                if quantization:
-                    spec["model"] = values["model"]
-                    spec["quantization_config"] = quantization
             derive(
                 "speculative-config", spec, f"{mode} policy and resolved draft settings"
             )
@@ -1043,27 +892,6 @@ def resolve(
     )
 
     if identifier == "glm53-flash":
-        areas = [area for area in GLM53_MXFP8_AREAS if values.get(f"mxfp8-{area}")]
-        if areas and "quantization-config" not in values:
-            if values["model"].rstrip("/").lower().endswith("-spark"):
-                raise ConfigError(
-                    "The Spark checkpoint already stores these projections in MXFP8; "
-                    "online MXFP8 needs a checkpoint with BF16 attention and shared experts"
-                )
-            manifest = glm53_mxfp8_manifest()
-            derive(
-                "quantization-config",
-                {
-                    "targets": {
-                        name: "mxfp8"
-                        for area in areas
-                        for name in manifest["main"][area]
-                    },
-                    # vLLM's strict check also refuses the vision tower's own quantizer.
-                    "strict_targets": environment.get("VLLM_GLM53_VISION_MXFP8") != "1",
-                },
-                "online MXFP8 of " + ", ".join(areas),
-            )
         for name, key in (
             ("VLLM_GLM53_SPLIT_TARGET_BLOCK_SIZE", "target-page-size"),
             ("VLLM_GLM53_SPLIT_MAMBA_BLOCK_SIZE", "recurrent-page-size"),
@@ -1245,30 +1073,6 @@ def resolve_draft_subfolder(plan: LaunchPlan) -> None:
         raise ConfigError(f"Drafter config not found: {draft}/config.json")
     plan.values["speculative-config"]["model"] = str(draft)
     plan.argv = make_argv(plan.values, plan.passthrough)
-
-
-@functools.lru_cache(maxsize=1)
-def glm53_mxfp8_manifest() -> dict:
-    """GLM-5.3 projections by MXFP8 area, in vLLM module names (runtime/glm53-mxfp8-targets.json)."""
-    return json.loads((ROOT / "glm53-mxfp8-targets.json").read_text())
-
-
-def glm53_mtp_quantization(values: dict) -> dict | None:
-    """Online quantization of the GLM-5.3 MTP layer, following the target's MXFP8 areas.
-
-    With mtp-experts nvfp4 the drafter's routed experts, stored in BF16 by the
-    checkpoint's mtp-bf16 branch, load as NVFP4 with BF16 activations.
-    """
-    manifest = glm53_mxfp8_manifest()
-    targets = {
-        name: "mxfp8"
-        for area in GLM53_MXFP8_AREAS
-        if values.get(f"mxfp8-{area}")
-        for name in manifest["mtp"].get(area, [])
-    }
-    if values.get("mtp-experts") == "nvfp4":
-        targets.update({name: "nvfp4_a16" for name in manifest["mtp_experts"]})
-    return {"targets": targets, "strict_targets": True} if targets else None
 
 
 def mtp_expert_formats(model: str, revision: str | None) -> set[str]:
