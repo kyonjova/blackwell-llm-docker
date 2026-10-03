@@ -246,3 +246,56 @@ def test_preset_option_costs_are_validated():
         for by_value in costs.values()
         for size in by_value.values()
     )
+
+
+@pytest.mark.parametrize(
+    ("env", "option", "value", "kv_cost"),
+    [
+        ({"VLLM_B12X_MOE_FP4_CSF": "0"}, "expert-scale-compression", "off", 4496293888),
+        ({"VLLM_B12X_MOE_FP4_FORCE_A16": "0"}, "expert-activations", "fp4", 704643072),
+        ({"VLLM_GLM53_VISION_MXFP8": "0"}, "mxfp8-vision", False, 268435456),
+    ],
+)
+def test_an_explicit_variable_decides_the_option_and_its_memory(
+    env, option, value, kv_cost
+):
+    plan = tp2(env={**env, "CACHE_MODE": "vram"})
+    assert plan.values[option] == value
+    assert plan.origins[option].startswith("derived:")
+    assert plan.values["kv-cache-memory-bytes"] == TP2_KV - kv_cost
+    name, setting = next(iter(env.items()))
+    assert plan.environment[name] == setting
+
+
+def test_an_explicit_variable_contradicting_an_explicit_option_is_refused():
+    with pytest.raises(ConfigError, match="VLLM_B12X_MOE_FP4_CSF=0 conflicts"):
+        tp2(env={"VLLM_B12X_MOE_FP4_CSF": "0", "EXPERT_SCALE_COMPRESSION": "lossless"})
+
+
+def test_an_explicit_quantization_config_replaces_the_mxfp8_areas():
+    manifest = json.loads((ROOT / "glm53-mxfp8-targets.json").read_text())
+    kda_only = {name: "mxfp8" for name in manifest["main"]["kda-attention"]}
+    plan = tp2(
+        env={
+            "QUANTIZATION_CONFIG": json.dumps({"targets": kda_only}),
+            "CACHE_MODE": "vram",
+        }
+    )
+    assert plan.values["mxfp8-kda-attention"] is True
+    assert plan.values["mxfp8-mla-attention"] is False
+    assert plan.values["mxfp8-shared-experts"] is False
+    assert plan.values["quantization-config"] == {"targets": kda_only}
+    assert plan.values["kv-cache-memory-bytes"] == TP2_KV - 627048448 - 510001152
+    with pytest.raises(ConfigError, match="explicit quantization-config conflicts"):
+        tp2(env={"QUANTIZATION_CONFIG": "{}", "MXFP8_MLA_ATTENTION": "1"})
+
+
+def test_an_explicit_mtp_draft_model_loads_as_stored():
+    plan = tp2(env={"DRAFT_MODEL": "org/glm-mtp-draft", "CACHE_MODE": "vram"})
+    spec = plan.values["speculative-config"]
+    assert spec["model"] == "org/glm-mtp-draft"
+    assert "quantization_config" not in spec
+    assert plan.values["mtp-experts"] == "checkpoint"
+    assert plan.values["kv-cache-memory-bytes"] == TP2_KV - 5368709120
+    with pytest.raises(ConfigError, match="explicit draft-model conflicts"):
+        tp2(env={"DRAFT_MODEL": "org/glm-mtp-draft", "MTP_EXPERTS": "nvfp4"})

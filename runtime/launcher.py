@@ -705,6 +705,54 @@ def resolve(
             return
         set_env(name, value, origins[option])
 
+    def explicit(option):
+        return origins.get(option, "").startswith(("cli", "settings:", "environment"))
+
+    def effective(option, value, reason):
+        """Make an option describe what actually runs; refuse an explicit contradiction."""
+        if option not in values or values[option] == value:
+            return
+        if explicit(option):
+            raise ConfigError(f"{reason} conflicts with {option} {values[option]}")
+        derive(option, value, reason)
+
+    # Variables these options set, given explicitly, decide what runs (and what
+    # GPU memory a preset has to leave for it).
+    for option, name, decode in (
+        (
+            "expert-activations",
+            "VLLM_B12X_MOE_FP4_FORCE_A16",
+            {"1": "bf16", "0": "fp4"},
+        ),
+        ("router-weights", "B12X_W4A16_FP32_TOPK_WEIGHTS", {"1": "fp32", "0": "bf16"}),
+        (
+            "expert-scale-compression",
+            "VLLM_B12X_MOE_FP4_CSF",
+            {"1": "lossless", "0": "off"},
+        ),
+        ("mxfp8-vision", "VLLM_GLM53_VISION_MXFP8", {"1": True, "0": False}),
+    ):
+        if name in explicit_env and explicit_env[name] in decode:
+            effective(
+                option, decode[explicit_env[name]], f"{name}={explicit_env[name]}"
+            )
+    if identifier == "glm53-flash":
+        if "quantization-config" in values:
+            # An explicit online quantization config replaces the MXFP8 areas; an
+            # area counts only when the config converts all of its projections.
+            targets = values["quantization-config"].get("targets")
+            targets = targets if isinstance(targets, dict) else {}
+            manifest = glm53_mxfp8_manifest()
+            for area in GLM53_MXFP8_AREAS:
+                covered = all(
+                    str(targets.get(name, "")).lower() == "mxfp8"
+                    for name in manifest["main"][area]
+                )
+                effective(f"mxfp8-{area}", covered, "the explicit quantization-config")
+        if "draft-model" in values and values.get("mode") == "mtp":
+            # Online MTP quantization targets the checkpoint's own MTP layer.
+            effective("mtp-experts", "checkpoint", "an explicit draft-model")
+
     # Precision and memory of FP4 routed experts on b12x.
     bf16_activations = values.get("expert-activations") == "bf16"
     option_env(
@@ -968,7 +1016,11 @@ def resolve(
                 spec["revision"] = values["draft-revision"]
             elif mode in {"mtp", "dspark"} and "revision" in values:
                 spec["revision"] = values["revision"]
-            if identifier == "glm53-flash" and mode == "mtp":
+            if (
+                identifier == "glm53-flash"
+                and mode == "mtp"
+                and "draft-model" not in values
+            ):
                 quantization = glm53_mtp_quantization(values)
                 if quantization:
                     spec["model"] = values["model"]
