@@ -243,10 +243,9 @@ performance measurements. Source references are recorded inside each profile.
   not environment variables: after changing an environment variable that
   affects GPU memory, start once with `-e VLLM_ENABLE_STARTUP_PLAN=0` or set
   `KV_CACHE_MEMORY_BYTES`.
-  The original text checkpoint (`CHECKPOINT=original`), the Vision checkpoint
-  and their remote-code revisions follow the source launcher's pinned
-  revisions; the text profile's default FP4-CSF checkpoint is described
-  [below](#fp4-csf-checkpoints).
+  The original text/Vision checkpoints (`CHECKPOINT=original`) and their
+  remote-code revisions follow the source launcher's pinned revisions; the
+  default FP4-CSF checkpoints are described [below](#fp4-csf-checkpoints).
   An explicit model override does not inherit another repository's revision;
   `MODEL_REVISION` and `MODEL_CODE_REVISION` remain operator controls.
 - DS4.1: DSpark K7 with adaptive verification, sampled proposals, standard
@@ -302,11 +301,10 @@ GLM TP3 preset, which runs FlashInfer CUTLASS experts, has none of them.
 
 ### FP4-CSF checkpoints
 
-Qwen3.8-Flash-Next, GLM-5.3-Flash, DeepSeek-V4.1-Flash and DeepSeek-V4-Flash
-serve their FP4-CSF checkpoints by default (`checkpoint: csf`). DeepSeek-V4-Flash
-Vision has no FP4-CSF checkpoint yet and keeps the original. An FP4-CSF
-checkpoint holds the same weights as the original with losslessly compressed
-routed-expert scales. B12X reads the
+Qwen3.8-Flash-Next, GLM-5.3-Flash, DeepSeek-V4.1-Flash, DeepSeek-V4-Flash and
+DeepSeek-V4-Flash Vision serve their FP4-CSF checkpoints by default
+(`checkpoint: csf`). An FP4-CSF checkpoint holds the same weights as the
+original with losslessly compressed routed-expert scales. B12X reads the
 compressed scales while it runs the experts, and they stay compressed in GPU
 memory, which leaves more room for the KV cache. The downloads are smaller too.
 
@@ -316,6 +314,7 @@ memory, which leaves more room for the KV cache. The downloads are smaller too.
 | GLM-5.3-Flash | `local-inference-lab/GLM-5.3-Flash-NVFP4-CSF-QAD` | `local-inference-lab/GLM-5.3-Flash-NVFP4` (QAD) |
 | DeepSeek-V4.1-Flash | `local-inference-lab/DeepSeek-V4.1-Flash-lossless-CSF` | `deepseek-ai/DeepSeek-V4.1-Flash` |
 | DeepSeek-V4-Flash | `local-inference-lab/DeepSeek-V4-Flash-0731-lossless-CSF` | `deepseek-ai/DeepSeek-V4-Flash-0731` at `9e165c30` |
+| DeepSeek-V4-Flash Vision | `local-inference-lab/DeepSeek-V4-Flash-Vision-Exp-lossless-CSF` | `deepseek-ai/DeepSeek-V4-Flash-Vision-Exp` at `6821d6ad` |
 
 Measured on RTX PRO 6000 Max-Q (325 W) with each profile's settings, FP4-CSF
 against the original checkpoint (decode: aggregate output tok/s at the listed
@@ -328,6 +327,7 @@ concurrency, two runs; prefill: one 8K and one 32K prompt):
 | GLM-5.3-Flash (4) | 5,816,737 vs 5,509,790 (+5.6%) | C8 +0.5%, C16 -3.3%, C32 -2.7% | -1.0% / -1.6% |
 | DeepSeek-V4.1-Flash (4) | 12,951,057 vs 9,566,426 (+35%) | C8 -3.1%, C16 -3.5%, C32 -1.2% | -1.3% / -1.7% |
 | DeepSeek-V4-Flash (2) | 1,853,797 vs 1,308,256 (+42%) | C4 +0.9%, C8 -0.8% | +0.7% / +2.2% |
+| DeepSeek-V4-Flash Vision (2) | 1,850,842 vs 1,306,708 (+42%) | C1 +4.2%, C2 -0.2%, C4 +3.1% | -1.4% / -2.9% |
 
 The DeepSeek-V4.1-Flash decode cost comes from expanding the compressed scales
 of every routed expert in each layer before the B12X W4A8 kernels run.
@@ -346,8 +346,8 @@ of every routed expert in each layer before the B12X W4A8 kernels run.
   and DSpark drafters stored in the checkpoint are read from it too.
 - An image whose vLLM cannot read a model's FP4-CSF checkpoint serves the
   original with a warning. The launcher checks the installed vLLM's FP4-CSF
-  load formats and, for DeepSeek-V4-Flash, the `deepseek_v4_flash` family of
-  its MXFP4-CSF loader. An explicit choice
+  load formats and, for DeepSeek-V4-Flash and its vision variant, the
+  `deepseek_v4_flash` family of its MXFP4-CSF loader. An explicit choice
   (`CHECKPOINT=csf`, or `MODEL` naming the FP4-CSF repository, as the
   generated Compose files do) fails instead; use `CHECKPOINT=original` with
   the original `MODEL`.
