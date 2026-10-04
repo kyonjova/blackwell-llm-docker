@@ -1,0 +1,20 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-124",
+  "category": "performance",
+  "summary": "glm53-tp2 prefill is 2-6% faster: prefill all-reduces go through the b12x PCIe DMA path",
+  "models": [
+    "GLM-5.3-Flash"
+  ],
+  "compatibility": "Only the glm53-tp2 preset changes; VLLM_PCIE_DMA_MIN_BYTES set by the operator still wins.",
+  "details": [
+    "The preset sets VLLM_PCIE_DMA_MIN_BYTES=6MB (the launcher otherwise turns the DMA all-reduce off for GLM with DCP above 1). On two RTX PRO 6000 Max-Q prefill at 8K/32K tokens measured 7,656/7,992 instead of 7,490/7,728 tok/s with a16 prefill activations and 9,952/10,334 instead of 9,528/9,784 with a4, decode unchanged."
+  ],
+  "authors": [
+    "voipmonitor"
+  ],
+  "pull_requests": [
+    124
+  ],
+  "requires": []
+}

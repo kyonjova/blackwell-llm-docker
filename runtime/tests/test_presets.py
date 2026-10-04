@@ -414,7 +414,8 @@ def test_tp2_preset_serves_the_stored_qad_checkpoint():
         "OMP_NUM_THREADS": "1",
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,large_segment_size_mb:12",
         "VLLM_PCIE_TWOSHOT_ALLREDUCE_MAX_SIZE": "off",
-        "VLLM_PCIE_DMA_MIN_BYTES": "off",
+        # Prefill all-reduces use the b12x PCIe DMA path (measured faster at TP2/DCP2).
+        "VLLM_PCIE_DMA_MIN_BYTES": "6MB",
         "VLLM_B12X_MLA_CKV_GATHER": "1",
         "VLLM_B12X_MLA_CKV_GATHER_MAX_TOKENS": "65536",
         "VLLM_GLM53_EMBED_HOST": "1",

@@ -28,6 +28,11 @@ presets:
       prefill-activations: a16
     environment:
       VLLM_PCIE_TWOSHOT_ALLREDUCE_MAX_SIZE: "off"
+      # Prefill all-reduces (25 MB per 3,072-token chunk) go through the b12x
+      # PCIe DMA all-reduce: prefill +2 to +3% with a16 and +4 to +6% with a4,
+      # decode unchanged. More NCCL channels are faster still but do not fit
+      # the 0.985 memory budget at startup.
+      VLLM_PCIE_DMA_MIN_BYTES: 6MB
       NCCL_SOCKET_IFNAME: lo
       GLOO_SOCKET_IFNAME: lo
       NCCL_MIN_NCHANNELS: "2"

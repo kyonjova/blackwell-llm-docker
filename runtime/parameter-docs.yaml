@@ -1230,8 +1230,10 @@ environment:
     summary: Minimum message size sent through the b12x PCIe DMA ring all-reduce (vLLM default 6MB). off
       keeps large all-reduces on the fallback backend.
     why: For GLM the launcher sets off with DCP above 1 and 6MB otherwise, because the measured DMA crossover
-      is slower for DCP full-CKV prefill (GLM source launcher comment). DS4.1 sets 6MB and MiMo sets off,
-      both from their source launchers.
+      is slower for DCP full-CKV prefill (GLM source launcher comment). The glm53-tp2 preset (TP2/DCP2) sets
+      6MB: on two RTX PRO 6000 Max-Q its 8K/32K prefill measured 2 to 3% faster with a16 and 4 to 6% faster
+      with a4 prefill activations, decode unchanged. DS4.1 sets 6MB and MiMo sets off, both from their
+      source launchers.
   VLLM_PCIE_ONESHOT_ALLREDUCE_MAX_SIZE:
     group: communication
     summary: Largest all-reduce input sent to the low-latency b12x one-shot PCIe kernel (vLLM default
