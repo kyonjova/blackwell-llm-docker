@@ -337,6 +337,13 @@ concurrency, two runs; prefill: one 8K and one 32K prompt):
 The DeepSeek-V4.1-Flash decode cost comes from expanding the compressed scales
 of every routed expert in each layer before the B12X W4A8 kernels run.
 
+Qwen3.8-Flash-Next's C16 difference is capacity, not kernel speed. Each
+running request holds about 44K tokens of KV cache even at context zero: one
+attention page of 3,008 tokens plus the recurrent (GDN) states that MTP
+verification keeps. With the original checkpoint only 12 of the 16 request
+slots fit (4 wait); the FP4-CSF checkpoint's larger cache runs all 16. The
+time per step is the same.
+
 - `-e CHECKPOINT=original` serves the original checkpoint with the profile's
   ModelOpt or DeepSeek settings, at the revision shown.
 - `MODEL` naming either checkpoint selects it. Any other `MODEL` or
