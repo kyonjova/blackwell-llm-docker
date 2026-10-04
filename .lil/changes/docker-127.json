@@ -1,0 +1,20 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-127",
+  "category": "internal",
+  "summary": "Docs: Qwen3.8-Flash-Next's original checkpoint runs 12 of its 16 slots at once; the FP4-CSF checkpoint runs all 16",
+  "models": [
+    "Qwen3.8-Flash-Next"
+  ],
+  "compatibility": "No user action required.",
+  "details": [
+    "Each running request holds about 44K tokens of KV cache even at context zero (an attention page plus the GDN states MTP verification keeps), so the original checkpoint's cache admits 12 concurrent requests and the CSF checkpoint's 16. That capacity, not kernel speed, explains the CSF checkpoint's higher C16 throughput."
+  ],
+  "authors": [
+    "voipmonitor"
+  ],
+  "pull_requests": [
+    127
+  ],
+  "requires": []
+}
