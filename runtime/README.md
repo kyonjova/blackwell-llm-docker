@@ -243,9 +243,10 @@ performance measurements. Source references are recorded inside each profile.
   not environment variables: after changing an environment variable that
   affects GPU memory, start once with `-e VLLM_ENABLE_STARTUP_PLAN=0` or set
   `KV_CACHE_MEMORY_BYTES`.
-  The original text/Vision checkpoints (`CHECKPOINT=original`) and their
-  remote-code revisions follow the source launcher's pinned revisions; the
-  default FP4-CSF checkpoints are described [below](#fp4-csf-checkpoints).
+  The original text checkpoint (`CHECKPOINT=original`), the Vision checkpoint
+  and their remote-code revisions follow the source launcher's pinned
+  revisions; the text profile's default FP4-CSF checkpoint is described
+  [below](#fp4-csf-checkpoints).
   An explicit model override does not inherit another repository's revision;
   `MODEL_REVISION` and `MODEL_CODE_REVISION` remain operator controls.
 - DS4.1: DSpark K7 with adaptive verification, sampled proposals, standard
@@ -301,10 +302,11 @@ GLM TP3 preset, which runs FlashInfer CUTLASS experts, has none of them.
 
 ### FP4-CSF checkpoints
 
-Qwen3.8-Flash-Next, GLM-5.3-Flash, DeepSeek-V4.1-Flash, DeepSeek-V4-Flash and
-DeepSeek-V4-Flash Vision serve their FP4-CSF checkpoints by default
-(`checkpoint: csf`). An FP4-CSF checkpoint holds the same weights as the
-original with losslessly compressed routed-expert scales. B12X reads the
+Qwen3.8-Flash-Next, GLM-5.3-Flash, DeepSeek-V4.1-Flash and DeepSeek-V4-Flash
+serve their FP4-CSF checkpoints by default (`checkpoint: csf`). DeepSeek-V4-Flash
+Vision has no FP4-CSF checkpoint yet and keeps the original. An FP4-CSF
+checkpoint holds the same weights as the original with losslessly compressed
+routed-expert scales. B12X reads the
 compressed scales while it runs the experts, and they stay compressed in GPU
 memory, which leaves more room for the KV cache. The downloads are smaller too.
 
@@ -314,7 +316,6 @@ memory, which leaves more room for the KV cache. The downloads are smaller too.
 | GLM-5.3-Flash | `local-inference-lab/GLM-5.3-Flash-NVFP4-CSF-QAD` | `local-inference-lab/GLM-5.3-Flash-NVFP4` (QAD) |
 | DeepSeek-V4.1-Flash | `local-inference-lab/DeepSeek-V4.1-Flash-lossless-CSF` | `deepseek-ai/DeepSeek-V4.1-Flash` |
 | DeepSeek-V4-Flash | `local-inference-lab/DeepSeek-V4-Flash-0731-lossless-CSF` | `deepseek-ai/DeepSeek-V4-Flash-0731` at `9e165c30` |
-| DeepSeek-V4-Flash Vision | `local-inference-lab/DeepSeek-V4-Flash-Vision-Exp-lossless-CSF` | `deepseek-ai/DeepSeek-V4-Flash-Vision-Exp` at `6821d6ad` |
 
 - `-e CHECKPOINT=original` serves the original checkpoint with the profile's
   ModelOpt or DeepSeek settings, at the revision shown.
@@ -330,8 +331,8 @@ memory, which leaves more room for the KV cache. The downloads are smaller too.
   and DSpark drafters stored in the checkpoint are read from it too.
 - An image whose vLLM cannot read a model's FP4-CSF checkpoint serves the
   original with a warning. The launcher checks the installed vLLM's FP4-CSF
-  load formats and, for DeepSeek-V4-Flash and its vision variant, the
-  `deepseek_v4_flash` family of its MXFP4-CSF loader. An explicit choice
+  load formats and, for DeepSeek-V4-Flash, the `deepseek_v4_flash` family of
+  its MXFP4-CSF loader. An explicit choice
   (`CHECKPOINT=csf`, or `MODEL` naming the FP4-CSF repository, as the
   generated Compose files do) fails instead; use `CHECKPOINT=original` with
   the original `MODEL`.
