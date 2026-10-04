@@ -54,6 +54,12 @@ defaults:
   # returned answer re-renders to the same tokens and reuses its checkpoint.
   chat-template: runtime:templates/glm53-flash.jinja
   override-generation-config: {temperature: 1.0, top_p: 0.95}
+  # Routed FP4 experts on B12X take BF16 activations (W4A16) and combine their
+  # outputs with FP32 router weights. Prefill can trade activation precision
+  # for speed with prefill-activations a8 or a4; decode stays W4A16.
+  expert-activations: bf16
+  router-weights: fp32
+  prefill-activations: a16
 environment:
   B12X_DYNAMIC_SPLIT_ROUTE_COMPUTE: "1"
   B12X_DYNAMIC_DIRECT_EXPERT_SCALES: "1"
@@ -80,7 +86,6 @@ environment:
   VLLM_GLM53_ONLINE_DENSE_MXFP8: "0"
   VLLM_DISABLE_SHARED_EXPERTS_STREAM: "0"
   VLLM_DISABLED_KERNELS: MarlinFP8ScaledMMLinearKernel
-  VLLM_B12X_MOE_FP4_FORCE_A16: "0"
   VLLM_PLUGINS: ""
 checkpoints:
   csf:

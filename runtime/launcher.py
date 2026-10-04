@@ -49,6 +49,13 @@ SECRET = re.compile(
     r"api[-_]?key|password|secret|authorization|access[-_]?token|hf_token",
     re.IGNORECASE,
 )
+# Precision of GLM-5.3-Flash's routed FP4 experts on B12X.
+GLM_PRECISION_OPTIONS = ("expert-activations", "router-weights", "prefill-activations")
+# With prefill-activations a8 or a4, B12X runs W4A16 expert calls of at least
+# this many tokens with NVFP4 activations (two planes for a8, one for a4).
+# Decode and MTP verification calls stay below it, and vLLM keeps the decode
+# rows of mixed steps on W4A16; below about 1K tokens W4A16 is faster anyway.
+GLM_A4_PREFILL_MIN_TOKENS = 1536
 
 
 class UniqueLoader(yaml.SafeLoader):
@@ -814,6 +821,17 @@ def resolve(
         values[key] = value
         origins[key] = f"derived:{reason}"
 
+    configure_expert_precision(
+        identifier,
+        values,
+        origins,
+        environment_origins=env_origins,
+        explicit_env=explicit_env,
+        vllm_environment=vllm_environment,
+        set_env=set_env,
+        derive=derive,
+    )
+
     if deployment:
         for target, source in deployment["linked_options"].items():
             if target not in specs or source not in values:
@@ -1193,6 +1211,144 @@ def resolve(
         cache_service,
         draft_subfolder,
     )
+
+
+def configure_expert_precision(
+    identifier: str,
+    values: dict,
+    origins: dict,
+    *,
+    environment_origins: dict,
+    explicit_env: dict,
+    vllm_environment: frozenset[str] | None,
+    set_env,
+    derive,
+) -> None:
+    """Map GLM-5.3-Flash's routed-expert precision options to B12X variables.
+
+    expert-activations bf16 runs the FP4 experts as W4A16 (FP4 weights, BF16
+    activations) and fp4 as W4A4. router-weights fp32 combines W4A16 expert
+    outputs with FP32 router weights. prefill-activations a8 or a4 runs W4A16
+    calls of at least GLM_A4_PREFILL_MIN_TOKENS tokens with two or one NVFP4
+    activation planes. A variable the operator sets itself is kept and decides
+    the option it belongs to.
+    """
+    present = [option for option in GLM_PRECISION_OPTIONS if option in values]
+    if not present:
+        return
+    profile_level = ("common:", "model:", "hardware:")
+    if identifier != "glm53-flash":
+        raise ConfigError(f"{present[0]} applies to GLM-5.3-Flash only")
+    if values.get("moe-backend") != "b12x":
+        # Another MoE backend runs the experts in its own precision.
+        named = [
+            item for item in present if not origins[item].startswith(profile_level)
+        ]
+        if named:
+            raise ConfigError(
+                f"{named[0]} applies to B12X routed experts (moe-backend b12x)"
+            )
+        for option in present:
+            values.pop(option)
+            origins.pop(option)
+        return
+
+    def explicit(option: str) -> bool:
+        return origins.get(option, "").startswith(("cli", "settings:", "environment"))
+
+    def effective(option: str, value: str, reason: str) -> None:
+        """Make an option describe what runs; refuse an explicit contradiction."""
+        if option not in values or values[option] == value:
+            return
+        if explicit(option):
+            raise ConfigError(f"{reason} conflicts with {option} {values[option]}")
+        derive(option, value, reason)
+
+    def option_env(option: str, name: str, value: str) -> None:
+        """Set an option's variable unless the operator set it, a preset pinned
+        it while the option kept its profile default, or the installed vLLM
+        does not define it."""
+        if option not in values or name in explicit_env:
+            return
+        if (
+            name.startswith("VLLM_")
+            and vllm_environment is not None
+            and name not in vllm_environment
+        ):
+            return
+        if origins[option].startswith(profile_level) and environment_origins.get(
+            name, ""
+        ).startswith("preset:"):
+            return
+        set_env(name, value, origins[option])
+
+    for option, name, decode in (
+        (
+            "expert-activations",
+            "VLLM_B12X_MOE_FP4_FORCE_A16",
+            {"1": "bf16", "0": "fp4"},
+        ),
+        ("router-weights", "B12X_W4A16_FP32_TOPK_WEIGHTS", {"1": "fp32", "0": "bf16"}),
+    ):
+        if explicit_env.get(name) in decode:
+            effective(
+                option, decode[explicit_env[name]], f"{name}={explicit_env[name]}"
+            )
+    threshold_name, planes_name = (
+        "B12X_W4A16_A4_PREFILL_MIN_TOKENS",
+        "B12X_W4A16_A4_PREFILL_TERMS",
+    )
+    given = {
+        name: explicit_env[name]
+        for name in (threshold_name, planes_name)
+        if name in explicit_env
+    }
+    if given and "prefill-activations" in values:
+        threshold, planes = given.get(threshold_name), given.get(planes_name)
+        try:
+            enabled = (
+                int(threshold) > 0
+                if threshold is not None
+                else values["prefill-activations"] != "a16"
+            )
+        except ValueError:
+            enabled = None  # B12X refuses the value at startup
+        reason = ", ".join(f"{name}={value}" for name, value in given.items())
+        if enabled is False:
+            effective("prefill-activations", "a16", reason)
+        elif enabled:
+            if planes not in ("1", "2"):
+                planes = "2" if values["prefill-activations"] == "a8" else "1"
+            effective("prefill-activations", "a8" if planes == "2" else "a4", reason)
+
+    bf16 = values.get("expert-activations") == "bf16"
+    option_env(
+        "expert-activations", "VLLM_B12X_MOE_FP4_FORCE_A16", "1" if bf16 else "0"
+    )
+    # FP32 router weights belong to the W4A16 combine.
+    option_env(
+        "router-weights",
+        "B12X_W4A16_FP32_TOPK_WEIGHTS",
+        "1" if bf16 and values.get("router-weights") == "fp32" else "0",
+    )
+    prefill = values.get("prefill-activations")
+    if prefill not in (None, "a16") and not bf16:
+        # FP4 expert activations already quantize prefill and decode alike.
+        if explicit("prefill-activations"):
+            raise ConfigError(
+                f"prefill-activations needs expert-activations bf16; {prefill} "
+                "cannot be combined with expert-activations fp4"
+            )
+        derive("prefill-activations", "a16", "FP4 expert activations")
+        prefill = "a16"
+    if prefill is not None:
+        option_env(
+            "prefill-activations",
+            threshold_name,
+            "0" if prefill == "a16" else str(GLM_A4_PREFILL_MIN_TOKENS),
+        )
+    if prefill in ("a8", "a4"):
+        option_env("prefill-activations", planes_name, "2" if prefill == "a8" else "1")
 
 
 CSF_FORMATS = ("nvfp4_csf", "mxfp4_csf")

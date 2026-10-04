@@ -2,6 +2,8 @@ schema_version: 1
 groups:
   model:
     title: Model and checkpoint
+  precision:
+    title: Expert precision
   parallelism:
     title: GPUs and parallelism
   speculation:
@@ -107,6 +109,34 @@ options:
     summary: Quantization method used to interpret the checkpoint weights.
     why: GLM and Qwen set modelopt_mixed to match their original mixed-precision NVFP4 ModelOpt
       checkpoints. Their FP4-CSF checkpoints use nvfp4_csf and those of the DeepSeek profiles mxfp4_csf.
+  expert-activations:
+    group: precision
+    summary: Precision of the activations that enter GLM-5.3-Flash's routed FP4 experts on B12X. bf16
+      runs them as W4A16, FP4 weights with unrounded BF16 inputs; fp4 also rounds the inputs to NVFP4
+      (W4A4), the faster path. Applies to moe-backend b12x and sets VLLM_B12X_MOE_FP4_FORCE_A16.
+    why: GLM-5.3-Flash uses bf16. With the QAD checkpoint and FP32 router weights it answered all 500
+      needle-checksum probes exactly on two RTX PRO 6000, while the Spark checkpoint with FP4 activations
+      missed 13%. At TP2 it costs about 20% of prefill throughput (see prefill-activations) and 1 to 3%
+      of decode throughput. An explicit VLLM_B12X_MOE_FP4_FORCE_A16 decides the option.
+  router-weights:
+    group: precision
+    summary: With bf16 expert activations, fp32 combines the routed expert outputs with FP32 router weights
+      in an FP32 sum instead of multiplying BF16 outputs by BF16-rounded weights. FP4 activations ignore
+      it. Sets B12X_W4A16_FP32_TOPK_WEIGHTS.
+    why: GLM-5.3-Flash uses fp32, part of the configuration that answered all 500 needle-checksum probes
+      exactly.
+  prefill-activations:
+    group: precision
+    summary: Activation precision of long prefill calls into the routed experts while expert-activations
+      is bf16. a16 keeps BF16 activations everywhere. a8 and a4 run expert calls of at least 1,536 tokens
+      with NVFP4 activations, two planes (value and residual, close to 8-bit precision) for a8 and one
+      for a4. Decode stays W4A16 in every mode, because decode, MTP verification and short calls stay
+      below the threshold and vLLM keeps the decode rows of steps that mix decode and prefill on W4A16. Sets
+      B12X_W4A16_A4_PREFILL_MIN_TOKENS and B12X_W4A16_A4_PREFILL_TERMS.
+    why: GLM-5.3-Flash defaults to a16, the configuration measured exact on the needle-checksum probes.
+      a4 gives the fastest prefill with the coarsest activations; a8 keeps more of their precision. Both
+      need expert-activations bf16 (with fp4 the experts already take FP4 activations everywhere) and an
+      image whose B12X and vLLM include the W4A16 A4 prefill path.
   mamba-cache-mode:
     group: cache
     summary: How recurrent (Mamba-style) layer state is kept for prefix caching. align stores the state
@@ -725,13 +755,27 @@ environment:
     summary: Threads per block for the b12x PCIe one-shot all-reduce kernel, rounded to a multiple of
       32 and clamped to 64 to 512 (b12x default 256).
     why: GLM-5.3-Flash and Qwen3.8 Flash Next set 512 together with a block limit of 4.
+  B12X_W4A16_A4_PREFILL_MIN_TOKENS:
+    group: precision
+    summary: W4A16 MoE calls of at least this many tokens run NVFP4 activations over the same packed FP4
+      weights; smaller calls, including every decode step, keep BF16 activations. 0 (the b12x default)
+      turns the path off. vLLM passes the experts' activation scales and keeps decode rows of mixed steps
+      on W4A16 when it is set.
+    why: GLM-5.3-Flash derives it from prefill-activations, 0 for a16 and 1536 for a8 and a4. Below about
+      1,000 tokens the W4A16 kernel is at least as fast as the NVFP4-activation one.
+  B12X_W4A16_A4_PREFILL_TERMS:
+    group: precision
+    summary: Activation planes of the W4A16 NVFP4-activation prefill path. 1 quantizes each activation to
+      NVFP4; 2 adds a second NVFP4 plane for the residual, close to 8-bit precision. Default 1.
+    why: GLM-5.3-Flash derives it from prefill-activations, 2 for a8 and 1 for a4.
   B12X_W4A16_FP32_TOPK_WEIGHTS:
     group: kernels
     summary: When 1, the b12x W4A16 MoE applies the FP32 router weights during the FP32 top-k sum instead
       of multiplying BF16 expert outputs by BF16-rounded weights. This matches the reference MoE combine
       more closely.
     why: MiMo-V2.6-Flash sets 1, following the configuration its b12x support was qualified with (vllm
-      serve-mimo26-flash.sh).
+      serve-mimo26-flash.sh). GLM-5.3-Flash derives it from router-weights, 1 for fp32 with BF16 expert
+      activations.
   CUBLAS_WORKSPACE_CONFIG:
     group: memory
     summary: Sets the size and count of cuBLAS workspace buffers; ":4096:1" allows one 4096 KiB workspace.
@@ -955,8 +999,9 @@ environment:
     group: kernels
     summary: Forces the b12x FP4 MoE to use BF16 activations (W4A16) instead of quantized activations.
       Off by default.
-    why: GLM and DeepSeek V4 set 0, which keeps the checkpoint's NVFP4 W4A4 routed-expert path (GLM source
-      launcher comment). MiMo sets 1 as part of its qualified configuration (vllm PR 881, PR 882).
+    why: GLM-5.3-Flash derives it from expert-activations, 1 for the default bf16. DeepSeek V4 sets 0,
+      which keeps its MXFP8-activation (W4A8) routed-expert path. MiMo sets 1 as part of its qualified
+      configuration (vllm PR 881, PR 882).
   VLLM_B12X_NVFP4_ACTIVATION_MODE:
     group: kernels
     summary: Activation precision for b12x NVFP4 dense GEMMs (auto, a16 or quantized); when set it overrides

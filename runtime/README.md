@@ -238,6 +238,28 @@ performance measurements. Source references are recorded inside each profile.
   server defaults. Qwen attention selection is native; GDN, MoE, and dense
   kernel selection are explicitly B12X.
 
+### GLM-5.3-Flash expert precision
+
+GLM's routed FP4 experts run on B12X with BF16 activations (W4A16) and FP32
+router weights by default. Three options choose the precision; each sets the
+B12X or vLLM variables shown, and a variable you set yourself is kept and
+decides its option:
+
+| Option | Values (default first) | Variables |
+| --- | --- | --- |
+| `EXPERT_ACTIVATIONS` | `bf16` (W4A16), `fp4` (W4A4, faster, less exact) | `VLLM_B12X_MOE_FP4_FORCE_A16` 1/0 |
+| `ROUTER_WEIGHTS` | `fp32`, `bf16` (only with `bf16` activations) | `B12X_W4A16_FP32_TOPK_WEIGHTS` 1/0 |
+| `PREFILL_ACTIVATIONS` | `a16`, `a8`, `a4` (only with `bf16` activations) | `B12X_W4A16_A4_PREFILL_MIN_TOKENS` 0/1536, `B12X_W4A16_A4_PREFILL_TERMS` 2 for a8, 1 for a4 |
+
+`a8` and `a4` run expert calls of at least 1,536 tokens with NVFP4
+activations, two planes (value and residual) for `a8` and one for `a4`.
+Decode stays W4A16 in every mode: decode, MTP verification and short calls
+stay below the threshold, and vLLM keeps the decode rows of steps that mix
+decode and prefill on W4A16. They need an image whose B12X and vLLM include
+that prefill path, and `EXPERT_ACTIVATIONS=bf16`; with `fp4` an explicit
+`a8` or `a4` is refused. The options apply to the B12X MoE backend, so the
+GLM TP3 preset, which runs FlashInfer CUTLASS experts, has none of them.
+
 ### FP4-CSF checkpoints
 
 Qwen3.8-Flash-Next, GLM-5.3-Flash, DeepSeek-V4.1-Flash, DeepSeek-V4-Flash and
