@@ -221,3 +221,59 @@ def test_the_spark_preset_follows_the_profile_precision():
         env={"EXPERT_ACTIVATIONS": "fp4"},
     )
     assert fp4.environment[FORCE_A16] == "0"
+
+
+SPARK = "local-inference-lab/GLM-5.3-Flash-NVFP4-Spark"
+
+
+@pytest.mark.parametrize(
+    "preset, env",
+    [
+        ("glm53-spark-tp2", {}),
+        (None, {"MODEL": SPARK}),
+        (None, {"MODEL": "/models/GLM-5.3-Flash-NVFP4-Spark"}),
+    ],
+)
+def test_a4_prefill_is_refused_for_the_spark_checkpoint(preset, env):
+    """The Spark checkpoint's pre-QAD experts lose accuracy with a4 prefill."""
+    with pytest.raises(ConfigError, match="a4 is not qualified for .*Spark"):
+        resolve(
+            "glm53-flash",
+            "rtx-pro-6000-pcie",
+            preset=preset,
+            env={**env, "PREFILL_ACTIVATIONS": "a4"},
+        )
+
+
+def test_a_default_a4_prefill_yields_to_the_spark_checkpoint(monkeypatch):
+    read = launcher.profile
+
+    def a4_default(kind, identifier):
+        result = read(kind, identifier)
+        if kind == "model" and identifier == "glm53-flash":
+            result["defaults"]["prefill-activations"] = "a4"
+        return result
+
+    monkeypatch.setattr(launcher, "profile", a4_default)
+    plan = glm({"MODEL": SPARK})
+    assert plan.values["prefill-activations"] == "a16"
+    assert plan.origins["prefill-activations"].startswith("derived:")
+    assert plan.environment[MIN_TOKENS] == "0"
+
+
+def test_an_explicit_threshold_still_runs_a4_on_the_spark_checkpoint():
+    plan = glm({"MODEL": SPARK, MIN_TOKENS: "1536"})
+    assert plan.values["prefill-activations"] == "a4"
+    assert plan.environment[MIN_TOKENS] == "1536"
+
+
+@pytest.mark.parametrize("preset", [None, "glm53-tp2"])
+def test_the_qad_checkpoints_keep_a4_prefill(preset):
+    plan = resolve(
+        "glm53-flash",
+        "rtx-pro-6000-pcie",
+        preset=preset,
+        env={"PREFILL_ACTIVATIONS": "a4"},
+    )
+    assert plan.values["prefill-activations"] == "a4"
+    assert plan.environment[MIN_TOKENS] == str(GLM_A4_PREFILL_MIN_TOKENS)

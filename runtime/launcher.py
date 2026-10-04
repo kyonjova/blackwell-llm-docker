@@ -56,6 +56,10 @@ GLM_PRECISION_OPTIONS = ("expert-activations", "router-weights", "prefill-activa
 # below it, and vLLM keeps the decode rows of mixed steps on W4A16; below about
 # 1K tokens W4A16 is faster anyway.
 GLM_A4_PREFILL_MIN_TOKENS = 1536
+# Checkpoints whose routed experts lose accuracy with a4 prefill: the Spark
+# checkpoint's pre-QAD experts answered 456 of 500 needle-checksum requests
+# with a4 and 488 with a16; the QAD checkpoints answered 477-494 with a4.
+GLM_A4_PREFILL_UNQUALIFIED = ("GLM-5.3-Flash-NVFP4-Spark",)
 
 
 class UniqueLoader(yaml.SafeLoader):
@@ -1327,6 +1331,20 @@ def configure_expert_precision(
                 "cannot be combined with expert-activations fp4"
             )
         derive("prefill-activations", "a16", "FP4 expert activations")
+        prefill = "a16"
+    model = Path(str(values.get("model", ""))).name
+    if (
+        prefill == "a4"
+        and model in GLM_A4_PREFILL_UNQUALIFIED
+        and threshold_name not in explicit_env
+    ):
+        if explicit("prefill-activations"):
+            raise ConfigError(
+                f"prefill-activations a4 is not qualified for {values['model']}: "
+                "its pre-QAD routed experts lose accuracy with NVFP4 prefill "
+                "activations. Use a16, or a QAD checkpoint for a4"
+            )
+        derive("prefill-activations", "a16", f"{model} (pre-QAD experts)")
         prefill = "a16"
     if prefill is not None:
         option_env(

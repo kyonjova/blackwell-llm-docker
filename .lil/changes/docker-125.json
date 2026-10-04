@@ -1,0 +1,20 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-125",
+  "category": "fix",
+  "summary": "PREFILL_ACTIVATIONS=a4 is refused for the GLM Spark checkpoint, whose pre-QAD experts lose accuracy with it",
+  "models": [
+    "GLM-5.3-Flash"
+  ],
+  "compatibility": "Only an explicit a4 with the Spark checkpoint (glm53-spark-tp2) changes: it now fails with the reason. An explicit B12X_W4A16_A4_PREFILL_MIN_TOKENS still enables it.",
+  "details": [
+    "GLM Spark TP2 answered 456 of 500 needle-checksum requests with a4 prefill and 488 with a16; the QAD checkpoints (glm53-tp2, the glm53-flash profile) answered 477 to 494 with a4 and keep the option."
+  ],
+  "authors": [
+    "voipmonitor"
+  ],
+  "pull_requests": [
+    125
+  ],
+  "requires": []
+}

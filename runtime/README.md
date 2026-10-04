@@ -80,7 +80,8 @@ the vision tower in BF16, so the preset quantizes it while loading
 
 The Spark TP2 preset remains available. It uses the Spark checkpoint (stored
 MXFP8 attention, pre-QAD experts) on two 96-GB RTX PRO GPUs; it does not select
-DGX Spark hardware or replace GLM TP4 defaults.
+DGX Spark hardware or replace GLM TP4 defaults. Its pre-QAD experts lose accuracy
+with `PREFILL_ACTIVATIONS=a4`, so the launcher refuses a4 for this checkpoint.
 
 ```bash
 docker run -d --name glm-spark-tp2 --init --gpus '"device=0,1"' \
@@ -282,7 +283,7 @@ decides its option:
 | --- | --- | --- |
 | `EXPERT_ACTIVATIONS` | `bf16` (W4A16), `fp4` (W4A4, faster, less exact) | `VLLM_B12X_MOE_FP4_FORCE_A16` 1/0 |
 | `ROUTER_WEIGHTS` | `fp32`, `bf16` (only with `bf16` activations) | `B12X_W4A16_FP32_TOPK_WEIGHTS` 1/0 |
-| `PREFILL_ACTIVATIONS` | `a16`, `a4` (only with `bf16` activations) | `B12X_W4A16_A4_PREFILL_MIN_TOKENS` 0/1536 |
+| `PREFILL_ACTIVATIONS` | `a16`, `a4` (only with `bf16` activations and a QAD checkpoint) | `B12X_W4A16_A4_PREFILL_MIN_TOKENS` 0/1536 |
 
 `a4` runs expert calls of at least 1,536 tokens with NVFP4 activations over the
 same packed FP4 weights. On two RTX PRO 6000 Max-Q with the `glm53-tp2`
