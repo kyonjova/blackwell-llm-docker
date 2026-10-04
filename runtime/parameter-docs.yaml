@@ -144,7 +144,9 @@ options:
       rate was 0.53% with a16 and 1.75% with a4. A second NVFP4 plane for the residual raised prefill
       less and missed 1.85%, so it is not an option. a4 needs expert-activations bf16 (with fp4 the
       experts already take FP4 activations everywhere) and an image whose B12X and vLLM include the W4A16
-      A4 prefill path.
+      A4 prefill path. The Spark checkpoint (glm53-spark-tp2) is refused: its pre-QAD experts answered 456
+      of 500 needle-checksum requests with a4 against 488 with a16, while the QAD checkpoints answered
+      477 to 494 with a4. An explicit B12X_W4A16_A4_PREFILL_MIN_TOKENS still enables it.
   mamba-cache-mode:
     group: cache
     summary: How recurrent (Mamba-style) layer state is kept for prefix caching. align stores the state
