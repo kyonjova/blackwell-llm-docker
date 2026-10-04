@@ -210,10 +210,11 @@ performance measurements. Source references are recorded inside each profile.
   not environment variables: after changing an environment variable that
   affects GPU memory, start once with `-e VLLM_ENABLE_STARTUP_PLAN=0` or set
   `KV_CACHE_MEMORY_BYTES`.
-  The official text/Vision checkpoint and remote-code revisions follow the
-  source launcher's pinned revisions. An explicit model override does not
-  inherit another repository's revision; `MODEL_REVISION` and
-  `MODEL_CODE_REVISION` remain operator controls.
+  The original text/Vision checkpoints (`CHECKPOINT=original`) and their
+  remote-code revisions follow the source launcher's pinned revisions; the
+  default FP4-CSF checkpoints are described [below](#fp4-csf-checkpoints).
+  An explicit model override does not inherit another repository's revision;
+  `MODEL_REVISION` and `MODEL_CODE_REVISION` remain operator controls.
 - DS4.1: DSpark K7 with adaptive verification, sampled proposals, standard
   rejection, B12X target/draft attention and B12X MoE/dense. Engram table
   placement selects `ram` (default) or `disk` independently of general CPU
@@ -239,32 +240,44 @@ performance measurements. Source references are recorded inside each profile.
 
 ### FP4-CSF checkpoints
 
-Qwen3.8-Flash-Next, GLM-5.3-Flash and DeepSeek-V4.1-Flash serve their FP4-CSF
-checkpoints by default (`checkpoint: csf`). An FP4-CSF checkpoint holds the
-same FP4 weights as the original with losslessly compressed expert scales.
-B12X decodes the scales while it runs the experts, and they stay compressed
-in GPU memory, which leaves about 3 GiB per GPU more for the KV cache (Qwen
-TP1; GLM TP2 about 3.5 GiB). The downloads are smaller too:
+Qwen3.8-Flash-Next, GLM-5.3-Flash, DeepSeek-V4.1-Flash, DeepSeek-V4-Flash and
+DeepSeek-V4-Flash Vision serve their FP4-CSF checkpoints by default
+(`checkpoint: csf`). An FP4-CSF checkpoint holds the same weights as the
+original with losslessly compressed routed-expert scales. B12X reads the
+compressed scales while it runs the experts, and they stay compressed in GPU
+memory, which leaves more room for the KV cache. The downloads are smaller too.
 
-| Model | FP4-CSF (pinned revision) | Original |
+| Model | FP4-CSF (default) | Original |
 | --- | --- | --- |
-| Qwen3.8-Flash-Next | `local-inference-lab/Qwen3.8-Flash-Next-NVFP4-CSF`, 102.3 GB | `local-inference-lab/Qwen3.8-Flash-Next-NVFP4`, 105.8 GB |
-| GLM-5.3-Flash | `local-inference-lab/GLM-5.3-Flash-NVFP4-CSF`, 188.9 GB | `local-inference-lab/GLM-5.3-Flash-NVFP4`, 198.1 GB |
-| DeepSeek-V4.1-Flash | `local-inference-lab/DeepSeek-V4.1-Flash-MXFP4-CSF`, 495.6 GB | `deepseek-ai/DeepSeek-V4.1-Flash`, 510.3 GB |
+| Qwen3.8-Flash-Next | `local-inference-lab/Qwen3.8-Flash-Next-NVFP4-MXFP8-CSF-QAD` | `local-inference-lab/Qwen3.8-Flash-Next-NVFP4` (QAD) |
+| GLM-5.3-Flash | `local-inference-lab/GLM-5.3-Flash-NVFP4-CSF-QAD` | `local-inference-lab/GLM-5.3-Flash-NVFP4` (QAD) |
+| DeepSeek-V4.1-Flash | `local-inference-lab/DeepSeek-V4.1-Flash-lossless-CSF` | `deepseek-ai/DeepSeek-V4.1-Flash` |
+| DeepSeek-V4-Flash | `local-inference-lab/DeepSeek-V4-Flash-0731-lossless-CSF` | `deepseek-ai/DeepSeek-V4-Flash-0731` at `9e165c30` |
+| DeepSeek-V4-Flash Vision | `local-inference-lab/DeepSeek-V4-Flash-Vision-Exp-lossless-CSF` | `deepseek-ai/DeepSeek-V4-Flash-Vision-Exp` at `6821d6ad` |
 
 - `-e CHECKPOINT=original` serves the original checkpoint with the profile's
-  ModelOpt or DeepSeek settings.
+  ModelOpt or DeepSeek settings, at the revision shown.
 - `MODEL` naming either checkpoint selects it. Any other `MODEL` or
-  `MODEL_REVISION`, such as the Qwen QAD revision `qad-step5500-ple1000` of
-  the original repository, keeps the original settings. A local FP4-CSF copy
-  needs `-e CHECKPOINT=csf` with its `MODEL` path.
+  `MODEL_REVISION`, such as an older revision of the original repository,
+  keeps the original settings. A local FP4-CSF copy needs `-e CHECKPOINT=csf`
+  with its `MODEL` path.
 - The launcher downloads an FP4-CSF repository itself. It then gives vLLM a
-  directory under `/tmp/lil-csf` with the repository's metadata and a
+  directory under `/tmp/lil-csf` with the repository's metadata files and a
   `config.json` whose quantization (`nvfp4_csf` or `mxfp4_csf`) points at the
-  downloaded weights.
+  downloaded weights. vLLM gets neither a Hub revision nor, for the DeepSeek
+  profiles that trust remote code, a code revision for that directory. MTP
+  and DSpark drafters stored in the checkpoint are read from it too.
+- An image whose vLLM cannot read a model's FP4-CSF checkpoint serves the
+  original with a warning. The launcher checks the installed vLLM's FP4-CSF
+  load formats and, for DeepSeek-V4-Flash and its vision variant, the
+  `deepseek_v4_flash` family of its MXFP4-CSF loader. An explicit choice
+  (`CHECKPOINT=csf`, or `MODEL` naming the FP4-CSF repository, as the
+  generated Compose files do) fails instead; use `CHECKPOINT=original` with
+  the original `MODEL`.
 - FP4-CSF needs B12X MoE without expert parallelism, so the GLM TP3 preset
-  serves the original checkpoint, and so does the GLM Spark TP2 preset, which
-  names its own checkpoint.
+  serves the original checkpoint. A preset that names a checkpoint of its
+  own, such as the GLM Spark TP2 preset, serves that checkpoint and refuses
+  a `CHECKPOINT` of the other kind.
 
 GLM and DeepSeek retain the source launchers' temperature 1/top-p 0.95
 server defaults. Explicit generation configuration replaces these defaults;

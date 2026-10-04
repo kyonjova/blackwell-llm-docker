@@ -84,7 +84,7 @@ def test_sampling_file_explicitly_replaces_profile_defaults():
 
 
 def test_remote_code_revision_tracks_only_the_selected_model():
-    plan = resolve("ds4-flash", env={})
+    plan = resolve("ds4-flash", env={"CHECKPOINT": "original"})
     assert (
         plan.values["revision"]
         == plan.values["code-revision"]

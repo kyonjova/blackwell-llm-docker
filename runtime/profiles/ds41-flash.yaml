@@ -59,10 +59,10 @@ environment:
 checkpoints:
   csf:
     description: >-
-      Lossless FP4-CSF container of DeepSeek's MXFP4 release: the same weights with losslessly compressed expert scales (495.6 GB instead of 510.3 GB).
+      Lossless FP4-CSF container of DeepSeek's MXFP4 release: the same weights as the original, with the routed-expert scales compressed losslessly. B12X reads the compressed scales and they stay compressed in GPU memory, which leaves more room for the KV cache; the download is smaller too.
     options:
-      model: local-inference-lab/DeepSeek-V4.1-Flash-MXFP4-CSF
-      revision: 872da235166458bd6ffa9ee3f3c5c4771b63159c
+      model: local-inference-lab/DeepSeek-V4.1-Flash-lossless-CSF
+      # TODO pin after upload
       quantization: mxfp4_csf
       load-format: mxfp4_csf
   original:

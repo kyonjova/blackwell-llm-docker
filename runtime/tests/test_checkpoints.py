@@ -2,68 +2,106 @@
 and the serving files that let vLLM read an FP4-CSF repository."""
 
 import json
+import re
 import sys
 import types
+from typing import NamedTuple
 
 import pytest
 
 from runtime import launcher
-from runtime.launcher import ConfigError, prepare_csf_checkpoint, resolve
+from runtime.launcher import ConfigError, prepare_csf_checkpoint, profile, resolve
+
+
+class Variants(NamedTuple):
+    csf: str
+    method: str
+    original: str
+    original_revision: str | None
+
 
 CSF = {
-    "qwen38-flash-next": (
-        "local-inference-lab/Qwen3.8-Flash-Next-NVFP4-CSF",
-        "4656f502fa1a6aba3f05ff9ed14f6ecc828b3e9e",
+    "qwen38-flash-next": Variants(
+        "local-inference-lab/Qwen3.8-Flash-Next-NVFP4-MXFP8-CSF-QAD",
         "nvfp4_csf",
         "local-inference-lab/Qwen3.8-Flash-Next-NVFP4",
+        None,
     ),
-    "glm53-flash": (
-        "local-inference-lab/GLM-5.3-Flash-NVFP4-CSF",
-        "20f4777422f833c48b67bb0e554e1bc61dc55ca1",
+    "glm53-flash": Variants(
+        "local-inference-lab/GLM-5.3-Flash-NVFP4-CSF-QAD",
         "nvfp4_csf",
         "local-inference-lab/GLM-5.3-Flash-NVFP4",
+        None,
     ),
-    "ds41-flash": (
-        "local-inference-lab/DeepSeek-V4.1-Flash-MXFP4-CSF",
-        "872da235166458bd6ffa9ee3f3c5c4771b63159c",
+    "ds41-flash": Variants(
+        "local-inference-lab/DeepSeek-V4.1-Flash-lossless-CSF",
         "mxfp4_csf",
         "deepseek-ai/DeepSeek-V4.1-Flash",
+        None,
+    ),
+    "ds4-flash": Variants(
+        "local-inference-lab/DeepSeek-V4-Flash-0731-lossless-CSF",
+        "mxfp4_csf",
+        "deepseek-ai/DeepSeek-V4-Flash-0731",
+        "9e165c30e2704aec5d9d593cce3eebd58bbef1cb",
+    ),
+    "ds4-vision": Variants(
+        "local-inference-lab/DeepSeek-V4-Flash-Vision-Exp-lossless-CSF",
+        "mxfp4_csf",
+        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp",
+        "6821d6ad3681a4b137b066b76094fa82ebd0a380",
     ),
 }
+DS4 = ("ds4-flash", "ds4-vision")
+
+
+def csf_revision(profile_id):
+    """The FP4-CSF revision the profile pins, or None while it is unpinned."""
+    variant = profile("model", profile_id)["checkpoints"]["csf"]
+    return variant["options"].get("revision")
 
 
 @pytest.mark.parametrize("profile_id", sorted(CSF))
 def test_profiles_serve_their_csf_checkpoint_by_default(profile_id):
-    model, revision, method, _ = CSF[profile_id]
+    variants = CSF[profile_id]
     plan = resolve(profile_id, "rtx-pro-6000-pcie", env={})
 
     assert plan.values["checkpoint"] == "csf"
-    assert plan.values["model"] == model
-    assert plan.values["revision"] == revision
-    assert plan.values["quantization"] == plan.values["load-format"] == method
+    assert plan.values["model"] == variants.csf
+    assert plan.values.get("revision") == csf_revision(profile_id)
+    assert plan.values["quantization"] == plan.values["load-format"] == variants.method
     assert plan.origins["model"] == "checkpoint:csf"
     assert "--checkpoint" not in plan.argv
+    # The served API name does not change with the checkpoint.
+    defaults = profile("model", profile_id)["defaults"]
+    assert plan.values["served-model-name"] == defaults["served-model-name"]
+
+
+@pytest.mark.parametrize("profile_id", sorted(CSF))
+def test_csf_revisions_are_full_commits_once_pinned(profile_id):
+    revision = csf_revision(profile_id)
+    assert revision is None or re.fullmatch(r"[0-9a-f]{40}", revision)
 
 
 @pytest.mark.parametrize("profile_id", sorted(CSF))
 def test_original_checkpoint_keeps_the_profile_settings(profile_id):
-    _, _, _, original = CSF[profile_id]
+    variants = CSF[profile_id]
     plan = resolve(profile_id, "rtx-pro-6000-pcie", env={"CHECKPOINT": "original"})
 
-    assert plan.values["model"] == original
-    assert "revision" not in plan.values
+    assert plan.values["model"] == variants.original
+    assert plan.values.get("revision") == variants.original_revision
     assert plan.values["load-format"] == "instanttensor"
     assert plan.values.get("quantization") in (None, "modelopt_mixed")
 
 
 def test_a_model_naming_a_variant_selects_it():
     """Generated Compose files pass MODEL explicitly."""
-    csf, revision, _, original = CSF["qwen38-flash-next"]
+    csf, _, original, _ = CSF["qwen38-flash-next"]
     by_csf = resolve("qwen38-flash-next", env={"MODEL": csf})
     by_original = resolve("qwen38-flash-next", env={"MODEL": original})
 
     assert by_csf.values["checkpoint"] == "csf"
-    assert by_csf.values["revision"] == revision
+    assert by_csf.values.get("revision") == csf_revision("qwen38-flash-next")
     assert by_csf.values["load-format"] == "nvfp4_csf"
     assert by_original.values["checkpoint"] == "original"
     assert by_original.origins["checkpoint"] == "derived:model"
@@ -80,7 +118,7 @@ def test_another_model_or_revision_keeps_the_profile_settings(tmp_path):
         assert "checkpoint" not in plan.values
         assert plan.values["quantization"] == "modelopt_mixed"
         assert plan.values["load-format"] == "instanttensor"
-    assert qad.values["model"] == CSF["qwen38-flash-next"][3]
+    assert qad.values["model"] == CSF["qwen38-flash-next"].original
     assert qad.values["revision"] == "qad-step5500-ple1000"
 
 
@@ -102,7 +140,7 @@ def test_presets_that_choose_their_checkpoint_keep_it():
     assert spark.values["quantization"] == "modelopt_mixed"
     assert "checkpoint" not in spark.values
     assert tp3.values["checkpoint"] == "original"
-    assert tp3.values["model"] == CSF["glm53-flash"][3]
+    assert tp3.values["model"] == CSF["glm53-flash"].original
     assert qwen_tp2.values["checkpoint"] == "csf"
 
 
@@ -214,7 +252,7 @@ def test_mxfp4_csf_serving_files_keep_the_source_fields(tmp_path, monkeypatch):
     prepare_csf_checkpoint(plan)
 
     # A complete cached snapshot is used without the network.
-    assert snapshots == [(*CSF["ds41-flash"][:2], True)]
+    assert snapshots == [(CSF["ds41-flash"].csf, csf_revision("ds41-flash"), True)]
     assert _serving_config(plan)["quantization_config"] == {
         "quant_method": "mxfp4_csf",
         "weight_block_size": [128, 128],
@@ -223,7 +261,7 @@ def test_mxfp4_csf_serving_files_keep_the_source_fields(tmp_path, monkeypatch):
     }
     assert plan.origins["model"].startswith("resolved:FP4-CSF")
     assert launcher.Path(plan.values["model"]).name.startswith(
-        "DeepSeek-V4.1-Flash-MXFP4-CSF-"
+        "DeepSeek-V4.1-Flash-lossless-CSF-"
     )
 
 
@@ -317,7 +355,7 @@ def test_images_without_csf_readers_serve_the_original_checkpoint():
     plan = resolve("glm53-flash", env={}, csf_formats=frozenset())
 
     assert plan.values["checkpoint"] == "original"
-    assert plan.values["model"] == CSF["glm53-flash"][3]
+    assert plan.values["model"] == CSF["glm53-flash"].original
     assert plan.values["quantization"] == "modelopt_mixed"
     assert any("cannot read FP4-CSF" in warning for warning in plan.warnings)
     supported = resolve(
@@ -327,7 +365,7 @@ def test_images_without_csf_readers_serve_the_original_checkpoint():
 
 
 @pytest.mark.parametrize(
-    "env", [{"CHECKPOINT": "csf"}, {"MODEL": CSF["qwen38-flash-next"][0]}]
+    "env", [{"CHECKPOINT": "csf"}, {"MODEL": CSF["qwen38-flash-next"].csf}]
 )
 def test_an_explicit_csf_choice_needs_the_readers(env):
     with pytest.raises(ConfigError, match="cannot read FP4-CSF"):
@@ -383,3 +421,179 @@ def test_csf_identity_follows_the_manifest_not_the_location(tmp_path, monkeypatc
     changed = resolve("glm53-flash", env={"MODEL": str(roots[1]), "CHECKPOINT": "csf"})
     prepare_csf_checkpoint(changed)
     assert changed.target_identity != plans[0].target_identity
+
+
+def _pin_csf_revisions(monkeypatch, revision="a" * 40):
+    """Profiles as they read once the FP4-CSF revisions are pinned."""
+    read = launcher.profile
+
+    def pinned(kind, identifier):
+        result = read(kind, identifier)
+        if kind == "model" and "checkpoints" in result:
+            result["checkpoints"]["csf"]["options"].setdefault("revision", revision)
+        return result
+
+    monkeypatch.setattr(launcher, "profile", pinned)
+
+
+@pytest.mark.parametrize("profile_id", DS4)
+def test_ds4_csf_needs_the_deepseek_v4_flash_loader_family(profile_id):
+    """An image whose MXFP4-CSF loader predates DeepSeek-V4-Flash serves the
+    original checkpoint, as an image without FP4-CSF readers does."""
+    variants = CSF[profile_id]
+    formats = frozenset(launcher.CSF_FORMATS)
+    older = resolve(
+        profile_id,
+        env={},
+        csf_formats=formats,
+        csf_families=frozenset({"deepseek_v41", "kimi_k3"}),
+    )
+    assert older.values["checkpoint"] == "original"
+    assert older.origins["checkpoint"].startswith("derived:installed vLLM")
+    assert older.values["model"] == variants.original
+    assert older.values["revision"] == older.values["code-revision"]
+    assert older.values["revision"] == variants.original_revision
+    assert older.values["load-format"] == "instanttensor"
+    assert "quantization" not in older.values
+    assert any(
+        "cannot read FP4-CSF checkpoints of the deepseek_v4_flash family" in warning
+        for warning in older.warnings
+    )
+    with pytest.raises(ConfigError, match="deepseek_v4_flash family"):
+        resolve(
+            profile_id,
+            env={"CHECKPOINT": "csf"},
+            csf_formats=formats,
+            csf_families=frozenset({"deepseek_v41"}),
+        )
+    current = resolve(
+        profile_id,
+        env={},
+        csf_formats=formats,
+        csf_families=frozenset({"deepseek_v41", "deepseek_v4_flash"}),
+    )
+    assert current.values["checkpoint"] == "csf"
+    assert current.values["model"] == variants.csf
+    without_readers = resolve(profile_id, env={}, csf_formats=frozenset())
+    assert without_readers.values["checkpoint"] == "original"
+
+
+def test_formats_without_a_declared_family_need_only_the_reader():
+    plan = resolve(
+        "ds41-flash",
+        env={},
+        csf_formats=frozenset(launcher.CSF_FORMATS),
+        csf_families=frozenset(),
+    )
+    assert plan.values["checkpoint"] == "csf"
+
+
+def test_installed_csf_families_reads_the_loader_tables(tmp_path, monkeypatch):
+    package = tmp_path / "vllm" / "model_executor" / "model_loader"
+    package.mkdir(parents=True)
+    (tmp_path / "vllm" / "__init__.py").write_text("raise RuntimeError('no import')\n")
+    (package / "__init__.py").write_text(
+        '_LOADERS = {"mxfp4_csf": 1, "nvfp4_csf": 2}\n'
+    )
+    (package / "mxfp4_csf_loader.py").write_text(
+        "# DeepSeek-V4-Flash and its vision variant\n"
+        "FAMILIES = {\n"
+        '    "deepseek_v41": (384, 5120, 2304, range(40)),\n'
+        '    "deepseek_v4_flash": (256, 4096, 2048, range(43)),\n'
+        "}\n"
+        'OTHER = {"not_a_family": 1}\n'
+    )
+    (package / "nvfp4_csf_loader.py").write_text(
+        'FAMILIES = {\n    "glm53_nvfp4": (288, 4096, 2048, range(3, 45)),\n}\n'
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    assert launcher.installed_csf_families() == frozenset(
+        {"deepseek_v41", "deepseek_v4_flash", "glm53_nvfp4"}
+    )
+    (package / "mxfp4_csf_loader.py").write_text(
+        'FAMILIES = {\n    "deepseek_v41": (384, 5120, 2304),\n}\n'
+    )
+    assert "deepseek_v4_flash" not in launcher.installed_csf_families()
+
+
+@pytest.mark.parametrize("profile_id", DS4)
+def test_csf_checkpoints_get_no_derived_code_revision(profile_id, monkeypatch):
+    """DS4 trusts remote code; its FP4-CSF serving files carry the checkpoint's
+    Hugging Face files, so a Hub code revision must not reach vLLM."""
+    _pin_csf_revisions(monkeypatch)
+    plan = resolve(profile_id, env={})
+    assert plan.values["trust-remote-code"] is True
+    assert plan.values["revision"] == (csf_revision(profile_id) or "a" * 40)
+    assert "code-revision" not in plan.values
+    explicit = resolve(profile_id, env={"MODEL_CODE_REVISION": "c" * 40})
+    assert explicit.values["code-revision"] == "c" * 40
+    original = resolve(profile_id, env={"CHECKPOINT": "original"})
+    assert original.values["code-revision"] == CSF[profile_id].original_revision
+
+
+@pytest.mark.parametrize("profile_id", DS4)
+@pytest.mark.parametrize("mode", ["dspark", "mtp"])
+def test_ds4_csf_drafters_follow_the_serving_files(
+    tmp_path, monkeypatch, profile_id, mode
+):
+    """The DSpark and MTP drafters live in the target checkpoint; with FP4-CSF
+    they are read from the same serving files, without Hub revisions."""
+    monkeypatch.setattr(launcher, "CSF_SERVING_ROOT", tmp_path / "serving")
+    _pin_csf_revisions(monkeypatch)
+    root = _csf_checkpoint(
+        tmp_path / "ds4",
+        "lil-mxfp4-csf-checkpoint/1",
+        {"quant_method": "fp8", "weight_block_size": [128, 128]},
+    )
+    _fake_hub(monkeypatch, lambda repository, **kwargs: str(root))
+    plan = resolve(profile_id, "rtx-pro-6000-pcie", env={"SPECULATOR": mode})
+    spec = plan.values["speculative-config"]
+    assert spec["method"] == mode and spec["revision"] == plan.values["revision"]
+    if mode == "dspark":
+        assert spec["model"] == CSF[profile_id].csf
+
+    prepare_csf_checkpoint(plan)
+
+    serving = plan.values["model"]
+    assert serving.startswith(str(tmp_path / "serving"))
+    assert "revision" not in plan.values and "code-revision" not in plan.values
+    assert "revision" not in spec
+    assert spec.get("model", serving) == serving
+    assert "--revision" not in plan.argv and "--code-revision" not in plan.argv
+    assert "--trust-remote-code" in plan.argv
+    assert json.loads(plan.argv[plan.argv.index("--speculative-config") + 1]) == spec
+    assert _serving_config(plan)["quantization_config"]["quant_method"] == "mxfp4_csf"
+
+
+def test_a_preset_with_a_checkpoint_of_its_own_refuses_the_other_kind():
+    """CHECKPOINT chooses among the profile's checkpoints; a preset that names
+    its own serves it, and a choice of the other kind is an error."""
+
+    def spark(env):
+        return resolve(
+            "glm53-flash", "rtx-pro-6000-pcie", preset="glm53-spark-tp2", env=env
+        )
+
+    with pytest.raises(
+        ConfigError,
+        match="glm53-spark-tp2 serves a non-CSF checkpoint of its own.*CHECKPOINT=csf",
+    ):
+        spark({"CHECKPOINT": "csf"})
+    same_kind = spark({"CHECKPOINT": "original"})
+    assert same_kind.values["model"] == "local-inference-lab/GLM-5.3-Flash-NVFP4-Spark"
+    assert same_kind.values["load-format"] == "safetensors"
+    assert "checkpoint" not in same_kind.values
+
+
+def test_an_fp4_csf_checkpoint_outside_the_variants_needs_the_reader(tmp_path):
+    env = {
+        "MODEL": str(tmp_path),
+        "QUANTIZATION": "nvfp4_csf",
+        "LOAD_FORMAT": "nvfp4_csf",
+    }
+    custom = resolve("glm53-flash", env=env)
+    assert "checkpoint" not in custom.values
+    assert custom.values["load-format"] == "nvfp4_csf"
+    with pytest.raises(ConfigError, match="cannot read nvfp4_csf checkpoints$"):
+        resolve("glm53-flash", env=env, csf_formats=frozenset({"mxfp4_csf"}))

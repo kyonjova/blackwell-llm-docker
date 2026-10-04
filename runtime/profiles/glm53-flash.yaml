@@ -85,14 +85,14 @@ environment:
 checkpoints:
   csf:
     description: >-
-      Lossless FP4-CSF container of the NVFP4 checkpoint: the same weights with losslessly compressed expert scales (188.9 GB instead of 198.1 GB). The scales stay compressed in GPU memory, which leaves about 2 GiB (TP4) to 4 GiB (TP2) more for the KV cache per GPU.
+      Lossless FP4-CSF container of the QAD NVFP4 checkpoint: the same weights as the original, with the routed-expert scales compressed losslessly. B12X reads the compressed scales and they stay compressed in GPU memory, which leaves more room for the KV cache; the download is smaller too.
     options:
-      model: local-inference-lab/GLM-5.3-Flash-NVFP4-CSF
-      revision: 20f4777422f833c48b67bb0e554e1bc61dc55ca1
+      model: local-inference-lab/GLM-5.3-Flash-NVFP4-CSF-QAD
+      # TODO pin after upload
       quantization: nvfp4_csf
       load-format: nvfp4_csf
   original:
-    description: The ModelOpt NVFP4 export the FP4-CSF container was made from.
+    description: The QAD ModelOpt NVFP4 checkpoint the FP4-CSF container is made from, with uncompressed expert scales.
     options:
       model: local-inference-lab/GLM-5.3-Flash-NVFP4
 modes:

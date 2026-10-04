@@ -119,6 +119,11 @@
           "description": {
             "type": "string"
           },
+          "csf_family": {
+            "description": "Checkpoint family the installed vLLM's FP4-CSF loader must list (FAMILIES in model_executor/model_loader/<format>_loader.py) besides the load format itself.",
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
           "options": {
             "type": "object",
             "required": [

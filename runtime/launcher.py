@@ -218,6 +218,30 @@ def installed_csf_formats() -> frozenset[str] | None:
     return frozenset(fmt for fmt in CSF_FORMATS if f'"{fmt}"' in source)
 
 
+def installed_csf_families() -> frozenset[str] | None:
+    """Checkpoint families the installed vLLM's FP4-CSF loaders accept.
+
+    Each loader lists them in its FAMILIES table, for example deepseek_v41 and
+    deepseek_v4_flash in mxfp4_csf_loader.py; a reader of a format can predate
+    a family. None without vLLM.
+    """
+    if installed_source("vllm", "model_executor/model_loader/__init__.py") is None:
+        return None
+    families: set[str] = set()
+    for fmt in CSF_FORMATS:
+        source = installed_source(
+            "vllm", f"model_executor/model_loader/{fmt}_loader.py"
+        )
+        table = re.search(
+            r"^FAMILIES\b[^=\n]*=\s*\{(.*?)^\}", source or "", re.MULTILINE | re.DOTALL
+        )
+        if table:
+            families.update(
+                re.findall(r'^\s+"([a-z][a-z0-9_]*)"\s*:', table.group(1), re.MULTILINE)
+            )
+    return frozenset(families)
+
+
 def installed_b12x_mxfp8_moe() -> bool:
     """Whether the installed vLLM and B12X run MXFP8 MoE experts on B12X.
 
@@ -447,6 +471,7 @@ def resolve(
     preset: str | None = None,
     vllm_environment: frozenset[str] | None = None,
     csf_formats: frozenset[str] | None = None,
+    csf_families: frozenset[str] | None = None,
 ) -> LaunchPlan:
     incoming = dict(os.environ if env is None else env)
     config = config or {}
@@ -629,6 +654,7 @@ def resolve(
     # checkpoint selects that variant. Any other model or revision chosen by a
     # preset, settings or the operator keeps the profile settings unless
     # CHECKPOINT is chosen there too; then the variant fills in everything else.
+    # A preset that names a checkpoint of its own serves it as configured.
     checkpoint_warnings: list[str] = []
     if "checkpoint" in values:
         variants = model.get("checkpoints", {})
@@ -637,34 +663,69 @@ def resolve(
         def chosen(key: str) -> bool:
             return key in values and not origins[key].startswith(profile_level)
 
+        def is_csf(options: dict) -> bool:
+            return options.get("load-format") in CSF_FORMATS
+
+        def unreadable(item: dict) -> str | None:
+            """The checkpoints the installed vLLM cannot read, if a variant is one."""
+            if not is_csf(item["options"]):
+                return None
+            if (
+                csf_formats is not None
+                and item["options"]["load-format"] not in csf_formats
+            ):
+                return "FP4-CSF checkpoints"
+            family = item.get("csf_family")
+            if family and csf_families is not None and family not in csf_families:
+                return f"FP4-CSF checkpoints of the {family} family"
+            return None
+
         name, reason = values["checkpoint"], "derived:model"
-        if not chosen("checkpoint") and (chosen("model") or chosen("revision")):
+        if (
+            variants
+            and origins["model"].startswith("preset:")
+            and values["model"]
+            not in {item["options"]["model"] for item in variants.values()}
+        ):
+            # CHECKPOINT cannot swap a preset's own checkpoint for one of the
+            # other kind; the preset's settings read only its own.
+            if (
+                chosen("checkpoint")
+                and name in variants
+                and is_csf(variants[name]["options"]) != is_csf(values)
+            ):
+                kind = "an FP4-CSF" if is_csf(values) else "a non-CSF"
+                raise ConfigError(
+                    f"PRESET={preset} serves {kind} checkpoint of its own, "
+                    f"{values['model']}; CHECKPOINT={name} does not apply to it. "
+                    "Choose the checkpoint with the model profile, without this preset"
+                )
+            name = None
+        elif not chosen("checkpoint") and (chosen("model") or chosen("revision")):
             named = [
                 variant
                 for variant, item in variants.items()
                 if item["options"]["model"] == values["model"]
             ]
             name = named[0] if chosen("model") and named else None
-        unreadable = [
-            variant
+        missing = {
+            variant: text
             for variant, item in variants.items()
-            if csf_formats is not None
-            and item["options"].get("load-format") in CSF_FORMATS
-            and item["options"]["load-format"] not in csf_formats
-        ]
-        if name in unreadable:
+            if (text := unreadable(item)) is not None
+        }
+        if name in missing:
             if chosen("checkpoint") or chosen("model"):
                 raise ConfigError(
-                    "This image's vLLM cannot read FP4-CSF checkpoints; "
+                    f"This image's vLLM cannot read {missing[name]}; "
                     "use CHECKPOINT=original"
                 )
-            # An image whose vLLM predates the FP4-CSF readers serves the
-            # checkpoint it can read instead of failing at startup.
-            name = next(v for v in variants if v not in unreadable)
-            reason = "derived:installed vLLM lacks FP4-CSF readers"
+            # An image whose vLLM predates the FP4-CSF reader of this checkpoint
+            # serves the checkpoint it can read instead of failing at startup.
+            lacking = missing[name]
+            name = next(v for v in variants if v not in missing)
+            reason = f"derived:installed vLLM cannot read {lacking}"
             checkpoint_warnings.append(
-                f"This image's vLLM cannot read FP4-CSF checkpoints; serving the "
-                f"{name} checkpoint."
+                f"This image's vLLM cannot read {lacking}; serving the {name} checkpoint."
             )
         if name is None:
             values.pop("checkpoint")
@@ -680,6 +741,21 @@ def resolve(
             for key, value in options.items():
                 if not chosen(key) and not (key == "revision" and other):
                     set_value(key, value, f"checkpoint:{name}")
+    # An FP4-CSF checkpoint named by a preset or the operator rather than a
+    # checkpoint variant has no other checkpoint to fall back to.
+    if (
+        values.get("load-format") in CSF_FORMATS
+        and csf_formats is not None
+        and values["load-format"] not in csf_formats
+    ):
+        raise ConfigError(
+            f"This image's vLLM cannot read {values['load-format']} checkpoints"
+            + (
+                f", which PRESET={preset} serves"
+                if origins["load-format"].startswith("preset:")
+                else ""
+            )
+        )
 
     # Environment values are explicit only in a model-neutral image. Its build
     # contract is checked before execution; value-equality origin guessing is forbidden.
@@ -777,10 +853,13 @@ def resolve(
         derive(
             "revision", model["checkpoint_revision"], "profile checkpoint/code revision"
         )
+    # vLLM opens an FP4-CSF checkpoint from generated local serving files that
+    # carry its Hugging Face files, so no Hub code revision applies to it.
     if (
         values.get("trust-remote-code")
         and "revision" in values
         and "code-revision" not in values
+        and values.get("load-format") not in CSF_FORMATS
     ):
         derive(
             "code-revision",
@@ -1715,6 +1794,7 @@ def main() -> int:
             # --print-config outside one resolves the preset as written.
             vllm_environment=installed_vllm_environment() if contract else None,
             csf_formats=installed_csf_formats() if contract else None,
+            csf_families=installed_csf_families() if contract else None,
         )
         if args.print_config:
             public = plan.public()
