@@ -285,17 +285,21 @@ decides its option:
 | `ROUTER_WEIGHTS` | `fp32`, `bf16` (only with `bf16` activations) | `B12X_W4A16_FP32_TOPK_WEIGHTS` 1/0 |
 | `PREFILL_ACTIVATIONS` | `a16`, `a4` (only with `bf16` activations and a QAD checkpoint) | `B12X_W4A16_A4_PREFILL_MIN_TOKENS` 0/1536 |
 
-`a4` runs expert calls of at least 1,536 tokens with NVFP4 activations over the
-same packed FP4 weights. On two RTX PRO 6000 Max-Q with the `glm53-tp2`
+`a4` runs the prefill rows of every step with NVFP4 activations over the same
+packed FP4 weights (images before vLLM #977 only did so for expert calls of
+at least 1,536 tokens). On two RTX PRO 6000 Max-Q with the `glm53-tp2`
 preset, 8K and 32K-token prefills ran 27% faster with `a4` than with `a16`
 (9,528 and 9,784 against 7,490 and 7,728 tok/s), at the same decode speed; the
 needle-checksum near-miss rate rose from 0.53% to 1.75%. A second NVFP4
 activation plane for the residual (B12X's `B12X_W4A16_A4_PREFILL_TERMS=2`) gave
 a smaller speedup without fewer near misses (1.85%), so it is not offered as an
 option.
-Decode stays W4A16 in every mode: decode, MTP verification and short calls
-stay below the threshold, and vLLM keeps the decode rows of steps that mix
-decode and prefill on W4A16. `a4` needs an image whose B12X and vLLM include
+Decode always stays W4A16 (BF16 activations), in every mode and with no extra
+variable: vLLM runs the decode and MTP verification rows of every step on
+W4A16, and steps replayed from a CUDA graph keep W4A16 for all rows. Choosing
+by row type also prefilled a 1,154-token prompt 11% faster than the call-size
+threshold did (6,498 against 5,868 tok/s), with the same needle-checksum
+results. `a4` needs an image whose B12X and vLLM include
 that prefill path, and `EXPERT_ACTIVATIONS=bf16`; with `fp4` an explicit `a4`
 is refused. The options apply to the B12X MoE backend, so the
 GLM TP3 preset, which runs FlashInfer CUTLASS experts, has none of them.
