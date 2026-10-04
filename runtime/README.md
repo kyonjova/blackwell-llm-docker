@@ -317,6 +317,20 @@ memory, which leaves more room for the KV cache. The downloads are smaller too.
 | DeepSeek-V4.1-Flash | `local-inference-lab/DeepSeek-V4.1-Flash-lossless-CSF` | `deepseek-ai/DeepSeek-V4.1-Flash` |
 | DeepSeek-V4-Flash | `local-inference-lab/DeepSeek-V4-Flash-0731-lossless-CSF` | `deepseek-ai/DeepSeek-V4-Flash-0731` at `9e165c30` |
 
+Measured on RTX PRO 6000 Max-Q (325 W) with each profile's settings, FP4-CSF
+against the original checkpoint (decode: aggregate output tok/s at the listed
+concurrency, two runs; prefill: one 8K and one 32K prompt):
+
+| Model (GPUs) | KV cache tokens | Decode | Prefill 8K / 32K |
+| --- | --- | --- | --- |
+| Qwen3.8-Flash-Next (1) | 750,354 vs 551,925 (+36%) | C1 and C8 within 0.5%; C16 1,079 vs 878 | -2.4% / -1.9% |
+| GLM-5.3-Flash `glm53-tp2` (2) | 2,073,850 vs 871,556 | within 1% | -0.5% / -0.8% |
+| DeepSeek-V4.1-Flash (4) | 12,951,057 vs 9,566,426 (+35%) | C8 -3.1%, C16 -3.5%, C32 -1.2% | -1.3% / -1.7% |
+| DeepSeek-V4-Flash (2) | 1,853,797 vs 1,308,256 (+42%) | C4 +0.9%, C8 -0.8% | +0.7% / +2.2% |
+
+The DeepSeek-V4.1-Flash decode cost comes from expanding the compressed scales
+of every routed expert in each layer before the B12X W4A8 kernels run.
+
 - `-e CHECKPOINT=original` serves the original checkpoint with the profile's
   ModelOpt or DeepSeek settings, at the revision shown.
 - `MODEL` naming either checkpoint selects it. Any other `MODEL` or
