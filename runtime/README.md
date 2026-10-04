@@ -45,9 +45,42 @@ cache. To use another location, mount that directory and set `-e HF_HOME=/path`.
 ## Named deployment settings
 
 `PRESET` selects a data-only overlay from `presets.yaml`. Model defaults remain
-separate from deployment-specific memory constraints. The Spark TP2 preset uses
-the Spark checkpoint on two 96-GB RTX PRO GPUs; it does not select DGX Spark
-hardware or replace GLM TP4 defaults.
+separate from deployment-specific memory constraints. The default GLM recipe
+for two 96-GB RTX PRO GPUs is `glm53-tp2`:
+
+```bash
+docker run -d --name glm-tp2 --init --gpus '"device=0,1"' \
+  --restart on-failure --network host --ipc host --shm-size 32g \
+  --ulimit memlock=-1 --ulimit stack=67108864:67108864 \
+  -v model-cache:/root/.cache/huggingface -v glm-tp2-runtime:/cache \
+  -e PRESET=glm53-tp2 -e PORT=8000 "$LIL_IMAGE"
+```
+
+It serves the QAD weights from the stored checkpoint
+`local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD` at revision `9ca06e24`:
+MXFP8 attention and shared experts, and NVFP4 routed experts whose scales stay
+losslessly compressed (FP4-CSF). Routed experts take BF16 activations with
+FP32 router weights. It runs TP2/DCP2, MTP3 with B12X drafter experts, eight
+request slots, a 3,072-token prefill budget and an 8 GiB KV cache per GPU, with
+the Spark preset's memory savings (input embedding table in host RAM, MXFP8
+vision tower, shared NCCL communicator) and NCCL settings. The checkpoint keeps
+the vision tower in BF16, so the preset quantizes it while loading
+(`VLLM_GLM53_VISION_MXFP8=1`).
+
+- It serves only its own checkpoint: `CHECKPOINT=original` is refused; use the
+  GLM profile without a preset, or the Spark preset below, for other checkpoints.
+- The image's vLLM must read `nvfp4_csf` checkpoints; otherwise the launcher
+  refuses the preset.
+- Sixteen request slots (`MAX_NUM_SEQS=16`) and LMCache (`CACHE_MODE=lmcache`)
+  take 64 MiB per extra slot and 192 MiB from the KV cache, as on the Spark
+  preset.
+- `PREFILL_ACTIVATIONS=a8` or `a4` runs long prefill calls with NVFP4
+  activations for faster prefill while decode stays W4A16, see
+  [GLM-5.3-Flash expert precision](#glm-53-flash-expert-precision).
+
+The Spark TP2 preset remains available. It uses the Spark checkpoint (stored
+MXFP8 attention, pre-QAD experts) on two 96-GB RTX PRO GPUs; it does not select
+DGX Spark hardware or replace GLM TP4 defaults.
 
 ```bash
 docker run -d --name glm-spark-tp2 --init --gpus '"device=0,1"' \
@@ -252,7 +285,11 @@ decides its option:
 | `PREFILL_ACTIVATIONS` | `a16`, `a8`, `a4` (only with `bf16` activations) | `B12X_W4A16_A4_PREFILL_MIN_TOKENS` 0/1536, `B12X_W4A16_A4_PREFILL_TERMS` 2 for a8, 1 for a4 |
 
 `a8` and `a4` run expert calls of at least 1,536 tokens with NVFP4
-activations, two planes (value and residual) for `a8` and one for `a4`.
+activations, two planes (value and residual) for `a8` and one for `a4`. On two
+RTX PRO 6000 Max-Q with the `glm53-tp2` preset, 8K-32K-token prefills ran about
+13% faster with `a8` and 19% faster with `a4` than with `a16`, at the same
+decode speed; the needle-checksum near-miss rate rose from 0.53% to 1.75% with
+`a4` (`a8` not measured yet).
 Decode stays W4A16 in every mode: decode, MTP verification and short calls
 stay below the threshold, and vLLM keeps the decode rows of steps that mix
 decode and prefill on W4A16. They need an image whose B12X and vLLM include
@@ -298,8 +335,8 @@ memory, which leaves more room for the KV cache. The downloads are smaller too.
   the original `MODEL`.
 - FP4-CSF needs B12X MoE without expert parallelism, so the GLM TP3 preset
   serves the original checkpoint. A preset that names a checkpoint of its
-  own, such as the GLM Spark TP2 preset, serves that checkpoint and refuses
-  a `CHECKPOINT` of the other kind.
+  own, such as `glm53-tp2` (FP4-CSF) or the GLM Spark TP2 preset, serves
+  that checkpoint and refuses a `CHECKPOINT` of the other kind.
 
 GLM and DeepSeek retain the source launchers' temperature 1/top-p 0.95
 server defaults. Explicit generation configuration replaces these defaults;

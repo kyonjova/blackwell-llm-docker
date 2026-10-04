@@ -597,3 +597,33 @@ def test_an_fp4_csf_checkpoint_outside_the_variants_needs_the_reader(tmp_path):
     assert custom.values["load-format"] == "nvfp4_csf"
     with pytest.raises(ConfigError, match="cannot read nvfp4_csf checkpoints$"):
         resolve("glm53-flash", env=env, csf_formats=frozenset({"mxfp4_csf"}))
+
+
+def test_the_glm_tp2_preset_reads_its_checkpoint_through_serving_files(
+    tmp_path, monkeypatch
+):
+    """glm53-tp2 names a stored FP4-CSF checkpoint of its own; it is
+    downloaded at the preset's revision and its MTP drafter follows it."""
+    monkeypatch.setattr(launcher, "CSF_SERVING_ROOT", tmp_path / "serving")
+    root = _csf_checkpoint(
+        tmp_path / "qad", "lil-nvfp4-csf-checkpoint/1", {"quant_method": "modelopt"}
+    )
+    downloads = []
+
+    def snapshot_download(repository, revision=None, local_files_only=False):
+        downloads.append((repository, revision, local_files_only))
+        return str(root)
+
+    _fake_hub(monkeypatch, snapshot_download)
+    plan = resolve("glm53-flash", "rtx-pro-6000-pcie", preset="glm53-tp2", env={})
+    repository, revision = plan.values["model"], plan.values["revision"]
+
+    prepare_csf_checkpoint(plan)
+
+    assert repository == "local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD"
+    assert downloads == [(repository, revision, True)]
+    assert _serving_config(plan)["quantization_config"]["quant_method"] == "nvfp4_csf"
+    assert "--revision" not in plan.argv and "--code-revision" not in plan.argv
+    spec = json.loads(plan.argv[plan.argv.index("--speculative-config") + 1])
+    assert "revision" not in spec and "model" not in spec
+    assert spec["moe_backend"] == "b12x"
