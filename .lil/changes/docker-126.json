@@ -1,0 +1,20 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-126",
+  "category": "internal",
+  "summary": "Docs: a4 prefill runs every prefill row with NVFP4 activations; decode always stays W4A16",
+  "models": [
+    "GLM-5.3-Flash"
+  ],
+  "compatibility": "No user action required.",
+  "details": [
+    "The README and option docs describe the row-type choice of vllm #977: PREFILL_ACTIVATIONS=a4 runs the prefill rows of every step with NVFP4 activations, and decode stays W4A16 (BF16 activations) in both modes with no extra variable."
+  ],
+  "authors": [
+    "voipmonitor"
+  ],
+  "pull_requests": [
+    126
+  ],
+  "requires": []
+}

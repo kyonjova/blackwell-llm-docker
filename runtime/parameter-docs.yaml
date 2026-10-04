@@ -132,16 +132,21 @@ options:
       exactly.
   prefill-activations:
     group: precision
-    summary: Activation precision of long prefill calls into the routed experts while expert-activations
-      is bf16. a16 keeps BF16 activations everywhere. a4 runs expert calls of at least 1,536 tokens with
-      NVFP4 activations over the same packed FP4 weights. Decode stays W4A16 in both modes, because
-      decode, MTP verification and short calls stay below the threshold and vLLM keeps the decode rows of
-      steps that mix decode and prefill on W4A16. Sets B12X_W4A16_A4_PREFILL_MIN_TOKENS.
+    summary: Activation precision of the prompt (prefill) rows into the routed experts while
+      expert-activations is bf16. a16 keeps BF16 activations everywhere. a4 runs the prefill rows of every
+      step with NVFP4 activations over the same packed FP4 weights. Decode always stays W4A16 (BF16
+      activations) in both modes, with no extra variable - vLLM runs the decode and MTP verification rows
+      of every step on W4A16, and steps replayed from a CUDA graph keep W4A16 for all rows. Sets
+      B12X_W4A16_A4_PREFILL_MIN_TOKENS.
     why: GLM-5.3-Flash defaults to a16, the most precise choice. On two RTX PRO 6000 Max-Q serving the
       stored QAD checkpoint with the glm53-tp2 settings (TP2/DCP2, MTP3, eight request slots), prefill
       measured 7,490 and 7,728 tok/s at 8K and 32K tokens with a16 and 9,528 and 9,784 with a4; decode
       stayed the same (about 170 tok/s for one request and 530 for eight). The needle-checksum near-miss
-      rate was 0.53% with a16 and 1.75% with a4. A second NVFP4 plane for the residual raised prefill
+      rate was 0.53% with a16 and 1.75% with a4. Choosing by row type rather than by call size (images
+      from vllm #977 on; before, prefill calls under 1,536 tokens stayed BF16) prefilled a 1,154-token
+      prompt 11% faster (6,498 against 5,868 tok/s), left 8K/32K prefill and decode unchanged and answered
+      492, 492 and 490 of 500 needle-checksum requests (490, 492 and 497 with the threshold). A second
+      NVFP4 plane for the residual raised prefill
       less and missed 1.85%, so it is not an option. a4 needs expert-activations bf16 (with fp4 the
       experts already take FP4 activations everywhere) and an image whose B12X and vLLM include the W4A16
       A4 prefill path. The Spark checkpoint (glm53-spark-tp2) is refused: its pre-QAD experts answered 456
@@ -769,12 +774,11 @@ environment:
     why: GLM-5.3-Flash and Qwen3.8 Flash Next set 512 together with a block limit of 4.
   B12X_W4A16_A4_PREFILL_MIN_TOKENS:
     group: precision
-    summary: W4A16 MoE calls of at least this many tokens run NVFP4 activations over the same packed FP4
-      weights; smaller calls, including every decode step, keep BF16 activations. 0 (the b12x default)
-      turns the path off. vLLM passes the experts' activation scales and keeps decode rows of mixed steps
-      on W4A16 when it is set.
-    why: GLM-5.3-Flash derives it from prefill-activations, 0 for a16 and 1536 for a4. Below about 1,000
-      tokens the W4A16 kernel is at least as fast as the NVFP4-activation one.
+    summary: A positive value turns on NVFP4 activations over the same packed FP4 weights for W4A16 MoE
+      prefill; 0 (the b12x default) turns the path off. vLLM then passes the experts' activation scales
+      and chooses per row - prefill rows A4, decode rows W4A16 - whatever the step size. Callers that do
+      not choose, and images before vllm #977, run calls of at least this many tokens A4.
+    why: GLM-5.3-Flash derives it from prefill-activations, 0 for a16 and 1536 for a4.
   B12X_W4A16_FP32_TOPK_WEIGHTS:
     group: kernels
     summary: When 1, the b12x W4A16 MoE applies the FP32 router weights during the FP32 top-k sum instead

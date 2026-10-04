@@ -51,10 +51,10 @@ SECRET = re.compile(
 )
 # Precision of GLM-5.3-Flash's routed FP4 experts on B12X.
 GLM_PRECISION_OPTIONS = ("expert-activations", "router-weights", "prefill-activations")
-# With prefill-activations a4, B12X runs W4A16 expert calls of at least this
-# many tokens with NVFP4 activations. Decode and MTP verification calls stay
-# below it, and vLLM keeps the decode rows of mixed steps on W4A16; below about
-# 1K tokens W4A16 is faster anyway.
+# prefill-activations a4 sets B12X_W4A16_A4_PREFILL_MIN_TOKENS to this value.
+# vLLM then runs the prefill rows of every step with NVFP4 activations and the
+# decode rows with W4A16, whatever the step size (images before vllm #977
+# used the value as a call-size threshold instead).
 GLM_A4_PREFILL_MIN_TOKENS = 1536
 # Checkpoints whose routed experts lose accuracy with a4 prefill: the Spark
 # checkpoint's pre-QAD experts answered 456 of 500 needle-checksum requests
