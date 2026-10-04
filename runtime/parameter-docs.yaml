@@ -30,8 +30,8 @@ options:
     summary: Hugging Face repository or local path of the target checkpoint. Overriding it changes the
       weights only; the profile still selects the model architecture and kernels.
     why: Each profile names the checkpoint its settings were qualified with, for example XiaomiMiMo/MiMo-V2.6-Flash-RL
-      for MiMo. Qwen3.8-Flash-Next, GLM-5.3-Flash, DeepSeek-V4.1-Flash and DeepSeek-V4-Flash take theirs
-      from checkpoint (FP4-CSF by default). The glm53-tp2 preset selects the stored
+      for MiMo. Qwen3.8-Flash-Next, GLM-5.3-Flash, DeepSeek-V4.1-Flash, DeepSeek-V4-Flash and DeepSeek-V4-Flash
+      Vision take theirs from checkpoint (FP4-CSF by default). The glm53-tp2 preset selects the stored
       QAD checkpoint GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD and the GLM Spark TP2 preset the Spark checkpoint
       GLM-5.3-Flash-NVFP4-Spark.
   checkpoint:
@@ -41,12 +41,11 @@ options:
       made from. The choice sets the model, revision, quantization and load format together. A model
       or revision you set yourself keeps its own settings unless you also set checkpoint, so
       checkpoint=csf with a local FP4-CSF copy reads that copy.
-    why: Qwen3.8-Flash-Next, GLM-5.3-Flash (both QAD), DeepSeek-V4.1-Flash and DeepSeek-V4-Flash default
-      to csf. Their scales stay compressed in GPU memory, which leaves more room for the KV cache, and
-      the downloads are smaller. DeepSeek-V4-Flash Vision has no FP4-CSF checkpoint yet and serves the
-      original. An image whose vLLM cannot read the FP4-CSF checkpoint serves the original with a
-      warning; for DeepSeek-V4-Flash the installed MXFP4-CSF loader must also list the
-      deepseek_v4_flash family. FP4-CSF needs
+    why: Qwen3.8-Flash-Next, GLM-5.3-Flash (both QAD), DeepSeek-V4.1-Flash, DeepSeek-V4-Flash and
+      DeepSeek-V4-Flash Vision default to csf. Their scales stay compressed in GPU memory, which leaves
+      more room for the KV cache, and the downloads are smaller. An image whose vLLM cannot read the
+      FP4-CSF checkpoint serves the original with a warning; for DeepSeek-V4-Flash and its vision
+      variant the installed MXFP4-CSF loader must also list the deepseek_v4_flash family. FP4-CSF needs
       B12X MoE kernels without expert parallelism, so the GLM TP3 preset uses original. A preset that
       names a checkpoint of its own keeps it and refuses a checkpoint of the other kind.
   served-model-name:
@@ -179,9 +178,8 @@ options:
     group: model
     summary: Hugging Face revision (branch, tag or commit) of the checkpoint.
     why: When the profile's default checkpoint is used, the launcher pins MiMo's checkpoint_revision
-      5711b268, the first revision whose dflash/config.json is valid JSON (vllm PR 881). The DS4 original
-      checkpoint pins the source launcher's revision 9e165c30, and the DS4 Vision profile its
-      checkpoint_revision 6821d6ad. An FP4-CSF
+      5711b268, the first revision whose dflash/config.json is valid JSON (vllm PR 881). The DS4 and DS4
+      Vision original checkpoints pin the source launcher's revisions 9e165c30 and 6821d6ad. An FP4-CSF
       checkpoint is downloaded at the revision its checkpoint variant or preset names (glm53-tp2 pins
       9ca06e24, the revision it was validated with); vLLM then reads a local directory, so it gets no
       revision.

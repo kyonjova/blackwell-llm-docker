@@ -1,0 +1,21 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-123",
+  "category": "feature",
+  "summary": "DeepSeek-V4-Flash Vision serves its lossless FP4-CSF checkpoint by default",
+  "models": [
+    "DeepSeek-V4-Flash-Vision-Exp"
+  ],
+  "compatibility": "CHECKPOINT=original serves the original checkpoint as before. An image whose vLLM lacks the deepseek_v4_flash MXFP4-CSF family serves the original with a warning.",
+  "details": [
+    "CHECKPOINT=csf (default) or original chooses the DeepSeek-V4-Flash Vision checkpoint: DeepSeek-V4-Flash-Vision-Exp-lossless-CSF holds the same weights as the original with losslessly compressed routed-expert scales, which stay compressed in GPU memory.",
+    "Measured with the profile settings on two RTX PRO 6000 Max-Q: KV cache 1,850,842 instead of 1,306,708 tokens (+42%), decode within 3% per verification step, prefill -1.4% / -2.9% at 8K / 32K tokens."
+  ],
+  "authors": [
+    "voipmonitor"
+  ],
+  "pull_requests": [
+    123
+  ],
+  "requires": []
+}

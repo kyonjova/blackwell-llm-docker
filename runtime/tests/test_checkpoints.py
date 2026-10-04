@@ -45,10 +45,14 @@ CSF = {
         "deepseek-ai/DeepSeek-V4-Flash-0731",
         "9e165c30e2704aec5d9d593cce3eebd58bbef1cb",
     ),
+    "ds4-vision": Variants(
+        "local-inference-lab/DeepSeek-V4-Flash-Vision-Exp-lossless-CSF",
+        "mxfp4_csf",
+        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp",
+        "6821d6ad3681a4b137b066b76094fa82ebd0a380",
+    ),
 }
-# DeepSeek-V4-Flash Vision has no FP4-CSF variant yet: its checkpoint could not be
-# published (Hugging Face storage quota), so it serves the original only.
-DS4 = ("ds4-flash",)
+DS4 = ("ds4-flash", "ds4-vision")
 
 
 def csf_revision(profile_id):
