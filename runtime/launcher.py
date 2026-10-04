@@ -51,10 +51,10 @@ SECRET = re.compile(
 )
 # Precision of GLM-5.3-Flash's routed FP4 experts on B12X.
 GLM_PRECISION_OPTIONS = ("expert-activations", "router-weights", "prefill-activations")
-# With prefill-activations a8 or a4, B12X runs W4A16 expert calls of at least
-# this many tokens with NVFP4 activations (two planes for a8, one for a4).
-# Decode and MTP verification calls stay below it, and vLLM keeps the decode
-# rows of mixed steps on W4A16; below about 1K tokens W4A16 is faster anyway.
+# With prefill-activations a4, B12X runs W4A16 expert calls of at least this
+# many tokens with NVFP4 activations. Decode and MTP verification calls stay
+# below it, and vLLM keeps the decode rows of mixed steps on W4A16; below about
+# 1K tokens W4A16 is faster anyway.
 GLM_A4_PREFILL_MIN_TOKENS = 1536
 
 
@@ -1228,10 +1228,10 @@ def configure_expert_precision(
 
     expert-activations bf16 runs the FP4 experts as W4A16 (FP4 weights, BF16
     activations) and fp4 as W4A4. router-weights fp32 combines W4A16 expert
-    outputs with FP32 router weights. prefill-activations a8 or a4 runs W4A16
-    calls of at least GLM_A4_PREFILL_MIN_TOKENS tokens with two or one NVFP4
-    activation planes. A variable the operator sets itself is kept and decides
-    the option it belongs to.
+    outputs with FP32 router weights. prefill-activations a4 runs W4A16 calls
+    of at least GLM_A4_PREFILL_MIN_TOKENS tokens with NVFP4 activations. A
+    variable the operator sets itself is kept and decides the option it belongs
+    to.
     """
     present = [option for option in GLM_PRECISION_OPTIONS if option in values]
     if not present:
@@ -1294,32 +1294,19 @@ def configure_expert_precision(
             effective(
                 option, decode[explicit_env[name]], f"{name}={explicit_env[name]}"
             )
-    threshold_name, planes_name = (
-        "B12X_W4A16_A4_PREFILL_MIN_TOKENS",
-        "B12X_W4A16_A4_PREFILL_TERMS",
-    )
-    given = {
-        name: explicit_env[name]
-        for name in (threshold_name, planes_name)
-        if name in explicit_env
-    }
-    if given and "prefill-activations" in values:
-        threshold, planes = given.get(threshold_name), given.get(planes_name)
+    threshold_name = "B12X_W4A16_A4_PREFILL_MIN_TOKENS"
+    threshold = explicit_env.get(threshold_name)
+    if threshold is not None and "prefill-activations" in values:
         try:
-            enabled = (
-                int(threshold) > 0
-                if threshold is not None
-                else values["prefill-activations"] != "a16"
-            )
+            enabled = int(threshold) > 0
         except ValueError:
             enabled = None  # B12X refuses the value at startup
-        reason = ", ".join(f"{name}={value}" for name, value in given.items())
-        if enabled is False:
-            effective("prefill-activations", "a16", reason)
-        elif enabled:
-            if planes not in ("1", "2"):
-                planes = "2" if values["prefill-activations"] == "a8" else "1"
-            effective("prefill-activations", "a8" if planes == "2" else "a4", reason)
+        if enabled is not None:
+            effective(
+                "prefill-activations",
+                "a4" if enabled else "a16",
+                f"{threshold_name}={threshold}",
+            )
 
     bf16 = values.get("expert-activations") == "bf16"
     option_env(
@@ -1347,8 +1334,6 @@ def configure_expert_precision(
             threshold_name,
             "0" if prefill == "a16" else str(GLM_A4_PREFILL_MIN_TOKENS),
         )
-    if prefill in ("a8", "a4"):
-        option_env("prefill-activations", planes_name, "2" if prefill == "a8" else "1")
 
 
 CSF_FORMATS = ("nvfp4_csf", "mxfp4_csf")

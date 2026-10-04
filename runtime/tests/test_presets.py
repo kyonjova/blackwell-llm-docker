@@ -469,9 +469,11 @@ def test_tp2_extra_slots_and_the_external_cache_shrink_the_kv_cache():
 
 
 def test_tp2_prefill_activation_choices():
-    a8 = tp2({"PREFILL_ACTIVATIONS": "a8"})
-    assert a8.environment["B12X_W4A16_A4_PREFILL_MIN_TOKENS"] == "1536"
-    assert a8.environment["B12X_W4A16_A4_PREFILL_TERMS"] == "2"
-    assert a8.environment["VLLM_B12X_MOE_FP4_FORCE_A16"] == "1"
+    a4 = tp2({"PREFILL_ACTIVATIONS": "a4"})
+    assert a4.environment["B12X_W4A16_A4_PREFILL_MIN_TOKENS"] == "1536"
+    assert "B12X_W4A16_A4_PREFILL_TERMS" not in a4.environment
+    assert a4.environment["VLLM_B12X_MOE_FP4_FORCE_A16"] == "1"
+    with pytest.raises(ConfigError, match="prefill-activations must be one of"):
+        tp2({"PREFILL_ACTIVATIONS": "a8"})
     with pytest.raises(ConfigError, match="needs expert-activations bf16"):
         tp2({"EXPERT_ACTIVATIONS": "fp4", "PREFILL_ACTIVATIONS": "a4"})

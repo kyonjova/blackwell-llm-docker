@@ -74,8 +74,8 @@ the vision tower in BF16, so the preset quantizes it while loading
 - Sixteen request slots (`MAX_NUM_SEQS=16`) and LMCache (`CACHE_MODE=lmcache`)
   take 64 MiB per extra slot and 192 MiB from the KV cache, as on the Spark
   preset.
-- `PREFILL_ACTIVATIONS=a8` or `a4` runs long prefill calls with NVFP4
-  activations for faster prefill while decode stays W4A16, see
+- `PREFILL_ACTIVATIONS=a4` runs long prefill calls with NVFP4 activations for
+  faster prefill while decode stays W4A16, see
   [GLM-5.3-Flash expert precision](#glm-53-flash-expert-precision).
 
 The Spark TP2 preset remains available. It uses the Spark checkpoint (stored
@@ -282,19 +282,20 @@ decides its option:
 | --- | --- | --- |
 | `EXPERT_ACTIVATIONS` | `bf16` (W4A16), `fp4` (W4A4, faster, less exact) | `VLLM_B12X_MOE_FP4_FORCE_A16` 1/0 |
 | `ROUTER_WEIGHTS` | `fp32`, `bf16` (only with `bf16` activations) | `B12X_W4A16_FP32_TOPK_WEIGHTS` 1/0 |
-| `PREFILL_ACTIVATIONS` | `a16`, `a8`, `a4` (only with `bf16` activations) | `B12X_W4A16_A4_PREFILL_MIN_TOKENS` 0/1536, `B12X_W4A16_A4_PREFILL_TERMS` 2 for a8, 1 for a4 |
+| `PREFILL_ACTIVATIONS` | `a16`, `a4` (only with `bf16` activations) | `B12X_W4A16_A4_PREFILL_MIN_TOKENS` 0/1536 |
 
-`a8` and `a4` run expert calls of at least 1,536 tokens with NVFP4
-activations, two planes (value and residual) for `a8` and one for `a4`. On two
-RTX PRO 6000 Max-Q with the `glm53-tp2` preset, 8K-32K-token prefills ran about
-13% faster with `a8` and 19% faster with `a4` than with `a16`, at the same
-decode speed; the needle-checksum near-miss rate rose from 0.53% to 1.75% with
-`a4` (`a8` not measured yet).
+`a4` runs expert calls of at least 1,536 tokens with NVFP4 activations over the
+same packed FP4 weights. On two RTX PRO 6000 Max-Q with the `glm53-tp2`
+preset, 8K-32K-token prefills ran about 19% faster with `a4` than with `a16`,
+at the same decode speed; the needle-checksum near-miss rate rose from 0.53% to
+1.75%. A second NVFP4 activation plane for the residual (B12X's
+`B12X_W4A16_A4_PREFILL_TERMS=2`) gave a smaller speedup (13%) without fewer
+near misses (1.85%), so it is not offered as an option.
 Decode stays W4A16 in every mode: decode, MTP verification and short calls
 stay below the threshold, and vLLM keeps the decode rows of steps that mix
-decode and prefill on W4A16. They need an image whose B12X and vLLM include
-that prefill path, and `EXPERT_ACTIVATIONS=bf16`; with `fp4` an explicit
-`a8` or `a4` is refused. The options apply to the B12X MoE backend, so the
+decode and prefill on W4A16. `a4` needs an image whose B12X and vLLM include
+that prefill path, and `EXPERT_ACTIVATIONS=bf16`; with `fp4` an explicit `a4`
+is refused. The options apply to the B12X MoE backend, so the
 GLM TP3 preset, which runs FlashInfer CUTLASS experts, has none of them.
 
 ### FP4-CSF checkpoints

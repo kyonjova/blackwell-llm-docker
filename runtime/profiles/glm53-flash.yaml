@@ -56,7 +56,7 @@ defaults:
   override-generation-config: {temperature: 1.0, top_p: 0.95}
   # Routed FP4 experts on B12X take BF16 activations (W4A16) and combine their
   # outputs with FP32 router weights. Prefill can trade activation precision
-  # for speed with prefill-activations a8 or a4; decode stays W4A16.
+  # for speed with prefill-activations a4; decode stays W4A16.
   expert-activations: bf16
   router-weights: fp32
   prefill-activations: a16
