@@ -638,6 +638,24 @@ uploads it to docker.local-inference-lab.ai. The identifier comes from
 <https://docker.local-inference-lab.ai/bench/token>; without it the command
 stops with instructions. `lil-bench --no-upload` measures locally.
 
+### Tool-calling quality (`--tool-eval`)
+
+The bench also runs [tool-eval-bench](https://github.com/SeraphimSerapis/tool-eval-bench)
+with the community leaderboard settings (`--hardmode --seed 42 --temperature 0
+--parallel 4 --max-turns 30 --timeout 600`) against the running server:
+
+```bash
+docker exec -it -e LLM_BENCH_CACHE_DIR=/cache/llm-bench <container> \
+  python3 /opt/lil/bench/llm_decode_bench.py --tool-eval --port <PORT>
+```
+
+The first run installs the pinned tool-eval-bench commit from GitHub into its
+own virtual environment (a few seconds, network required); the serving venv is
+never modified. `LLM_BENCH_CACHE_DIR=/cache/llm-bench` keeps that environment
+on the runtime volume, so a recreated container reuses it. A run takes about
+1.5 minutes on GLM-5.3-Flash; at four-way parallelism single runs vary by a few
+points, so compare means of several runs.
+
 ## Generated Compose and wiki material
 
 ```bash
