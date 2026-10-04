@@ -16,7 +16,7 @@
     "DeepSeek-V4-Flash and its vision variant also need the deepseek_v4_flash family in the image's vLLM MXFP4-CSF loader; images without it serve the original checkpoint.",
     "New GLM options: EXPERT_ACTIVATIONS (bf16, fp4), ROUTER_WEIGHTS (fp32, bf16) and PREFILL_ACTIVATIONS (a16, a4). a4 runs routed-expert calls of at least 1,536 tokens with NVFP4 activations when the image's B12X and vLLM include that path; decode always stays on BF16 activations. a4 needs EXPERT_ACTIVATIONS=bf16.",
     "PRESET=glm53-tp2 serves the stored QAD checkpoint GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD on two 96-GB GPUs with BF16 expert activations, FP32 router weights, TP2/DCP2, MTP3, eight request slots and an 8 GiB KV cache per GPU. It serves only its own checkpoint, so CHECKPOINT=original is refused; glm53-spark-tp2 stays available.",
-    "Measured with glm53-tp2 on two RTX PRO 6000 Max-Q: prefill 7,490 and 7,728 tok/s at 8K and 32K tokens and decode about 171 tok/s for one request and 536 for eight. PREFILL_ACTIVATIONS=a4 raised prefill to 8,965 and 9,194 tok/s at the same decode speed; the needle-checksum near-miss rate was 0.53% with a16 and 1.75% with a4."
+    "Measured with glm53-tp2 on two RTX PRO 6000 Max-Q: prefill 7,490 and 7,728 tok/s at 8K and 32K tokens and decode about 171 tok/s for one request and 536 for eight. PREFILL_ACTIVATIONS=a4 raised prefill to 9,528 and 9,784 tok/s (27% faster) at the same decode speed; the needle-checksum near-miss rate was 0.53% with a16 and 1.75% with a4."
   ],
   "authors": [
     "voipmonitor"

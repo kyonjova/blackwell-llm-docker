@@ -139,10 +139,10 @@ options:
       steps that mix decode and prefill on W4A16. Sets B12X_W4A16_A4_PREFILL_MIN_TOKENS.
     why: GLM-5.3-Flash defaults to a16, the most precise choice. On two RTX PRO 6000 Max-Q serving the
       stored QAD checkpoint with the glm53-tp2 settings (TP2/DCP2, MTP3, eight request slots), prefill
-      measured 7,490 and 7,728 tok/s at 8K and 32K tokens with a16 and 8,965 and 9,194 with a4; decode
-      stayed the same (about 171 tok/s for one request and 536 for eight). The needle-checksum near-miss
+      measured 7,490 and 7,728 tok/s at 8K and 32K tokens with a16 and 9,528 and 9,784 with a4; decode
+      stayed the same (about 170 tok/s for one request and 530 for eight). The needle-checksum near-miss
       rate was 0.53% with a16 and 1.75% with a4. A second NVFP4 plane for the residual raised prefill
-      only 13% and missed 1.85%, so it is not an option. a4 needs expert-activations bf16 (with fp4 the
+      less and missed 1.85%, so it is not an option. a4 needs expert-activations bf16 (with fp4 the
       experts already take FP4 activations everywhere) and an image whose B12X and vLLM include the W4A16
       A4 prefill path.
   mamba-cache-mode:
