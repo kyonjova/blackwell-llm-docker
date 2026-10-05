@@ -1,0 +1,26 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-131",
+  "category": "fix",
+  "summary": "Offline deployments (HF_HUB_OFFLINE=1) start again when a newer image pins an FP4-CSF checkpoint revision that changed only card or license files: a cached revision with the same weights serves it",
+  "models": [
+    "GLM-5.3-Flash",
+    "DeepSeek-V4-Flash",
+    "DeepSeek-V4-Flash-Vision-Exp",
+    "DeepSeek-V4.1-Flash",
+    "Qwen3.8-Flash-Next"
+  ],
+  "compatibility": "No user action required. Online starts are unchanged; they download only the small card and license files of the new pins, never the weights.",
+  "details": [
+    "Beta 4102660a moved the glm53-tp2 pin from 4f90b741 to a1559e26 (license and card files only). With HF_HUB_OFFLINE=1 the launcher then stopped with 'cannot find the requested files in the local cache' although the cache held the same weights at 4f90b741.",
+    "The runtime now records the manifest.json SHA-256 of every pinned FP4-CSF revision. The manifest names every weight and metadata file by SHA-256, so when the pinned revision is not cached and the Hub cannot be reached, a complete cached revision of the same repository with that manifest is served, and the log says which one.",
+    "Checkpoint pins move to the current revisions, which add a top-level config.json so the Hub counts downloads; weights and manifests are unchanged: GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD fd660d51, DeepSeek-V4-Flash-0731-lossless-CSF f4fca95b, DeepSeek-V4-Flash-Vision-Exp-lossless-CSF b04bad8e, DeepSeek-V4.1-Flash-lossless-CSF 9c60bcbf, Qwen3.8-Flash-Next-NVFP4-MXFP8-CSF-QAD ac1c8d8e."
+  ],
+  "authors": [
+    "voipmonitor"
+  ],
+  "pull_requests": [
+    131
+  ],
+  "requires": []
+}
