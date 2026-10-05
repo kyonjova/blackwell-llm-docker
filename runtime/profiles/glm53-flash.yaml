@@ -99,7 +99,7 @@ checkpoints:
       The QAD checkpoint with MXFP8 attention and shared experts, stored as FP4-CSF: the routed experts' FP4 scales are compressed losslessly, B12X reads them in compressed form, and they stay compressed in GPU memory. It matched the BF16 QAD checkpoint in five runs each of estonia, hotel-lights, lavd-test and tool-eval, and leaves more room for the KV cache with faster decode; the download is smaller too.
     options:
       model: local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD
-      revision: a1559e26c5382ec1e2f97a14b678f3437e4ff659
+      revision: fd660d51d1fc3caae26a4bf31b7451475bbb9bdc
       quantization: nvfp4_csf
       load-format: nvfp4_csf
   original:

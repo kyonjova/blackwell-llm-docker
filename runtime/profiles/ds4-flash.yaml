@@ -61,7 +61,7 @@ checkpoints:
     csf_family: deepseek_v4_flash
     options:
       model: local-inference-lab/DeepSeek-V4-Flash-0731-lossless-CSF
-      revision: aa4458bfd46e736b85851a611847d74903211ad1
+      revision: f4fca95bc4464b9a619bf0b20e82a249babc85d8
       quantization: mxfp4_csf
       load-format: mxfp4_csf
   original:

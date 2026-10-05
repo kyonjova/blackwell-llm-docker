@@ -57,7 +57,7 @@ docker run -d --name glm-tp2 --init --gpus '"device=0,1"' \
 ```
 
 It serves the QAD weights from the stored checkpoint
-`local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD` at revision `a1559e26`:
+`local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD` at revision `fd660d51`:
 MXFP8 attention and shared experts, and NVFP4 routed experts whose scales stay
 losslessly compressed (FP4-CSF). The routed experts decode with BF16
 activations and FP32 router weights (W4A16) and prefill with NVFP4 activations
@@ -341,6 +341,11 @@ time per step is the same.
   downloaded weights. vLLM gets neither a Hub revision nor, for the DeepSeek
   profiles that trust remote code, a code revision for that directory. MTP
   and DSpark drafters stored in the checkpoint are read from it too.
+- Offline (`HF_HUB_OFFLINE=1`) or without network, a pinned revision that is
+  not in the cache is served from a cached revision with the same
+  `manifest.json`, which names every weight and metadata file by SHA-256.
+  Hub revisions that change only the model card or license files keep the
+  manifest, so a newer image does not need a new download for them.
 - An image whose vLLM cannot read a model's FP4-CSF checkpoint serves the
   original with a warning. The launcher checks the installed vLLM's FP4-CSF
   load formats and, for DeepSeek-V4-Flash and its vision variant, the

@@ -193,7 +193,7 @@ options:
       5711b268, the first revision whose dflash/config.json is valid JSON (vllm PR 881). The DS4 and DS4
       Vision original checkpoints pin the source launcher's revisions 9e165c30 and 6821d6ad. An FP4-CSF
       checkpoint is downloaded at the revision its checkpoint variant or preset names (glm53-tp2 pins
-      a1559e26, the revision it was validated with); vLLM then reads a local directory, so it gets no
+      fd660d51, the revision it was validated with); vLLM then reads a local directory, so it gets no
       revision.
   hf-overrides:
     group: model
