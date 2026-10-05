@@ -57,7 +57,7 @@ docker run -d --name glm-tp2 --init --gpus '"device=0,1"' \
 ```
 
 It serves the QAD weights from the stored checkpoint
-`local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD` at revision `4f90b741`:
+`local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD` at revision `a1559e26`:
 MXFP8 attention and shared experts, and NVFP4 routed experts whose scales stay
 losslessly compressed (FP4-CSF). The routed experts decode with BF16
 activations and FP32 router weights (W4A16) and prefill with NVFP4 activations
@@ -262,7 +262,7 @@ decides its option:
 | --- | --- | --- |
 | `EXPERT_ACTIVATIONS` | `bf16` (W4A16), `fp4` (W4A4, faster, less exact) | `VLLM_B12X_MOE_FP4_FORCE_A16` 1/0 |
 | `ROUTER_WEIGHTS` | `fp32`, `bf16` (only with `bf16` activations) | `B12X_W4A16_FP32_TOPK_WEIGHTS` 1/0 |
-| `PREFILL_ACTIVATIONS` | `a16`, `a4` (only with `bf16` activations and a QAD checkpoint) | `B12X_W4A16_A4_PREFILL_MIN_TOKENS` 0/1536 |
+| `PREFILL_ACTIVATIONS` | `a4` (only with `bf16` activations and a QAD checkpoint), `a16` | `B12X_W4A16_A4_PREFILL_MIN_TOKENS` 1536/0 |
 
 `a4` runs the prefill rows of every step with NVFP4 activations over the same
 packed FP4 weights (images before vLLM #977 only did so for expert calls of
@@ -295,7 +295,7 @@ memory, which leaves more room for the KV cache. The downloads are smaller too.
 | Model | FP4-CSF (default) | Original |
 | --- | --- | --- |
 | Qwen3.8-Flash-Next | `local-inference-lab/Qwen3.8-Flash-Next-NVFP4-MXFP8-CSF-QAD` | `local-inference-lab/Qwen3.8-Flash-Next-NVFP4` (QAD) |
-| GLM-5.3-Flash | `local-inference-lab/GLM-5.3-Flash-NVFP4-CSF-QAD` | `local-inference-lab/GLM-5.3-Flash-NVFP4` (QAD) |
+| GLM-5.3-Flash | `local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD` (MXFP8 attention and shared experts) | `local-inference-lab/GLM-5.3-Flash-NVFP4` (QAD) |
 | DeepSeek-V4.1-Flash | `local-inference-lab/DeepSeek-V4.1-Flash-lossless-CSF` | `deepseek-ai/DeepSeek-V4.1-Flash` |
 | DeepSeek-V4-Flash | `local-inference-lab/DeepSeek-V4-Flash-0731-lossless-CSF` | `deepseek-ai/DeepSeek-V4-Flash-0731` at `9e165c30` |
 | DeepSeek-V4-Flash Vision | `local-inference-lab/DeepSeek-V4-Flash-Vision-Exp-lossless-CSF` | `deepseek-ai/DeepSeek-V4-Flash-Vision-Exp` at `6821d6ad` |
@@ -308,10 +308,16 @@ concurrency, two runs; prefill: one 8K and one 32K prompt):
 | --- | --- | --- | --- |
 | Qwen3.8-Flash-Next (1) | 750,354 vs 551,925 (+36%) | C1 and C8 within 0.5%; C16 1,079 vs 878 | -2.4% / -1.9% |
 | GLM-5.3-Flash `glm53-tp2` (2) | 2,073,850 vs 871,556 | C1 171 vs 176, C8 536 vs 536 | -0.5% / -0.8% |
-| GLM-5.3-Flash (4) | 5,816,737 vs 5,509,790 (+5.6%) | C8 +0.5%, C16 -3.3%, C32 -2.7% | -1.0% / -1.6% |
+| GLM-5.3-Flash (4) | 6,871,032 vs 6,165,626 (+11%) | C1 +8.4%, C8 +9.1%, C16 +7.5%, C32 +6.1% | +2.6% / +3.3% |
 | DeepSeek-V4.1-Flash (4) | 12,951,057 vs 9,566,426 (+35%) | C8 -3.1%, C16 -3.5%, C32 -1.2% | -1.3% / -1.7% |
 | DeepSeek-V4-Flash (2) | 1,853,797 vs 1,308,256 (+42%) | C4 +0.9%, C8 -0.8% | +0.7% / +2.2% |
 | DeepSeek-V4-Flash Vision (2) | 1,850,842 vs 1,306,708 (+42%) | C1 +4.2%, C2 -0.2%, C4 +3.1% | -1.4% / -2.9% |
+
+The GLM-5.3-Flash TP4 row compares the QAD MXFP8 FP4-CSF checkpoint with the
+BF16 original, both with a4 prefill and 96% of GPU memory, on RTX PRO 6000
+Workstation Edition GPUs (600 W). It loads 4.3 GiB less weight per GPU (42.64
+against 46.93 GiB), and its MXFP8 attention and shared experts carry most of
+the decode gain.
 
 The DeepSeek-V4.1-Flash decode cost comes from expanding the compressed scales
 of every routed expert in each layer before the B12X W4A8 kernels run.

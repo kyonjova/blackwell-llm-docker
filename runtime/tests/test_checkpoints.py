@@ -28,7 +28,7 @@ CSF = {
         None,
     ),
     "glm53-flash": Variants(
-        "local-inference-lab/GLM-5.3-Flash-NVFP4-CSF-QAD",
+        "local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD",
         "nvfp4_csf",
         "local-inference-lab/GLM-5.3-Flash-NVFP4",
         None,
@@ -144,6 +144,16 @@ def test_presets_that_choose_their_checkpoint_keep_it():
     assert tp3.values["checkpoint"] == "original"
     assert tp3.values["model"] == CSF["glm53-flash"].original
     assert qwen_tp2.values["checkpoint"] == "csf"
+
+
+def test_the_dflash2_drafter_keeps_the_default_load_format():
+    """The DFlash2 drafter is a plain checkpoint; without its own load config
+    vLLM would read it with the target's FP4-CSF loader and refuse it."""
+    plan = resolve("glm53-flash", "rtx-pro-6000-pcie", env={"SPECULATOR": "dflash2"})
+    assert plan.values["load-format"] == "nvfp4_csf"
+    spec = json.loads(plan.argv[plan.argv.index("--speculative-config") + 1])
+    assert spec["method"] == "dflash"
+    assert spec["draft_load_config"] == {"load_format": "auto"}
 
 
 @pytest.mark.parametrize(

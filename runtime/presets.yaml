@@ -7,7 +7,7 @@ presets:
     options:
       # Stored QAD checkpoint in FP4-CSF form; CHECKPOINT=original does not apply.
       model: local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD
-      revision: 4f90b74165cb1542cca35730b7dfa4d550bcf0ce
+      revision: a1559e26c5382ec1e2f97a14b678f3437e4ff659
       quantization: nvfp4_csf
       load-format: nvfp4_csf
       served-model-name: GLM-5.3-Flash

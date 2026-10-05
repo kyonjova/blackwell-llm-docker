@@ -62,7 +62,7 @@ checkpoints:
       Lossless FP4-CSF container of DeepSeek's MXFP4 release: the same weights as the original, with the routed-expert scales compressed losslessly. B12X reads the compressed scales and they stay compressed in GPU memory, which leaves more room for the KV cache; the download is smaller too.
     options:
       model: local-inference-lab/DeepSeek-V4.1-Flash-lossless-CSF
-      revision: 9a0b1aac1fd918994812bf115fb0c5d262e909d7
+      revision: 3e127631a92aa7f352b0e9d70b9e8116aa105719
       quantization: mxfp4_csf
       load-format: mxfp4_csf
   original:

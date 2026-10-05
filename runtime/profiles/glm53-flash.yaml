@@ -29,7 +29,12 @@ defaults:
   max-model-len: 1048576
   max-num-seqs: 32
   max-num-batched-tokens: 4096
-  gpu-memory-utilization: 0.93
+  # Qualified at TP4 with the MXFP8 FP4-CSF checkpoint and 32 request slots:
+  # 32 streams mixing 1K-168K-token prompts with up to ten images of
+  # 6000x4000, then 32 agents growing past 200K tokens each. At 0.965 the
+  # worst peak left 377 to 663 MiB per GPU free (MTP, LMCache and DFlash2
+  # runs); 0.96 keeps about 480 MiB more. 0.93 left 4 GiB unused.
+  gpu-memory-utilization: 0.96
   block-size: 256
   target-page-size: 2048
   recurrent-page-size: auto
@@ -55,11 +60,12 @@ defaults:
   chat-template: runtime:templates/glm53-flash.jinja
   override-generation-config: {temperature: 1.0, top_p: 0.95}
   # Routed FP4 experts on B12X take BF16 activations (W4A16) and combine their
-  # outputs with FP32 router weights. Prefill can trade activation precision
-  # for speed with prefill-activations a4; decode stays W4A16.
+  # outputs with FP32 router weights. Prefill rows run with NVFP4 activations
+  # (a4, measured as accurate as a16 and 12-14% faster at TP4); decode stays
+  # W4A16. prefill-activations a16 keeps BF16 activations for prefill too.
   expert-activations: bf16
   router-weights: fp32
-  prefill-activations: a16
+  prefill-activations: a4
 environment:
   B12X_DYNAMIC_SPLIT_ROUTE_COMPUTE: "1"
   B12X_DYNAMIC_DIRECT_EXPERT_SCALES: "1"
@@ -90,14 +96,14 @@ environment:
 checkpoints:
   csf:
     description: >-
-      Lossless FP4-CSF container of the QAD NVFP4 checkpoint: the same weights as the original, with the routed-expert scales compressed losslessly. B12X reads the compressed scales and they stay compressed in GPU memory, which leaves more room for the KV cache; the download is smaller too.
+      The QAD checkpoint with MXFP8 attention and shared experts, stored as FP4-CSF: the routed experts' FP4 scales are compressed losslessly, B12X reads them in compressed form, and they stay compressed in GPU memory. It matched the BF16 QAD checkpoint in five runs each of estonia, hotel-lights, lavd-test and tool-eval, and leaves more room for the KV cache with faster decode; the download is smaller too.
     options:
-      model: local-inference-lab/GLM-5.3-Flash-NVFP4-CSF-QAD
-      revision: f4bfe1ce0585086c4f14ad4e450e72b85b9c405d
+      model: local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD
+      revision: a1559e26c5382ec1e2f97a14b678f3437e4ff659
       quantization: nvfp4_csf
       load-format: nvfp4_csf
   original:
-    description: The QAD ModelOpt NVFP4 checkpoint the FP4-CSF container is made from, with uncompressed expert scales.
+    description: The QAD ModelOpt NVFP4 checkpoint with BF16 attention and shared experts and uncompressed expert scales; larger, with less room for the KV cache.
     options:
       model: local-inference-lab/GLM-5.3-Flash-NVFP4
 modes:
@@ -114,6 +120,9 @@ modes:
       rejection_sample_method: standard
       attention_backend: FLASH_ATTN
       kv_cache_dtype: auto
+      # The drafter is a plain safetensors checkpoint; the target's FP4-CSF
+      # load format applies only to the target.
+      draft_load_config: {load_format: auto}
 cache:
   gpu: implemented
   external: implemented

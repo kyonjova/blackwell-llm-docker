@@ -30,7 +30,9 @@ def test_glm_target_budget_is_not_reduced_by_dflash(mode, depth, rows, dcp, dtyp
     assert plan.values["max-num-scheduled-tokens"] == 4096
     assert plan.values["prefix-cache-retention-interval"] == 0
     assert plan.values["target-page-size"] == "auto"
-    assert plan.values["gpu-memory-utilization"] == 0.95
+    # The profile's memory share was qualified with LMCache too.
+    assert plan.values["gpu-memory-utilization"] == 0.96
+    assert plan.origins["gpu-memory-utilization"] == "model:glm53-flash"
     assert plan.cache_service.environment["CUDA_VISIBLE_DEVICES"] == ""
     assert "UNRESOLVED-CHECKPOINT" in plan.cache_service.namespace
     assert plan.argv.count("--kv-transfer-config") == 1

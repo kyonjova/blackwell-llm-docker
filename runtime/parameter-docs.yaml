@@ -136,8 +136,10 @@ options:
       of every step on W4A16, and steps replayed from a CUDA graph keep W4A16 for all rows. Sets
       B12X_W4A16_A4_PREFILL_MIN_TOKENS.
     why: >-
-      GLM-5.3-Flash defaults to a16, the most precise choice; the glm53-tp2 preset defaults to a4, so
-      prefill runs on FP4 tensor cores while decode keeps W4A16. Five runs of each test with reasoning
+      GLM-5.3-Flash defaults to a4 (TP4 and the glm53-tp2 preset), so prefill runs on FP4 tensor cores
+      while decode keeps W4A16; a16 is the most precise choice. At TP4 with the MXFP8 FP4-CSF checkpoint,
+      a4 prefilled 8K and 32K tokens at 15,420 and 16,947 tok/s against 13,705 and 14,858 with a16, at
+      the same decode speed, and both answered 30 of 30 estonia runs. Five runs of each test with reasoning
       effort max on glm53-tp2 found no significant accuracy difference between a4 and a16: estonia 148
       and 150 of 150, hotel-lights 146 and 142 of 150, lavd-test 50 and 50 of 50 within tolerance,
       tool-eval 92.2 and 92.8 (run-level Mann-Whitney p 0.38 to 1.0), and needle-checksum near-misses
@@ -191,7 +193,7 @@ options:
       5711b268, the first revision whose dflash/config.json is valid JSON (vllm PR 881). The DS4 and DS4
       Vision original checkpoints pin the source launcher's revisions 9e165c30 and 6821d6ad. An FP4-CSF
       checkpoint is downloaded at the revision its checkpoint variant or preset names (glm53-tp2 pins
-      4f90b741, the revision it was validated with); vLLM then reads a local directory, so it gets no
+      a1559e26, the revision it was validated with); vLLM then reads a local directory, so it gets no
       revision.
   hf-overrides:
     group: model
