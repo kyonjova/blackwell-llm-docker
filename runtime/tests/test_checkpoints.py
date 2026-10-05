@@ -205,12 +205,16 @@ def _fake_hub(monkeypatch, snapshot_download, hf_hub_download=None):
     class LocalEntryNotFoundError(Exception):
         pass
 
+    class OfflineModeIsEnabled(ConnectionError):
+        pass
+
     def no_manifest_download(*args, **kwargs):
         raise AssertionError("unexpected manifest download")
 
     hub = types.ModuleType("huggingface_hub")
     errors = types.ModuleType("huggingface_hub.errors")
     errors.LocalEntryNotFoundError = LocalEntryNotFoundError
+    errors.OfflineModeIsEnabled = OfflineModeIsEnabled
     hub.errors = errors
     hub.snapshot_download = snapshot_download
     hub.hf_hub_download = hf_hub_download or no_manifest_download
@@ -680,7 +684,7 @@ def test_every_pinned_csf_revision_records_its_manifest():
         assert re.fullmatch(r"[0-9a-f]{64}", manifests[repository][revision])
 
 
-def _offline_hub(monkeypatch, tmp_path, repository, revision, snapshots):
+def _offline_hub(monkeypatch, tmp_path, repository, revision, snapshots, error=None):
     """A cache holding other revisions of the repository and no network."""
     cache = tmp_path / "hub"
     folder = cache / f"models--{repository.replace('/', '--')}" / "snapshots"
@@ -699,7 +703,7 @@ def _offline_hub(monkeypatch, tmp_path, repository, revision, snapshots):
         raise missing("revision not cached")
 
     def hf_hub_download(*args, **kwargs):
-        raise OSError("HF_HUB_OFFLINE")
+        raise error or missing("HF_HUB_OFFLINE")
 
     missing = _fake_hub(monkeypatch, snapshot_download, hf_hub_download)
     return folder
@@ -737,5 +741,24 @@ def test_offline_without_a_matching_cached_revision_fails(tmp_path, monkeypatch)
     (folder / "same" / "tensors" / "model-00001.safetensors").unlink()
     plan = resolve("glm53-flash", "rtx-pro-6000-pcie", env={})
 
-    with pytest.raises(OSError, match="HF_HUB_OFFLINE"):
+    with pytest.raises(Exception, match="HF_HUB_OFFLINE"):
+        prepare_csf_checkpoint(plan)
+
+
+def test_hub_errors_are_not_masked_by_a_cached_revision(tmp_path, monkeypatch):
+    """A missing pinned revision or denied access fails even with a cached twin."""
+    monkeypatch.setattr(launcher, "CSF_SERVING_ROOT", tmp_path / "serving")
+    repository, revision = CSF["glm53-flash"].csf, csf_revision("glm53-flash")
+    same = _csf_checkpoint(tmp_path / "a", "lil-nvfp4-csf-checkpoint/1", {})
+    _offline_hub(
+        monkeypatch,
+        tmp_path,
+        repository,
+        revision,
+        {"same": same},
+        error=OSError("404 Client Error: Revision Not Found"),
+    )
+    plan = resolve("glm53-flash", "rtx-pro-6000-pcie", env={})
+
+    with pytest.raises(OSError, match="Revision Not Found"):
         prepare_csf_checkpoint(plan)

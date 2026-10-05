@@ -1476,7 +1476,7 @@ def csf_snapshot(repository: str, revision: str | None, method: str) -> Path:
     the pinned one serves it.
     """
     from huggingface_hub import hf_hub_download, snapshot_download
-    from huggingface_hub.errors import LocalEntryNotFoundError
+    from huggingface_hub.errors import LocalEntryNotFoundError, OfflineModeIsEnabled
 
     try:
         root = Path(
@@ -1490,8 +1490,9 @@ def csf_snapshot(repository: str, revision: str | None, method: str) -> Path:
             return root
     try:
         manifest = hf_hub_download(repository, "manifest.json", revision=revision)
-    except OSError:
-        # HF_HUB_OFFLINE, or no network.
+    except (LocalEntryNotFoundError, OfflineModeIsEnabled):
+        # HF_HUB_OFFLINE, or no network. Hub answers such as a missing
+        # revision or denied access still fail the launch.
         root = cached_csf_twin(repository, revision)
         if root is None:
             raise
