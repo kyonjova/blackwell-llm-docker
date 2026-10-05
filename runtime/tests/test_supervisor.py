@@ -343,8 +343,54 @@ def test_default_l1_arena_below_the_minimum_is_refused(monkeypatch, shm_root):
 
 def test_explicit_l1_arena_must_fit_as_given(monkeypatch, shm_root):
     _statvfs_with_free(monkeypatch, 40 * 1024**3)
+    monkeypatch.setattr(supervisor, "_mem_available", lambda: 1000 * 1024**3)
     with pytest.raises(ConfigError, match="Insufficient free /dev/shm"):
         supervisor.preflight(_l1_service(64, adjustable=False), {})
+    # Enough /dev/shm but not enough RAM for the pinned arena.
+    _statvfs_with_free(monkeypatch, 500 * 1024**3)
+    monkeypatch.setattr(supervisor, "_mem_available", lambda: 12 * 1024**3)
+    with pytest.raises(ConfigError, match="exceeds the 12 GiB of RAM.*LMCACHE_L1_GB"):
+        supervisor.fit_l1_arena(_l1_service(32, adjustable=False))
+    monkeypatch.setattr(supervisor, "_mem_available", lambda: 40 * 1024**3)
+    service = _l1_service(32, adjustable=False)
+    supervisor.fit_l1_arena(service)
+    assert service.shm_bytes == 32 * 1024**3
+
+
+@pytest.mark.parametrize(
+    "files,expected",
+    [
+        ({"memory.max": "max\n", "memory.current": "100\n"}, None),
+        ({"memory.max": str(64 << 30), "memory.current": str(16 << 30)}, 48 << 30),
+        ({"memory.max": str(1 << 30), "memory.current": str(2 << 30)}, 0),
+        (
+            {
+                "memory/memory.limit_in_bytes": str(32 << 30),
+                "memory/memory.usage_in_bytes": str(8 << 30),
+            },
+            24 << 30,
+        ),
+        (
+            {
+                "memory/memory.limit_in_bytes": str(1 << 62),
+                "memory/memory.usage_in_bytes": "5",
+            },
+            None,
+        ),
+        ({}, None),
+    ],
+)
+def test_cgroup_limit_bounds_the_available_memory(
+    monkeypatch, tmp_path, files, expected
+):
+    for name, content in files.items():
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text(content)
+    monkeypatch.setattr(supervisor, "CGROUP_ROOT", tmp_path)
+    assert supervisor._cgroup_memory_room() == expected
+    available = supervisor._mem_available()
+    if expected is not None:
+        assert available <= expected
 
 
 def test_stopped_cache_releases_its_arena(shm_root, capsys):

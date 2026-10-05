@@ -575,8 +575,9 @@ options:
       the size of the shared-memory pool the supervisor checks.
     why: The common default is 24 GiB, as in the DS4 source recipe; GLM raises it to 64 GiB. Engine-driven
       transfer pins the whole tier in /dev/shm at startup, so a default size shrinks to 90% of the free
-      /dev/shm and half of the available RAM (in whole GiB, at least 8 GiB) on smaller hosts and the
-      log says so; an explicit size must fit as given. The tier is released when the container stops.
+      /dev/shm and half of the RAM available to the container (a cgroup memory limit counts), in whole
+      GiB and at least 8 GiB, and the log says so; an explicit size must fit both as given. The tier is
+      released when the container stops.
   cache-l1-init-gib:
     group: cache
     summary: Initial L1 allocation in GiB when LMCache grows L1 lazily; it cannot exceed cache-l1-gib.

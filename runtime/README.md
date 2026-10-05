@@ -77,8 +77,9 @@ prompt tokens from cache (90% of turns under 18 s), against 155 turns, 65% and
 
 - Host RAM: engine-driven LMCache pins its whole RAM tier in `/dev/shm` at
   startup (with `--ipc host`, the host's). When less is free, the tier shrinks
-  to 90% of the free `/dev/shm` and half of the available RAM (at least 8 GiB)
-  and the log names the size; `-e LMCACHE_L1_GB=<GiB>` sets it explicitly.
+  to 90% of the free `/dev/shm` and half of the RAM available to the container
+  (a memory limit counts), at least 8 GiB, and the log names the size;
+  `-e LMCACHE_L1_GB=<GiB>` sets it explicitly and must fit as given.
   The tier is freed when the container stops; `--stop-timeout 30` leaves time
   for that.
 - Disk tier, so conversations also survive restarts: `-e LMCACHE_MODE=disk`.
