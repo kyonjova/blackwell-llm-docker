@@ -57,7 +57,7 @@ docker run -d --name glm-tp2 --init --gpus '"device=0,1"' \
 ```
 
 It serves the QAD weights from the stored checkpoint
-`local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD` at revision `a1559e26`:
+`local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD` at revision `fd660d51`:
 MXFP8 attention and shared experts, and NVFP4 routed experts whose scales stay
 losslessly compressed (FP4-CSF). The routed experts decode with BF16
 activations and FP32 router weights (W4A16) and prefill with NVFP4 activations
