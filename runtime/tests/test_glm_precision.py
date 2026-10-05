@@ -23,14 +23,18 @@ def precision_env(plan):
     }
 
 
-def test_defaults_run_bf16_activations_fp32_router_weights_and_a16_prefill():
+def test_defaults_run_bf16_activations_fp32_router_weights_and_a4_prefill():
     plan = glm()
     assert {option: plan.values[option] for option in OPTIONS} == {
         "expert-activations": "bf16",
         "router-weights": "fp32",
-        "prefill-activations": "a16",
+        "prefill-activations": "a4",
     }
-    assert precision_env(plan) == {FORCE_A16: "1", FP32_TOPK: "1", MIN_TOKENS: "0"}
+    assert precision_env(plan) == {
+        FORCE_A16: "1",
+        FP32_TOPK: "1",
+        MIN_TOKENS: str(GLM_A4_PREFILL_MIN_TOKENS),
+    }
     # B12X's default of one activation plane is what a4 measured.
     assert TERMS not in plan.environment
     assert plan.environment_origins[FORCE_A16] == "model:glm53-flash"
@@ -49,6 +53,11 @@ def test_defaults_run_bf16_activations_fp32_router_weights_and_a16_prefill():
                 FP32_TOPK: "1",
                 MIN_TOKENS: str(GLM_A4_PREFILL_MIN_TOKENS),
             },
+        ),
+        # a16 keeps BF16 activations in prefill too.
+        (
+            {"PREFILL_ACTIVATIONS": "a16"},
+            {FORCE_A16: "1", FP32_TOPK: "1", MIN_TOKENS: "0"},
         ),
         (
             {"ROUTER_WEIGHTS": "bf16", "PREFILL_ACTIVATIONS": "a4"},
@@ -208,7 +217,7 @@ def test_a_vllm_without_the_a16_variable_is_left_alone():
     assert FORCE_A16 not in plan.environment
     # B12X reads its own variables; the launcher does not check B12X versions.
     assert plan.environment[FP32_TOPK] == "1"
-    assert plan.environment[MIN_TOKENS] == "0"
+    assert plan.environment[MIN_TOKENS] == str(GLM_A4_PREFILL_MIN_TOKENS)
 
 
 SPARK = "local-inference-lab/GLM-5.3-Flash-NVFP4-Spark"
@@ -232,16 +241,7 @@ def test_a4_prefill_is_refused_for_the_spark_checkpoint(preset, env):
         )
 
 
-def test_a_default_a4_prefill_yields_to_the_spark_checkpoint(monkeypatch):
-    read = launcher.profile
-
-    def a4_default(kind, identifier):
-        result = read(kind, identifier)
-        if kind == "model" and identifier == "glm53-flash":
-            result["defaults"]["prefill-activations"] = "a4"
-        return result
-
-    monkeypatch.setattr(launcher, "profile", a4_default)
+def test_a_default_a4_prefill_yields_to_the_spark_checkpoint():
     plan = glm({"MODEL": SPARK})
     assert plan.values["prefill-activations"] == "a16"
     assert plan.origins["prefill-activations"].startswith("derived:")

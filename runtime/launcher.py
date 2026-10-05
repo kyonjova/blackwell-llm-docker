@@ -683,7 +683,8 @@ def resolve(
     # checkpoint selects that variant. Any other model or revision chosen by a
     # preset, settings or the operator keeps the profile settings unless
     # CHECKPOINT is chosen there too; then the variant fills in everything else.
-    # A preset that names a checkpoint of its own serves it as configured.
+    # A preset that names a checkpoint of its own serves it as configured, also
+    # when a variant names the same checkpoint.
     checkpoint_warnings: list[str] = []
     if "checkpoint" in values:
         variants = model.get("checkpoints", {})
@@ -710,12 +711,7 @@ def resolve(
             return None
 
         name, reason = values["checkpoint"], "derived:model"
-        if (
-            variants
-            and origins["model"].startswith("preset:")
-            and values["model"]
-            not in {item["options"]["model"] for item in variants.values()}
-        ):
+        if variants and origins["model"].startswith("preset:"):
             # CHECKPOINT cannot swap a preset's own checkpoint for one of the
             # other kind; the preset's settings read only its own.
             if (

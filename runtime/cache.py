@@ -212,8 +212,6 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
                 "Explicit checkpoint retention conflicts with the cache object geometry"
             )
         put("prefix-cache-retention-interval", retention)
-        if engine and origins["gpu-memory-utilization"].startswith("model:"):
-            put("gpu-memory-utilization", 0.950)
     elif qwen:
         # GDN state must be restored with its exact attention/PLE boundary.
         # Independent aligned chunks are not a substitute for that bundle.
