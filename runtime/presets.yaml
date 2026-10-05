@@ -3,11 +3,11 @@ presets:
   glm53-tp2:
     profile: glm53-flash
     hardware: rtx-pro-6000-pcie
-    description: The default TP2 recipe for GLM-5.3-Flash on two 96-GB RTX PRO GPUs. It serves the QAD weights from the stored checkpoint GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD (MXFP8 attention and shared experts, NVFP4 routed experts with losslessly compressed scales) with BF16 activations into the routed experts and FP32 router weights, TP2/DCP2, MTP3 with B12X drafter experts, eight request slots, a 3072-token prefill budget and an 8 GiB KV cache per GPU. The input embedding table lives in host RAM and the vision tower is quantized to MXFP8 while loading. glm53-spark-tp2 stays available.
+    description: The default TP2 recipe for GLM-5.3-Flash on two 96-GB RTX PRO GPUs. It serves the QAD weights from the stored checkpoint GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD (MXFP8 attention and shared experts, NVFP4 routed experts with losslessly compressed scales). The routed experts decode with BF16 activations and FP32 router weights and prefill with NVFP4 activations. It runs TP2/DCP2, MTP3 with B12X drafter experts, eight request slots, a 4096-token prefill budget and a 7,296 MiB KV cache per GPU (about 1.84M tokens), and LMCache keeps the prefix cache in up to 64 GiB of host RAM as well. The input embedding table lives in host RAM and the vision tower is quantized to MXFP8 while loading.
     options:
       # Stored QAD checkpoint in FP4-CSF form; CHECKPOINT=original does not apply.
       model: local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD
-      revision: 9ca06e24effde995982c439091722e9e76db82bc
+      revision: 4f90b74165cb1542cca35730b7dfa4d550bcf0ce
       quantization: nvfp4_csf
       load-format: nvfp4_csf
       served-model-name: GLM-5.3-Flash
@@ -16,19 +16,29 @@ presets:
       mode: mtp
       max-model-len: -1
       max-num-seqs: 8
-      max-num-batched-tokens: 3072
-      cache-object-tokens: 3072
-      kv-cache-memory-bytes: 8589934592
+      # One 4096-token LMCache object fills one 2048-token page per DCP rank,
+      # the capacity-efficient page (3072 would give 1536-token pages and 9%
+      # fewer KV tokens), and prefills 32K prompts about 5% faster.
+      max-num-batched-tokens: 4096
+      cache-object-tokens: 4096
+      # Qualified with LMCache: eight streams mixing 1K-168K-token prompts
+      # with up to ten images of 6000x4000, then eight agents growing past
+      # 450K tokens each, left 499 MiB per GPU free at the worst peak.
+      kv-cache-memory-bytes: 7650410496
       gpu-memory-utilization: 0.985
       # auto: 32 verifier rows at eight slots (MTP3 verifies four per request).
       max-cudagraph-capture-size: auto
       cudagraph-capture-sizes: [1, 2, 4, 8, 12, 16, 20, 24, 28, 32]
       expert-activations: bf16
       router-weights: fp32
-      prefill-activations: a16
+      # Prefill rows on NVFP4 activations, decode on W4A16.
+      prefill-activations: a4
+      # Prefix cache in GPU memory and host RAM; the disk tier is opt-in.
+      cache-mode: lmcache
+      cache-l2-enabled: false
     environment:
       VLLM_PCIE_TWOSHOT_ALLREDUCE_MAX_SIZE: "off"
-      # Prefill all-reduces (25 MB per 3,072-token chunk) go through the b12x
+      # Prefill all-reduces (33 MB per 4,096-token chunk) go through the b12x
       # PCIe DMA all-reduce: prefill +2 to +3% with a16 and +4 to +6% with a4,
       # decode unchanged. More NCCL channels are faster still but do not fit
       # the 0.985 memory budget at startup.
@@ -53,62 +63,10 @@ presets:
         config: {moe_backend: b12x}
     linked_options:
       cache-object-tokens: max-num-batched-tokens
-    # Carried over from the Spark TP2 measurements: working memory per request
-    # slot above eight and the external cache connector's GPU buffers.
+    # Working memory per request slot above eight, carried over from the
+    # Spark TP2 measurements. The KV size above already leaves room for the
+    # LMCache connector's GPU buffers, so CACHE_MODE=vram keeps it as is.
     kv_bytes_per_extra_slot: 67108864
-    kv_bytes_for_external_cache: 201326592
-  glm53-spark-tp2:
-    profile: glm53-flash
-    hardware: rtx-pro-6000-pcie
-    description: GLM Spark checkpoint (stored MXFP8 attention, pre-QAD experts) on two 96-GB RTX PRO GPUs; glm53-tp2 is the default TP2 recipe. It runs with TP2/DCP2 MTP3, eight request slots (16 selectable) and a 3072-token prefill budget. The input embedding table lives in host RAM and the vision tower runs in MXFP8, which leaves room for about 1.02M KV tokens with 0.5 GiB per GPU kept free for image-heavy peaks. Spark identifies the checkpoint, not DGX Spark hardware.
-    options:
-      model: local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
-      served-model-name: GLM-5.3-Flash
-      tensor-parallel-size: 2
-      decode-context-parallel-size: 2
-      mode: mtp
-      max-model-len: -1
-      max-num-seqs: 8
-      max-num-batched-tokens: 3072
-      cache-object-tokens: 3072
-      kv-cache-memory-bytes: 4240441344
-      gpu-memory-utilization: 0.985
-      max-cudagraph-capture-size: auto
-      cudagraph-capture-sizes: [1, 2, 4, 8, 12, 16]
-      load-format: safetensors
-    environment:
-      VLLM_PCIE_TWOSHOT_ALLREDUCE_MAX_SIZE: "off"
-      NCCL_SOCKET_IFNAME: lo
-      GLOO_SOCKET_IFNAME: lo
-      NCCL_MIN_NCHANNELS: "2"
-      NCCL_MAX_NCHANNELS: "2"
-      NCCL_BUFFSIZE: "1048576"
-      NCCL_NET_PLUGIN: none
-      NCCL_TUNER_PLUGIN: none
-      CUBLAS_WORKSPACE_CONFIG: ":4096:1"
-      OMP_NUM_THREADS: "1"
-      VLLM_B12X_MLA_CKV_GATHER_MAX_TOKENS: "65536"
-      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True,large_segment_size_mb:12
-      VLLM_GLM53_EMBED_HOST: "1"
-      VLLM_GLM53_VISION_MXFP8: "1"
-      VLLM_SHARE_PYNCCL_COMMS: "1"
-    modes:
-      mtp:
-        config: {moe_backend: b12x}
-    linked_options:
-      cache-object-tokens: max-num-batched-tokens
-    kv_bytes_per_extra_slot: 67108864
-    kv_bytes_for_external_cache: 201326592
-    vllm_fallback:
-      # Images whose vLLM predates vllm #898 keep the earlier qualified
-      # four-slot recipe; the memory savings below free the room for more.
-      requires_environment:
-        - VLLM_GLM53_EMBED_HOST
-        - VLLM_GLM53_VISION_MXFP8
-        - VLLM_SHARE_PYNCCL_COMMS
-      options:
-        max-num-seqs: 4
-        kv-cache-memory-bytes: 4190109696
   glm53-tp3:
     profile: glm53-flash
     hardware: rtx-pro-6000-pcie

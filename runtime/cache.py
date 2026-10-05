@@ -40,6 +40,9 @@ class CacheService:
     stop_grace: float = STOP_GRACE_SECONDS
     # Delete unused disk-tier namespaces of earlier images or settings.
     prune_stale_tiers: bool = False
+    # The L1 size is a profile or preset default, so the supervisor may shrink
+    # it to fit the host; an operator's explicit size is never changed.
+    l1_adjustable: bool = False
 
 
 def configure(values, origins, environment, env_origins, identifier, runtime_identity):
@@ -463,6 +466,8 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
         namespace,
         stop_grace,
         bool(values.get("cache-l2-prune-stale")),
+        l1_adjustable=engine
+        and origins["cache-l1-gib"].startswith(("model:", "common:", "preset:")),
     )
 
 

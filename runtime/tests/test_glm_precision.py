@@ -211,25 +211,12 @@ def test_a_vllm_without_the_a16_variable_is_left_alone():
     assert plan.environment[MIN_TOKENS] == "0"
 
 
-def test_the_spark_preset_follows_the_profile_precision():
-    plan = resolve("glm53-flash", "rtx-pro-6000-pcie", preset="glm53-spark-tp2", env={})
-    assert precision_env(plan) == {FORCE_A16: "1", FP32_TOPK: "1", MIN_TOKENS: "0"}
-    fp4 = resolve(
-        "glm53-flash",
-        "rtx-pro-6000-pcie",
-        preset="glm53-spark-tp2",
-        env={"EXPERT_ACTIVATIONS": "fp4"},
-    )
-    assert fp4.environment[FORCE_A16] == "0"
-
-
 SPARK = "local-inference-lab/GLM-5.3-Flash-NVFP4-Spark"
 
 
 @pytest.mark.parametrize(
     "preset, env",
     [
-        ("glm53-spark-tp2", {}),
         (None, {"MODEL": SPARK}),
         (None, {"MODEL": "/models/GLM-5.3-Flash-NVFP4-Spark"}),
     ],

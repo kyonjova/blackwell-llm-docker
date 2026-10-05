@@ -485,3 +485,12 @@ def test_on_evict_default_falls_back_without_request_boundary_checkpoints():
         "ds4-flash", env={"CACHE_MODE": "lmcache", "LMCACHE_L2_ENABLED": "true"}
     )
     assert ds4.values["cache-l2-checkpoint-writes"] == "always"
+
+
+@pytest.mark.parametrize("identifier", ["glm53-flash", "ds4-flash"])
+def test_only_a_default_l1_size_may_shrink_to_fit_the_host(identifier):
+    default = resolve(identifier, env={"LMCACHE_MODE": "ram"})
+    explicit = resolve(identifier, env={"LMCACHE_MODE": "ram", "LMCACHE_L1_GB": "32"})
+    assert default.cache_service.l1_adjustable
+    assert not explicit.cache_service.l1_adjustable
+    assert explicit.cache_service.shm_bytes == 32 * 1024**3

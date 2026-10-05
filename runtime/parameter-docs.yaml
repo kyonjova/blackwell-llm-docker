@@ -32,8 +32,7 @@ options:
     why: Each profile names the checkpoint its settings were qualified with, for example XiaomiMiMo/MiMo-V2.6-Flash-RL
       for MiMo. Qwen3.8-Flash-Next, GLM-5.3-Flash, DeepSeek-V4.1-Flash, DeepSeek-V4-Flash and DeepSeek-V4-Flash
       Vision take theirs from checkpoint (FP4-CSF by default). The glm53-tp2 preset selects the stored
-      QAD checkpoint GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD and the GLM Spark TP2 preset the Spark checkpoint
-      GLM-5.3-Flash-NVFP4-Spark.
+      QAD checkpoint GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD.
   checkpoint:
     group: model
     summary: Which checkpoint of the model to serve. csf is the FP4-CSF container (the same weights
@@ -64,8 +63,8 @@ options:
       loads safetensors weights onto the GPUs with pipelined prefetching and direct I/O.
     why: The common layer uses instanttensor. FP4-CSF checkpoints use nvfp4_csf or mxfp4_csf, which
       read the compressed expert scales. MiMo uses auto because the b12x loader's cuFile setup fails
-      to parse the NGC image's /etc/cufile.json (fixed in b12x PR 431). The GLM Spark TP2 preset uses
-      safetensors and glm53-tp2 nvfp4_csf.
+      to parse the NGC image's /etc/cufile.json (fixed in b12x PR 431). The glm53-tp2 preset uses
+      nvfp4_csf.
   dtype:
     group: model
     summary: Data type for model weights and activations that are not otherwise quantized.
@@ -80,14 +79,12 @@ options:
     group: memory
     summary: Fixed KV cache size per GPU in bytes. When set, vLLM ignores gpu-memory-utilization for the
       KV allocation.
-    why: The glm53-tp2 preset fixes 8 GiB per rank, the size its stored QAD checkpoint ran with in the
-      speed and needle-checksum checks at eight request slots. The GLM Spark TP2 preset fixes 4,044 MiB per
-      rank (about 1.02M tokens at eight request slots), made possible by vllm PR 898's host embedding,
-      MXFP8 vision and shared NCCL communicator, and keeps about 0.5 GiB per GPU free for image-heavy
-      peaks. On both TP2 presets the
-      launcher subtracts 64 MiB per request slot above eight and 192 MiB when an external cache is enabled;
-      an explicit value is used as given, and on the Spark preset an older vLLM falls back to 3,996 MiB with
-      four slots.
+    why: The glm53-tp2 preset fixes 7,296 MiB per rank (about 1.84M tokens at eight request slots), the
+      largest size that kept about 0.5 GiB per GPU free at the peak of ten minutes of eight streams mixing
+      1K-168K-token prompts with up to ten 6000x4000 images, followed by fifteen minutes of eight agents
+      growing past 450K tokens each with LMCache. That size already leaves room for the LMCache
+      connector's GPU buffers, so CACHE_MODE=vram keeps it. The launcher subtracts 64 MiB per request
+      slot above eight; an explicit value is used as given.
   attention-backend:
     group: kernels
     summary: Attention kernel backend for the target model, for example B12X or FLASH_ATTN.
@@ -138,7 +135,13 @@ options:
       activations) in both modes, with no extra variable - vLLM runs the decode and MTP verification rows
       of every step on W4A16, and steps replayed from a CUDA graph keep W4A16 for all rows. Sets
       B12X_W4A16_A4_PREFILL_MIN_TOKENS.
-    why: GLM-5.3-Flash defaults to a16, the most precise choice. On two RTX PRO 6000 Max-Q serving the
+    why: >-
+      GLM-5.3-Flash defaults to a16, the most precise choice; the glm53-tp2 preset defaults to a4, so
+      prefill runs on FP4 tensor cores while decode keeps W4A16. Five runs of each test with reasoning
+      effort max on glm53-tp2 found no significant accuracy difference between a4 and a16: estonia 148
+      and 150 of 150, hotel-lights 146 and 142 of 150, lavd-test 50 and 50 of 50 within tolerance,
+      tool-eval 92.2 and 92.8 (run-level Mann-Whitney p 0.38 to 1.0), and needle-checksum near-misses
+      6 and 23 of 2,500. On two RTX PRO 6000 Max-Q serving the
       stored QAD checkpoint with the glm53-tp2 settings (TP2/DCP2, MTP3, eight request slots), prefill
       measured 7,490 and 7,728 tok/s at 8K and 32K tokens with a16 and 9,528 and 9,784 with a4; decode
       stayed the same (about 170 tok/s for one request and 530 for eight). The needle-checksum near-miss
@@ -149,7 +152,7 @@ options:
       NVFP4 plane for the residual raised prefill
       less and missed 1.85%, so it is not an option. a4 needs expert-activations bf16 (with fp4 the
       experts already take FP4 activations everywhere) and an image whose B12X and vLLM include the W4A16
-      A4 prefill path. The Spark checkpoint (glm53-spark-tp2) is refused: its pre-QAD experts answered 456
+      A4 prefill path. The Spark checkpoint is refused: its pre-QAD experts answered 456
       of 500 needle-checksum requests with a4 against 488 with a16, while the QAD checkpoints answered
       477 to 494 with a4. An explicit B12X_W4A16_A4_PREFILL_MIN_TOKENS still enables it.
   mamba-cache-mode:
@@ -188,7 +191,7 @@ options:
       5711b268, the first revision whose dflash/config.json is valid JSON (vllm PR 881). The DS4 and DS4
       Vision original checkpoints pin the source launcher's revisions 9e165c30 and 6821d6ad. An FP4-CSF
       checkpoint is downloaded at the revision its checkpoint variant or preset names (glm53-tp2 pins
-      9ca06e24, the revision it was validated with); vLLM then reads a local directory, so it gets no
+      4f90b741, the revision it was validated with); vLLM then reads a local directory, so it gets no
       revision.
   hf-overrides:
     group: model
@@ -228,7 +231,7 @@ options:
     summary: Number of GPUs that each layer is split across. More GPUs give more memory for weights and
       KV cache at the cost of more cross-GPU communication.
     why: Profile defaults are 4 for GLM, DS4.1 and MiMo, 2 for DS4 and DS4 Vision, and 1 for Qwen. Presets
-      select 2 (Spark, Qwen, MiMo) or 3 (GLM TP3).
+      select 2 (GLM, Qwen, MiMo) or 3 (GLM TP3).
   replicas:
     group: parallelism
     summary: Runs this many independent single-GPU servers (TP1) in the container, one per visible GPU,
@@ -252,8 +255,8 @@ options:
     summary: Number of GPUs within the tensor-parallel group that shard the KV cache along the sequence
       during decode. It must divide tensor-parallel-size and increases KV capacity at the cost of extra
       communication.
-    why: The common layer sets 1. The GLM TP2 presets use DCP2, which halves the KV bytes per token on
-      each GPU; the Spark TP2 preset holds about 1.02M KV tokens on two GPUs.
+    why: The common layer sets 1. The glm53-tp2 preset uses DCP2, which halves the KV bytes per token on
+      each GPU.
   max-num-seqs:
     group: scheduling
     summary: Maximum number of requests processed concurrently. More slots raise aggregate throughput
@@ -266,8 +269,10 @@ options:
     summary: Maximum tokens processed in one engine step, which bounds prefill chunk size. Larger values
       speed up long prefills but lengthen the steps that running decodes wait on and need more activation
       memory.
-    why: GLM, DS4, DS4.1 and MiMo use 4096; Qwen keeps 6,019 from its published recipe; the GLM Spark
-      TP2 preset uses 3072. For MiMo the launcher derives 2048 scheduled target tokens so the rest of
+    why: GLM, DS4, DS4.1 and MiMo use 4096; Qwen keeps 6,019 from its published recipe. On glm53-tp2
+      with LMCache, 4096 makes one cache object fill one 2,048-token page per DCP rank; 3072 gave
+      1,536-token pages, about 9% fewer KV tokens at the same KV bytes, and about 5% slower 32K
+      prefill. For MiMo the launcher derives 2048 scheduled target tokens so the rest of
       each step goes to DFlash verification rows (vllm PR 881).
   block-size:
     group: memory
@@ -490,8 +495,12 @@ options:
     summary: Chooses where the prefix cache lives. vram keeps it on the GPU only, lmcache starts an LMCache
       service for CPU RAM and optional disk storage, and native uses vLLM's own CPU KV offload (GLM and
       Qwen only).
-    why: The common default is vram, so no external service starts unless requested; MiMo-V2.6-Flash does
-      not support an external cache.
+    why: >-
+      The common default is vram, so no external service starts unless requested. The glm53-tp2 preset
+      starts LMCache with the RAM tier only (disk stays opt-in): with eight agents whose contexts grew
+      past the GPU KV cache, it served 435 turns in 15 minutes with 97% of prompt tokens from cache,
+      against 155 turns and 65% with the GPU-only cache. MiMo-V2.6-Flash does not support an external
+      cache.
   target-page-size:
     group: memory
     summary: Token size of a GLM-5.3-Flash target MLA cache page, which is kept separate from the recurrent-state
@@ -564,7 +573,11 @@ options:
     group: cache
     summary: Capacity of the LMCache CPU RAM tier (L1) in GiB. With engine-driven transfer this is also
       the size of the shared-memory pool the supervisor checks.
-    why: The common default is 24 GiB, as in the DS4 source recipe; GLM raises it to 64 GiB.
+    why: The common default is 24 GiB, as in the DS4 source recipe; GLM raises it to 64 GiB. Engine-driven
+      transfer pins the whole tier in /dev/shm at startup, so a default size shrinks to 90% of the free
+      /dev/shm and half of the RAM available to the container (a cgroup memory limit counts), in whole
+      GiB and at least 8 GiB, and the log says so; an explicit size must fit both as given. The tier is
+      released when the container stops.
   cache-l1-init-gib:
     group: cache
     summary: Initial L1 allocation in GiB when LMCache grows L1 lazily; it cannot exceed cache-l1-gib.
@@ -596,9 +609,10 @@ options:
     summary: Chooses which request-boundary recurrent checkpoints reach the disk tier. always writes every
       one, on-reuse writes a checkpoint only after a restore used it, and on-evict writes the current
       checkpoint of a conversation when it leaves RAM and at shutdown.
-    why: 'GLM-5.3-Flash and Qwen3.8 default to on-evict: each conversation''s newest checkpoint reaches
+    why: >-
+      GLM-5.3-Flash and Qwen3.8 default to on-evict: each conversation's newest checkpoint reaches
       the disk when it leaves RAM and at shutdown, so the disk holds many more conversations (docker PR
-      94). Other models write every checkpoint (always).'
+      94). Other models write every checkpoint (always).
   cache-directory:
     group: cache
     summary: Absolute directory for the LMCache disk tier. Each model, cache layout and checkpoint identity
@@ -774,7 +788,8 @@ environment:
     why: GLM-5.3-Flash and Qwen3.8 Flash Next set 512 together with a block limit of 4.
   B12X_W4A16_A4_PREFILL_MIN_TOKENS:
     group: precision
-    summary: A positive value turns on NVFP4 activations over the same packed FP4 weights for W4A16 MoE
+    summary: >-
+      A positive value turns on NVFP4 activations over the same packed FP4 weights for W4A16 MoE
       prefill; 0 (the b12x default) turns the path off. vLLM then passes the experts' activation scales
       and chooses per row - prefill rows A4, decode rows W4A16 - whatever the step size. Callers that do
       not choose, and images before vllm #977, run calls of at least this many tokens A4.
@@ -1004,8 +1019,8 @@ environment:
     group: communication
     summary: Upper token bound for the DCP compressed-KV gather path in b12x sparse-MLA prefill (vLLM
       default 524288). Prefills outside the bound use the non-gather path.
-    why: The GLM TP2 presets set 65536; the Spark preset commit gives no separate measurement for this
-      value.
+    why: The glm53-tp2 preset sets 65536, the value it was qualified with; there is no separate
+      measurement for this value.
   VLLM_B12X_MOE_FP4_FORCE_A16:
     group: kernels
     summary: Forces the b12x FP4 MoE to use BF16 activations (W4A16) instead of quantized activations.
@@ -1094,9 +1109,8 @@ environment:
     summary: Keeps the GLM-5.3 input embedding table (target and MTP draft) in pinned host RAM; the GPU
       reads the rows of the current tokens through a UVA view. Lossless, but each rank reads one row per
       token over PCIe.
-    why: The GLM TP2 presets set 1 to free 0.59 GiB per GPU for the KV cache; decode speed is unchanged
-      and 16K/64K prefills are 1 to 3% slower (vllm PR 898). On glm53-spark-tp2, images whose vLLM lacks
-      this variable fall back to the four-slot recipe.
+    why: The GLM TP2 preset sets 1 to free 0.59 GiB per GPU for the KV cache; decode speed is unchanged
+      and 16K/64K prefills are 1 to 3% slower (vllm PR 898).
   VLLM_GLM53_FP8_DENSE:
     group: kernels
     summary: Quantizes the large BF16 dense projections of GLM-5.3 to FP8 E4M3 after loading and runs
@@ -1235,7 +1249,8 @@ environment:
     group: communication
     summary: Minimum message size sent through the b12x PCIe DMA ring all-reduce (vLLM default 6MB). off
       keeps large all-reduces on the fallback backend.
-    why: For GLM the launcher sets off with DCP above 1 and 6MB otherwise, because the measured DMA crossover
+    why: >-
+      For GLM the launcher sets off with DCP above 1 and 6MB otherwise, because the measured DMA crossover
       is slower for DCP full-CKV prefill (GLM source launcher comment). The glm53-tp2 preset (TP2/DCP2) sets
       6MB: on two RTX PRO 6000 Max-Q its 8K/32K prefill measured 2 to 3% faster with a16 and 4 to 6% faster
       with a4 prefill activations, decode unchanged. DS4.1 sets 6MB and MiMo sets off, both from their
@@ -1317,8 +1332,7 @@ environment:
     group: communication
     summary: Lets process groups over the same ranks and device (for example TP, DCP and EP) share one
       PyNCCL communicator. Off by default.
-    why: The GLM TP2 presets set 1 to free 74 MiB per GPU for the KV cache (vllm PR 898). On
-      glm53-spark-tp2, images whose vLLM lacks this switch fall back to the four-slot recipe.
+    why: The GLM TP2 preset sets 1 to free 74 MiB per GPU for the KV cache (vllm PR 898).
   VLLM_SSM_CONV_STATE_LAYOUT:
     group: memory
     summary: Memory layout of the Mamba-style conv state; SD stores (state_len, dim), DS stores (dim,
