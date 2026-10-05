@@ -274,8 +274,10 @@ def installed_b12x_mxfp8_moe() -> bool:
 RETIRED_PRESETS = {
     "glm53-spark-tp2": (
         "glm53-tp2",
-        "it serves the QAD weights of GLM-5.3-Flash from the FP4-CSF checkpoint "
-        "GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD (a new download)",
+        (
+            "it serves the QAD weights of GLM-5.3-Flash from the FP4-CSF checkpoint "
+            "GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD (a new download)"
+        ),
     ),
 }
 

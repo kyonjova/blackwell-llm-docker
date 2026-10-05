@@ -12,7 +12,6 @@ from runtime.entrypoint import command
 from runtime.launcher import ROOT, ConfigError, deployment_presets, resolve
 from runtime.packaging import audit_image_metadata, owned_environment, payload_sources
 
-
 TP2_KV = 7650410496
 QAD_CHECKPOINT = "local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD"
 QAD_REVISION = "4f90b74165cb1542cca35730b7dfa4d550bcf0ce"
