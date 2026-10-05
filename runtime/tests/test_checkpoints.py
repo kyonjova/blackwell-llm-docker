@@ -652,3 +652,90 @@ def test_the_glm_tp2_preset_reads_its_checkpoint_through_serving_files(
     spec = json.loads(plan.argv[plan.argv.index("--speculative-config") + 1])
     assert "revision" not in spec and "model" not in spec
     assert spec["moe_backend"] == "b12x"
+
+
+def _pinned_revisions():
+    """Every FP4-CSF Hub revision a profile or preset pins."""
+    pinned = set()
+    for profile_id in CSF:
+        options = profile("model", profile_id)["checkpoints"]["csf"]["options"]
+        if options.get("revision"):
+            pinned.add((options["model"], options["revision"]))
+    presets = launcher.read_yaml(launcher.ROOT / "presets.yaml")["presets"]
+    for preset in presets.values():
+        options = preset.get("options") or {}
+        if options.get("load-format") in launcher.CSF_FORMATS and options.get(
+            "revision"
+        ):
+            pinned.add((options["model"], options["revision"]))
+    return sorted(pinned)
+
+
+def test_every_pinned_csf_revision_records_its_manifest():
+    manifests = launcher.pinned_csf_manifests()
+    pinned = _pinned_revisions()
+
+    assert pinned
+    for repository, revision in pinned:
+        assert re.fullmatch(r"[0-9a-f]{64}", manifests[repository][revision])
+
+
+def _offline_hub(monkeypatch, tmp_path, repository, revision, snapshots):
+    """A cache holding other revisions of the repository and no network."""
+    cache = tmp_path / "hub"
+    folder = cache / f"models--{repository.replace('/', '--')}" / "snapshots"
+    for name, root in snapshots.items():
+        folder.mkdir(parents=True, exist_ok=True)
+        root.rename(folder / name)
+    monkeypatch.setenv("HF_HUB_CACHE", str(cache))
+    manifest = (folder / "same" / "manifest.json").read_bytes()
+    monkeypatch.setattr(
+        launcher,
+        "pinned_csf_manifests",
+        lambda: {repository: {revision: launcher.hashlib.sha256(manifest).hexdigest()}},
+    )
+
+    def snapshot_download(repository, revision=None, local_files_only=False):
+        raise missing("revision not cached")
+
+    def hf_hub_download(*args, **kwargs):
+        raise OSError("HF_HUB_OFFLINE")
+
+    missing = _fake_hub(monkeypatch, snapshot_download, hf_hub_download)
+    return folder
+
+
+def test_offline_a_cached_revision_with_the_same_manifest_serves_the_pin(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr(launcher, "CSF_SERVING_ROOT", tmp_path / "serving")
+    repository, revision = CSF["glm53-flash"].csf, csf_revision("glm53-flash")
+    schema = "lil-nvfp4-csf-checkpoint/1"
+    same = _csf_checkpoint(tmp_path / "a", schema, {})
+    other = _csf_checkpoint(tmp_path / "b", schema, {}, shard=b"abc")
+    manifest = other / "manifest.json"
+    manifest.write_text(manifest.read_text().replace('"0"', '"1"'))
+    folder = _offline_hub(
+        monkeypatch, tmp_path, repository, revision, {"other": other, "same": same}
+    )
+    plan = resolve("glm53-flash", "rtx-pro-6000-pcie", env={})
+
+    prepare_csf_checkpoint(plan)
+
+    config = _serving_config(plan)
+    assert config["quantization_config"]["checkpoint_root"] == str(folder / "same")
+    assert "same FP4-CSF manifest" in capsys.readouterr().err
+
+
+def test_offline_without_a_matching_cached_revision_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(launcher, "CSF_SERVING_ROOT", tmp_path / "serving")
+    repository, revision = CSF["glm53-flash"].csf, csf_revision("glm53-flash")
+    schema = "lil-nvfp4-csf-checkpoint/1"
+    same = _csf_checkpoint(tmp_path / "a", schema, {})
+    folder = _offline_hub(monkeypatch, tmp_path, repository, revision, {"same": same})
+    # An incomplete snapshot with the right manifest is not a substitute.
+    (folder / "same" / "tensors" / "model-00001.safetensors").unlink()
+    plan = resolve("glm53-flash", "rtx-pro-6000-pcie", env={})
+
+    with pytest.raises(OSError, match="HF_HUB_OFFLINE"):
+        prepare_csf_checkpoint(plan)

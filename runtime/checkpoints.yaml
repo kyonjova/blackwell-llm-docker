@@ -1,0 +1,16 @@
+# The manifest.json SHA-256 of every FP4-CSF checkpoint revision that a profile
+# or preset pins. The manifest names each shard and metadata file by SHA-256,
+# and revisions that change only the model card or license files keep it. When
+# the Hub cannot be reached, a cached revision with the same manifest serves a
+# pinned revision that is not in the cache (launcher.cached_csf_twin).
+manifests:
+  local-inference-lab/DeepSeek-V4-Flash-0731-lossless-CSF:
+    f4fca95bc4464b9a619bf0b20e82a249babc85d8: 3a6375322521aaca9c29247077c532ca0c405b59769b897a8240585c7cefb99d
+  local-inference-lab/DeepSeek-V4-Flash-Vision-Exp-lossless-CSF:
+    b04bad8ee916b4b6e5ffeeb19179348674619fa2: f677c7590a40fd4062cf7f4d69100666c9a0463c14472bb39e7fc86be33ea5a1
+  local-inference-lab/DeepSeek-V4.1-Flash-lossless-CSF:
+    9c60bcbf1670e06f154b5d61080e50c9b3b7b4a3: 3b6e3e47a99a53e7ec86eca725863a71826b27dd519cb9b9fdbfc26b070bc49b
+  local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD:
+    fd660d51d1fc3caae26a4bf31b7451475bbb9bdc: f64df0b0572f1cc03a67583c5c1a7fca50ee42929029974feb950fa85166b200
+  local-inference-lab/Qwen3.8-Flash-Next-NVFP4-MXFP8-CSF-QAD:
+    ac1c8d8edfb88a41df837e8ca431e0ec237c139d: 2900d5c8e23cb77c81b9e821f606d76aaf20b19d5e4528746a77e82b09847f4b

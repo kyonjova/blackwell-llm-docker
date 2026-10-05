@@ -341,6 +341,11 @@ time per step is the same.
   downloaded weights. vLLM gets neither a Hub revision nor, for the DeepSeek
   profiles that trust remote code, a code revision for that directory. MTP
   and DSpark drafters stored in the checkpoint are read from it too.
+- Offline (`HF_HUB_OFFLINE=1`) or without network, a pinned revision that is
+  not in the cache is served from a cached revision with the same
+  `manifest.json`, which names every weight and metadata file by SHA-256.
+  Hub revisions that change only the model card or license files keep the
+  manifest, so a newer image does not need a new download for them.
 - An image whose vLLM cannot read a model's FP4-CSF checkpoint serves the
   original with a warning. The launcher checks the installed vLLM's FP4-CSF
   load formats and, for DeepSeek-V4-Flash and its vision variant, the

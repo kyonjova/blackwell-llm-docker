@@ -1431,11 +1431,49 @@ def csf_missing_files(root: Path) -> list[str]:
     ]
 
 
+def hub_cache() -> Path:
+    """The Hugging Face hub cache directory, located as huggingface_hub does."""
+    if os.environ.get("HF_HUB_CACHE"):
+        return Path(os.environ["HF_HUB_CACHE"])
+    cache = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    return Path(os.environ.get("HF_HOME") or os.path.join(cache, "huggingface")) / "hub"
+
+
+def pinned_csf_manifests() -> dict[str, dict[str, str]]:
+    """Manifest SHA-256 by repository and pinned revision (checkpoints.yaml)."""
+    return read_yaml(ROOT / "checkpoints.yaml").get("manifests") or {}
+
+
+def cached_csf_twin(repository: str, revision: str | None) -> Path | None:
+    """A complete cached snapshot with the pinned revision's FP4-CSF manifest.
+
+    checkpoints.yaml records the manifest of every pinned revision. The
+    manifest names each shard and metadata file by SHA-256, and revisions that
+    change only the model card or license files keep it, so such a snapshot
+    holds exactly the pinned checkpoint.
+    """
+    expected = (pinned_csf_manifests().get(repository) or {}).get(revision)
+    snapshots = hub_cache() / f"models--{repository.replace('/', '--')}" / "snapshots"
+    if expected is None or not snapshots.is_dir():
+        return None
+    for snapshot in sorted(snapshots.iterdir()):
+        manifest = snapshot / "manifest.json"
+        if (
+            manifest.is_file()
+            and hashlib.sha256(manifest.read_bytes()).hexdigest() == expected
+            and not csf_missing_files(snapshot)
+        ):
+            return snapshot
+    return None
+
+
 def csf_snapshot(repository: str, revision: str | None, method: str) -> Path:
     """A complete local snapshot of an FP4-CSF Hub repository.
 
     A complete cached snapshot is used as is, also offline. Otherwise the
-    small manifest proves the format before the weights are downloaded.
+    small manifest proves the format before the weights are downloaded. When
+    the Hub cannot be reached, a cached revision with the same manifest as
+    the pinned one serves it.
     """
     from huggingface_hub import hf_hub_download, snapshot_download
     from huggingface_hub.errors import LocalEntryNotFoundError
@@ -1450,7 +1488,20 @@ def csf_snapshot(repository: str, revision: str | None, method: str) -> Path:
         csf_format(root / "manifest.json", repository, method)
         if not csf_missing_files(root):
             return root
-    manifest = hf_hub_download(repository, "manifest.json", revision=revision)
+    try:
+        manifest = hf_hub_download(repository, "manifest.json", revision=revision)
+    except OSError:
+        # HF_HUB_OFFLINE, or no network.
+        root = cached_csf_twin(repository, revision)
+        if root is None:
+            raise
+        print(
+            f"{repository} revision {revision} is not cached and the Hub cannot "
+            f"be reached; serving the cached revision {root.name}, which has "
+            "the same FP4-CSF manifest",
+            file=sys.stderr,
+        )
+        return root
     csf_format(Path(manifest), repository, method)
     return Path(snapshot_download(repository, revision=revision))
 
