@@ -44,6 +44,11 @@ SHM_ROOT = Path("/dev/shm")
 # Share of a filesystem's space (free plus what the tier already holds) that
 # a disk tier may claim; the rest stays for the model, logs and other writers.
 L2_DISK_SHARE = 0.9
+# A default L1 arena may take this share of the free /dev/shm and of the
+# available RAM (the arena is pinned), and is refused below the minimum.
+L1_SHM_SHARE = 0.9
+L1_RAM_SHARE = 0.5
+L1_MIN_GIB = 8
 # Arena locks stay open for the supervisor's lifetime. The kernel releases a
 # flock when its holder exits, including on SIGKILL or an OOM kill, so a held
 # lock proves a running owner and a free one proves the arena is stale.
@@ -239,6 +244,77 @@ def fit_disk_tiers(service: CacheService) -> None:
         )
 
 
+def _mem_available() -> int | None:
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def fit_l1_arena(service: CacheService) -> None:
+    """Size the engine-driven L1 arena to the host, or refuse if it cannot fit.
+
+    Engine-driven transfer pins the whole arena in /dev/shm at startup. A size
+    that comes from a profile or preset default shrinks to a share of the free
+    /dev/shm and of the available RAM; an explicit size must fit as given.
+    """
+    stats = os.statvfs(SHM_ROOT)
+    free = stats.f_bavail * stats.f_frsize
+    if not service.l1_adjustable:
+        if free < service.shm_bytes:
+            raise ConfigError(
+                "Insufficient free /dev/shm for the complete engine-driven L1 arena"
+            )
+        return
+    available = _mem_available()
+    limit = free * L1_SHM_SHARE
+    if available is not None:
+        limit = min(limit, available * L1_RAM_SHARE)
+    usable = math.floor(limit / 1024**3)
+    requested = service.shm_bytes / 1024**3
+    if usable >= requested:
+        return
+    host = f"/dev/shm has {free / 1024**3:.0f} GiB free" + (
+        f" and the host {available / 1024**3:.0f} GiB of RAM available"
+        if available is not None
+        else ""
+    )
+    if usable < L1_MIN_GIB:
+        raise ConfigError(
+            f"No room for the LMCache RAM tier: {host}, and it needs at least "
+            f"{L1_MIN_GIB} GiB. Free memory or set CACHE_MODE=vram"
+        )
+    service.shm_bytes = usable * 1024**3
+    argv = service.argv
+    argv[argv.index("--l1-size-gb") + 1] = str(float(usable))
+    init = argv.index("--l1-init-size-gb") + 1
+    if float(argv[init]) > usable:
+        argv[init] = str(float(usable))
+    announce(
+        f"LMCache RAM tier sized to {usable} GiB instead of {requested:g} GiB: "
+        f"{host}. Set LMCACHE_L1_GB to choose the size"
+    )
+
+
+def release_arena(service: CacheService | None) -> None:
+    """Free the L1 arena once every process that mapped it has stopped.
+
+    With --ipc host the arena lives in the host's /dev/shm, so an arena left
+    behind keeps its RAM until the next start of the same instance.
+    """
+    if service is None or not service.shm_bytes:
+        return
+    arena = SHM_ROOT / service.shm_name
+    try:
+        arena.unlink()
+    except FileNotFoundError:
+        return
+    announce(f"Released the cache SHM arena {arena}")
+
+
 def preflight(service: CacheService, environment: dict) -> None:
     if any("UNRESOLVED-CHECKPOINT" in arg for arg in service.argv):
         raise ConfigError(
@@ -294,11 +370,7 @@ def preflight(service: CacheService, environment: dict) -> None:
                 f"Removed the stale cache SHM arena {shm} left by a cache service "
                 "that did not shut down cleanly"
             )
-        stats = os.statvfs(SHM_ROOT)
-        if stats.f_bavail * stats.f_frsize < service.shm_bytes:
-            raise ConfigError(
-                "Insufficient free /dev/shm for the complete engine-driven L1 arena"
-            )
+        fit_l1_arena(service)
     report_stale_tiers(service)
     fit_disk_tiers(service)
 
@@ -469,5 +541,6 @@ def _supervise(
         return 128 + requested_signal
     finally:
         stop_groups(children, service.stop_grace if service is not None else stop_grace)
+        release_arena(service)
         for sig, handler in previous.items():
             signal.signal(sig, handler)

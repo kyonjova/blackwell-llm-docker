@@ -293,6 +293,99 @@ def test_arena_of_a_running_cache_is_refused(shm_root):
         os.close(owner)
 
 
+def _l1_service(gib, adjustable=True):
+    service = _service(shm_bytes=int(gib * 1024**3))
+    service.argv += ["--l1-size-gb", str(float(gib)), "--l1-init-size-gb", "2"]
+    return replace(service, l1_adjustable=adjustable)
+
+
+@pytest.mark.parametrize(
+    "free_gib,available_gib,expected",
+    [(40, 1000, 36), (500, 60, 30), (1000, 1000, 64), (40, None, 36)],
+)
+def test_default_l1_arena_fits_the_host(
+    monkeypatch, shm_root, capsys, free_gib, available_gib, expected
+):
+    _statvfs_with_free(monkeypatch, free_gib * 1024**3)
+    monkeypatch.setattr(
+        supervisor,
+        "_mem_available",
+        lambda: None if available_gib is None else available_gib * 1024**3,
+    )
+    service = _l1_service(64)
+    supervisor.preflight(service, {})
+    assert service.shm_bytes == expected * 1024**3
+    assert service.argv[service.argv.index("--l1-size-gb") + 1] == str(float(expected))
+    message = capsys.readouterr().err
+    assert ("LMCache RAM tier sized to" in message) == (expected != 64)
+
+
+def test_default_l1_arena_keeps_its_initial_size_within_the_arena(
+    monkeypatch, shm_root
+):
+    _statvfs_with_free(monkeypatch, 10 * 1024**3)
+    monkeypatch.setattr(supervisor, "_mem_available", lambda: None)
+    service = _l1_service(64)
+    service.argv[service.argv.index("--l1-init-size-gb") + 1] = "16"
+    supervisor.preflight(service, {})
+    assert service.argv[service.argv.index("--l1-size-gb") + 1] == "9.0"
+    assert service.argv[service.argv.index("--l1-init-size-gb") + 1] == "9.0"
+
+
+def test_default_l1_arena_below_the_minimum_is_refused(monkeypatch, shm_root):
+    _statvfs_with_free(monkeypatch, 6 * 1024**3)
+    monkeypatch.setattr(supervisor, "_mem_available", lambda: 100 * 1024**3)
+    with pytest.raises(
+        ConfigError, match="No room for the LMCache RAM tier.*CACHE_MODE=vram"
+    ):
+        supervisor.preflight(_l1_service(64), {})
+
+
+def test_explicit_l1_arena_must_fit_as_given(monkeypatch, shm_root):
+    _statvfs_with_free(monkeypatch, 40 * 1024**3)
+    with pytest.raises(ConfigError, match="Insufficient free /dev/shm"):
+        supervisor.preflight(_l1_service(64, adjustable=False), {})
+
+
+def test_stopped_cache_releases_its_arena(shm_root, capsys):
+    arena = shm_root / "lmcache_l1_pool_test"
+    arena.write_bytes(b"pinned L1")
+    supervisor.release_arena(_service(shm_bytes=4096))
+    assert not arena.exists()
+    assert "Released the cache SHM arena" in capsys.readouterr().err
+    # Nothing to release: no arena, no cache service, or no engine-driven pool.
+    supervisor.release_arena(_service(shm_bytes=4096))
+    supervisor.release_arena(None)
+    supervisor.release_arena(_service(shm_bytes=0))
+    assert capsys.readouterr().err == ""
+
+
+def test_supervisor_releases_the_arena_after_stopping_its_children(monkeypatch):
+    service = replace(
+        resolve("ds4-flash", env={"LMCACHE_MODE": "ram"}).cache_service, shm_bytes=0
+    )
+    events = []
+
+    class Child:
+        def __init__(self, command, **kwargs):
+            self.code = 7
+
+        def poll(self):
+            return self.code
+
+    monkeypatch.setattr(supervisor, "preflight", lambda *_: None)
+    monkeypatch.setattr(subprocess, "Popen", Child)
+    monkeypatch.setattr(
+        supervisor, "stop_groups", lambda processes, grace: events.append("stop")
+    )
+    monkeypatch.setattr(
+        supervisor, "release_arena", lambda released: events.append(released)
+    )
+    with pytest.raises(ConfigError, match="before readiness"):
+        supervisor.supervise(service, ["model"], {}, [])
+    assert events == ["stop", service]
+
+
 def _statvfs_with_free(monkeypatch, free_bytes):
     real = os.statvfs
 

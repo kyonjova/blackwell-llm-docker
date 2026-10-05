@@ -132,13 +132,15 @@ def test_checkpoint_with_a_local_copy_reads_it_as_csf(tmp_path):
 
 
 def test_presets_that_choose_their_checkpoint_keep_it():
-    spark = resolve("glm53-flash", "rtx-pro-6000-pcie", preset="glm53-spark-tp2")
+    tp2 = resolve("glm53-flash", "rtx-pro-6000-pcie", preset="glm53-tp2")
     tp3 = resolve("glm53-flash", "rtx-pro-6000-pcie", preset="glm53-tp3")
     qwen_tp2 = resolve("qwen38-flash-next", "rtx-pro-6000-pcie", preset="qwen38-tp2")
 
-    assert spark.values["model"] == "local-inference-lab/GLM-5.3-Flash-NVFP4-Spark"
-    assert spark.values["quantization"] == "modelopt_mixed"
-    assert "checkpoint" not in spark.values
+    assert tp2.values["model"] == (
+        "local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD"
+    )
+    assert tp2.values["quantization"] == "nvfp4_csf"
+    assert "checkpoint" not in tp2.values
     assert tp3.values["checkpoint"] == "original"
     assert tp3.values["model"] == CSF["glm53-flash"].original
     assert qwen_tp2.values["checkpoint"] == "csf"
@@ -566,18 +568,31 @@ def test_ds4_csf_drafters_follow_the_serving_files(
     assert _serving_config(plan)["quantization_config"]["quant_method"] == "mxfp4_csf"
 
 
-def test_a_preset_with_a_checkpoint_of_its_own_refuses_the_other_kind():
+def test_a_preset_with_a_checkpoint_of_its_own_refuses_the_other_kind(monkeypatch):
     """CHECKPOINT chooses among the profile's checkpoints; a preset that names
     its own serves it, and a choice of the other kind is an error."""
+    real = launcher.deployment_presets()
+    own = {
+        **real["glm53-tp2"],
+        "options": {
+            "model": "local-inference-lab/GLM-5.3-Flash-NVFP4-Spark",
+            "tensor-parallel-size": 2,
+            "load-format": "safetensors",
+        },
+        "linked_options": {},
+    }
+    monkeypatch.setattr(
+        launcher, "deployment_presets", lambda: {**real, "glm53-own-tp2": own}
+    )
 
     def spark(env):
         return resolve(
-            "glm53-flash", "rtx-pro-6000-pcie", preset="glm53-spark-tp2", env=env
+            "glm53-flash", "rtx-pro-6000-pcie", preset="glm53-own-tp2", env=env
         )
 
     with pytest.raises(
         ConfigError,
-        match="glm53-spark-tp2 serves a non-CSF checkpoint of its own.*CHECKPOINT=csf",
+        match="glm53-own-tp2 serves a non-CSF checkpoint of its own.*CHECKPOINT=csf",
     ):
         spark({"CHECKPOINT": "csf"})
     same_kind = spark({"CHECKPOINT": "original"})

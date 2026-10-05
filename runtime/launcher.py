@@ -269,8 +269,24 @@ def installed_b12x_mxfp8_moe() -> bool:
     )
 
 
+# Removed presets name the preset that replaces them, so an old Compose file
+# fails with the way forward instead of an unknown name.
+RETIRED_PRESETS = {
+    "glm53-spark-tp2": (
+        "glm53-tp2",
+        "it serves the QAD weights of GLM-5.3-Flash from the FP4-CSF checkpoint "
+        "GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD (a new download)",
+    ),
+}
+
+
 def deployment_preset(identifier: str) -> dict:
     presets = deployment_presets()
+    if identifier not in presets and identifier in RETIRED_PRESETS:
+        replacement, reason = RETIRED_PRESETS[identifier]
+        raise ConfigError(
+            f"PRESET={identifier} was removed; use PRESET={replacement}: {reason}"
+        )
     if identifier not in presets:
         raise ConfigError(f"Unknown deployment preset: {identifier}")
     return copy.deepcopy(presets[identifier])

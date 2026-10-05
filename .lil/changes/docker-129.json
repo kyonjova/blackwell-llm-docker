@@ -1,0 +1,29 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-129",
+  "category": "breaking",
+  "summary": "glm53-tp2 is the final GLM-5.3-Flash TP2 recipe: NVFP4 prefill activations, the LMCache RAM tier on by default and a 4096-token budget with a re-qualified 7,296 MiB KV cache; glm53-spark-tp2 is removed",
+  "models": [
+    "GLM-5.3-Flash",
+    "DeepSeek-V4-Flash",
+    "DeepSeek-V4-Flash-Vision-Exp",
+    "DeepSeek-V4.1-Flash",
+    "Qwen3.8-Flash-Next"
+  ],
+  "compatibility": "PRESET=glm53-spark-tp2 now stops with a pointer to PRESET=glm53-tp2. glm53-tp2 defaults change: PREFILL_ACTIVATIONS=a4 (a16 stays selectable), CACHE_MODE=lmcache with the RAM tier only (CACHE_MODE=vram restores the GPU-only cache, LMCACHE_MODE=disk adds the disk tier), MAX_NUM_BATCHED_TOKENS=4096 and 7,296 MiB of KV per GPU instead of 8 GiB. The six FP4-CSF checkpoint pins move to their licensed revisions; weights and manifests are unchanged, so only the license and card files download.",
+  "details": [
+    "Hybrid prefill: prefill rows run on FP4 tensor cores with NVFP4 activations while decode stays W4A16. Five runs each of estonia, hotel-lights, lavd-test, tool-eval and needle-checksum with reasoning effort max found no significant accuracy difference to a16.",
+    "LMCache RAM tier: eight agents whose contexts grew past 450K tokens got 435 turns in 15 minutes with 97% of prompt tokens from cache, against 155 turns and 65% with the GPU cache only.",
+    "4096-token budget: one LMCache object fills one 2,048-token page per DCP rank. 3072 gave 1,536-token pages and about 9% fewer KV tokens, and prefilled 32K prompts about 5% slower.",
+    "KV: 7,296 MiB per GPU (about 1.84M tokens) left 499 MiB free at the worst peak of a mixed long-prompt and image load followed by eight long-context agents. The previous 8 GiB left 47 to 71 MiB under the same load.",
+    "Supervisor: the LMCache RAM arena in /dev/shm is released when the container stops; it was sometimes left behind, keeping 64 GiB of host RAM with --ipc host. A default RAM tier shrinks to 90% of the free /dev/shm and half of the available RAM (at least 8 GiB) instead of refusing to start; an explicit LMCACHE_L1_GB must still fit.",
+    "Checkpoint pins (Local Inference Lab License revisions): GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD 4f90b741, GLM-5.3-Flash-NVFP4-CSF-QAD f4bfe1ce, DeepSeek-V4-Flash-0731-lossless-CSF 40ae9285, DeepSeek-V4-Flash-Vision-Exp-lossless-CSF 45fd9976, DeepSeek-V4.1-Flash-lossless-CSF 9a0b1aac, Qwen3.8-Flash-Next-NVFP4-MXFP8-CSF-QAD 9b45aa5a."
+  ],
+  "authors": [
+    "voipmonitor"
+  ],
+  "pull_requests": [
+    129
+  ],
+  "requires": []
+}

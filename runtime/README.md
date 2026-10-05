@@ -50,87 +50,65 @@ for two 96-GB RTX PRO GPUs is `glm53-tp2`:
 
 ```bash
 docker run -d --name glm-tp2 --init --gpus '"device=0,1"' \
-  --restart on-failure --network host --ipc host --shm-size 32g \
+  --restart on-failure --network host --ipc host --shm-size 32g --stop-timeout 30 \
   --ulimit memlock=-1 --ulimit stack=67108864:67108864 \
   -v model-cache:/root/.cache/huggingface -v glm-tp2-runtime:/cache \
   -e PRESET=glm53-tp2 -e PORT=8000 "$LIL_IMAGE"
 ```
 
 It serves the QAD weights from the stored checkpoint
-`local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD` at revision `9ca06e24`:
+`local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD` at revision `4f90b741`:
 MXFP8 attention and shared experts, and NVFP4 routed experts whose scales stay
-losslessly compressed (FP4-CSF). Routed experts take BF16 activations with
-FP32 router weights. It runs TP2/DCP2, MTP3 with B12X drafter experts, eight
-request slots, a 3,072-token prefill budget and an 8 GiB KV cache per GPU, with
-the Spark preset's memory savings (input embedding table in host RAM, MXFP8
-vision tower, shared NCCL communicator) and NCCL settings. The checkpoint keeps
-the vision tower in BF16, so the preset quantizes it while loading
-(`VLLM_GLM53_VISION_MXFP8=1`).
+losslessly compressed (FP4-CSF). The routed experts decode with BF16
+activations and FP32 router weights (W4A16) and prefill with NVFP4 activations
+(`PREFILL_ACTIVATIONS=a4`): long prompts run on FP4 tensor cores while
+generation keeps the precise path. It runs TP2/DCP2, MTP3 with B12X drafter
+experts, eight request slots, a 4,096-token prefill budget and a 7,296 MiB KV
+cache per GPU (about 1.84M tokens). The input embedding table lives in host
+RAM, the vision tower is quantized to MXFP8 while loading (the checkpoint keeps
+it in BF16) and the TP, DCP and EP groups share one NCCL communicator.
 
-- It serves only its own checkpoint: `CHECKPOINT=original` is refused; use the
-  GLM profile without a preset, or the Spark preset below, for other checkpoints.
-- The image's vLLM must read `nvfp4_csf` checkpoints; otherwise the launcher
-  refuses the preset.
-- Sixteen request slots (`MAX_NUM_SEQS=16`) and LMCache (`CACHE_MODE=lmcache`)
-  take 64 MiB per extra slot and 192 MiB from the KV cache, as on the Spark
-  preset.
-- `PREFILL_ACTIVATIONS=a4` runs long prefill calls with NVFP4 activations for
-  faster prefill while decode stays W4A16, see
-  [GLM-5.3-Flash expert precision](#glm-53-flash-expert-precision).
+The prefix cache also lives in host RAM. LMCache keeps up to 64 GiB of
+conversation KV and recurrent checkpoints, so a conversation that left the GPU
+cache is restored instead of prefilled again. With eight agents whose contexts
+grew past 450K tokens each, it served 435 turns in 15 minutes with 97% of the
+prompt tokens from cache (90% of turns under 18 s), against 155 turns, 65% and
+123 s with the GPU cache alone.
 
-The Spark TP2 preset remains available. It uses the Spark checkpoint (stored
-MXFP8 attention, pre-QAD experts) on two 96-GB RTX PRO GPUs; it does not select
-DGX Spark hardware or replace GLM TP4 defaults. Its pre-QAD experts lose accuracy
-with `PREFILL_ACTIVATIONS=a4`, so the launcher refuses a4 for this checkpoint.
-
-```bash
-docker run -d --name glm-spark-tp2 --init --gpus '"device=0,1"' \
-  --restart on-failure --network host --ipc host --shm-size 32g \
-  --ulimit memlock=-1 --ulimit stack=67108864:67108864 \
-  -v model-cache:/root/.cache/huggingface -v glm-spark-runtime:/cache \
-  -e PRESET=glm53-spark-tp2 -e PORT=8000 "$LIL_IMAGE"
-```
-
-This selects TP2/DCP2, MTP3 with B12X draft experts, eight request slots, a
-3,072-token prefill budget, 4,044 MiB fixed KV per rank (about 1.02M tokens)
-and sparse full/piecewise captures through 32 verifier rows. To make room for
-the KV cache, the input embedding table lives in pinned host RAM (0.59 GiB per
-GPU, read row by row over PCIe), the vision tower runs in MXFP8 (0.24 GiB) and
-the TP, DCP and EP groups share one NCCL communicator (74 MiB). Decode speed is
-unchanged; long prefills are 1-3% slower. The allocator uses 12 MiB large
-segments; NCCL uses two channels and 1 MiB buffers. No image-count limit is
-imposed.
-
-- Sixteen request slots: add `-e MAX_NUM_SEQS=16`. Each slot above eight takes
-  64 MiB from the KV allocation for larger CUDA graphs and buffers, so 16 slots
-  keep 3,532 MiB per rank. An explicit `KV_CACHE_MEMORY_BYTES` is used as given.
-  With LMCache enabled, the launcher keeps a further 192 MiB for its buffers
-  (3,852 MiB per rank, about 860K tokens, at eight slots).
+- Host RAM: engine-driven LMCache pins its whole RAM tier in `/dev/shm` at
+  startup (with `--ipc host`, the host's). When less is free, the tier shrinks
+  to 90% of the free `/dev/shm` and half of the available RAM (at least 8 GiB)
+  and the log names the size; `-e LMCACHE_L1_GB=<GiB>` sets it explicitly.
+  The tier is freed when the container stops; `--stop-timeout 30` leaves time
+  for that.
+- Disk tier, so conversations also survive restarts: `-e LMCACHE_MODE=disk`.
+  GPU cache only: `-e CACHE_MODE=vram`, with the same KV size.
+- The 4,096-token prefill budget makes one LMCache object fill one 2,048-token
+  page per DCP rank. A 3,072-token budget gives 1,536-token pages and about 9%
+  fewer KV tokens; it also prefilled 32K prompts about 5% slower.
 - Qualified worst case at eight slots: ten minutes of eight concurrent streams
   mixing 1K-168K-token prompts, one to ten images per request up to 6000x4000,
-  and 64-1,024-token outputs. The PyTorch allocator never had to free its cache
-  to retry an allocation while serving, and about 0.4 GiB (VRAM cache) or
-  0.6 GiB (LMCache) stayed free at the peak. The earlier 4,556 MiB left 5 MiB free
-  and retried 15 times under the same mix. A larger explicit KV size, more
-  slots than 16, or a desktop session on the same GPUs reduces that margin.
-- Images whose vLLM predates these memory savings (checked in the installed
-  `vllm/envs.py` at launch) keep the earlier four-slot recipe with 3,996 MiB
-  of KV per rank.
-- BF16 vision tower or GPU-resident embeddings: add
-  `-e VLLM_GLM53_VISION_MXFP8=0` or `-e VLLM_GLM53_EMBED_HOST=0` and lower
-  `KV_CACHE_MEMORY_BYTES` by 0.24 GiB or 0.59 GiB respectively.
-- CPU/disk LMCache: add `-e CACHE_MODE=lmcache` and `--stop-timeout 60`.
-  GPU-only cache is the default.
-  The connector's GPU buffers take 192 MiB from the preset KV allocation
-  (about 1.0M tokens at eight slots, 0.86M at sixteen).
-  Text and image recurrent checkpoints can be restored externally. LMCache
-  retains fewer KV tokens than the GPU-only configuration.
-- Smaller KV allocation: add `-e KV_CACHE_MEMORY_BYTES=3758096384` for 3.5 GiB.
+  and 64-1,024-token outputs, then fifteen minutes of eight agents growing past
+  450K tokens each. 499 MiB per GPU stayed free at the peak. A larger explicit
+  KV size or a desktop session on the same GPUs reduces that margin.
+- It serves only its own checkpoint: `CHECKPOINT=original` is refused; use the
+  GLM profile without a preset for other checkpoints.
+- The image's vLLM must read `nvfp4_csf` checkpoints; otherwise the launcher
+  refuses the preset.
+- Sixteen request slots: `-e MAX_NUM_SEQS=16`. Each slot above eight takes
+  64 MiB from the KV allocation for larger CUDA graphs and buffers. An explicit
+  `KV_CACHE_MEMORY_BYTES` is used as given.
+- `PREFILL_ACTIVATIONS=a16` keeps BF16 activations in prefill too. Five runs of
+  estonia, hotel-lights, lavd-test, tool-eval and needle-checksum found no
+  significant accuracy difference to a4, see
+  [GLM-5.3-Flash expert precision](#glm-53-flash-expert-precision).
+- `PRESET=glm53-spark-tp2` (the Spark checkpoint on two GPUs) was removed; it
+  now stops with a pointer to `glm53-tp2`.
 - Change serving choices with the same `SPECULATOR`, `MTP_DEPTH`, `TP`, `DCP`,
   `MAX_NUM_SEQS`, and `MAX_NUM_BATCHED_TOKENS` controls as other profiles.
   GLM cache object size follows a changed prefill budget unless explicitly set.
   Automatic capture capacity follows request slots and effective proposal width.
-- Native form: `lil-serve --preset glm53-spark-tp2 -- --port 8000`.
+- Native form: `lil-serve --preset glm53-tp2 -- --port 8000`.
 - Qwen TP2: `PRESET=qwen38-tp2`; CPU PLE placement and MTP defaults still come
   from the Qwen model profile. `PROFILE=qwen38-flash-next TP=2` is equivalent.
 - Qwen as two TP1 replicas: `PRESET=qwen38-tp1x2` runs one complete server per
@@ -365,8 +343,8 @@ time per step is the same.
   the original `MODEL`.
 - FP4-CSF needs B12X MoE without expert parallelism, so the GLM TP3 preset
   serves the original checkpoint. A preset that names a checkpoint of its
-  own, such as `glm53-tp2` (FP4-CSF) or the GLM Spark TP2 preset, serves
-  that checkpoint and refuses a `CHECKPOINT` of the other kind.
+  own, such as `glm53-tp2` (FP4-CSF), serves that checkpoint and refuses a
+  `CHECKPOINT` of the other kind.
 
 GLM and DeepSeek retain the source launchers' temperature 1/top-p 0.95
 server defaults. Explicit generation configuration replaces these defaults;
@@ -738,20 +716,22 @@ full read after a container restart. Set
 identity records elsewhere. Missing, invalid or stale records cause a full
 content hash; they never disable checkpoint identity checks.
 
-For the GLM Spark TP2/DCP2 recipe with a 3072-token scheduling budget, replace
-`CACHE_MODE=vram` with the following environment arguments:
+`PRESET=glm53-tp2` starts LMCache with the RAM tier by default. To add the
+disk tier there, or to size the tiers yourself, set for example:
 
 ```bash
--e LMCACHE_MODE=disk -e LMCACHE_CHUNK_SIZE=3072 \
--e LMCACHE_L1_GB=16 -e LMCACHE_L1_INIT_GB=2 -e LMCACHE_L2_GB=64
+-e LMCACHE_MODE=disk -e LMCACHE_L1_GB=32 -e LMCACHE_L2_GB=256
 ```
 
 Use `LMCACHE_MODE=ram` to omit disk storage. Keep `/cache` on a persistent
 Docker volume for disk restore. At startup the disk tier is capped to 90% of
 what its filesystem can give it (free space plus what the tier already holds),
-with a warning, so it cannot fill the disk. A RAM arena left in `/dev/shm` by a
-container that was killed or crashed is removed automatically; an arena whose
-container is still running is refused.
+with a warning, so it cannot fill the disk. A default RAM tier shrinks the same
+way to what `/dev/shm` and the available RAM can hold; an explicit
+`LMCACHE_L1_GB` must fit as given. The RAM arena is freed when the container
+stops. One left in `/dev/shm` by a container that was killed or crashed is
+removed at the next start; an arena whose container is still running is
+refused.
 
 The disk tier lives in `/cache/lmcache/<model>/<layout>/<checkpoint>`. The
 layout covers the image runtime and the cache settings, so a new image or a
