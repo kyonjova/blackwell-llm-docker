@@ -31,9 +31,9 @@ defaults:
   max-num-batched-tokens: 4096
   # Qualified at TP4 with the MXFP8 FP4-CSF checkpoint and 32 request slots:
   # 32 streams mixing 1K-168K-token prompts with up to ten images of
-  # 6000x4000, then 32 agents growing past 200K tokens each. At 0.965 the
-  # worst peak left 377 to 663 MiB per GPU free (MTP, LMCache and DFlash2
-  # runs); 0.96 keeps about 480 MiB more. 0.93 left 4 GiB unused.
+  # 6000x4000, then 32 agents growing past 200K tokens each. The worst peak
+  # left 1,057 to 1,169 MiB per GPU free (MTP, LMCache and DFlash2 runs);
+  # 0.965 left 377 to 663 MiB and 0.93 left 4 GiB unused.
   gpu-memory-utilization: 0.96
   block-size: 256
   target-page-size: 2048
