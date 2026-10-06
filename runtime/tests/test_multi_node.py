@@ -8,7 +8,9 @@ from runtime.launcher import configure_nodes
 
 def run(values, replicas=1):
     derived = {}
-    configure_nodes(values, replicas, lambda key, value, reason: derived.update({key: value}))
+    configure_nodes(
+        values, replicas, lambda key, value, reason: derived.update({key: value})
+    )
     return derived
 
 
@@ -26,7 +28,16 @@ def test_worker_ranks_run_headless_and_rank_zero_serves():
     "values, replicas, message",
     [
         ({"nnodes": 2, "tensor-parallel-size": 2}, 1, "needs master-addr"),
-        ({"nnodes": 2, "master-addr": "a", "node-rank": 2, "tensor-parallel-size": 2}, 1, "node-rank"),
+        (
+            {
+                "nnodes": 2,
+                "master-addr": "a",
+                "node-rank": 2,
+                "tensor-parallel-size": 2,
+            },
+            1,
+            "node-rank",
+        ),
         ({"nnodes": 2, "master-addr": "a", "tensor-parallel-size": 3}, 1, "split"),
         ({"nnodes": 2, "master-addr": "a", "tensor-parallel-size": 2}, 2, "replicas"),
         ({"node-rank": 1}, 1, "needs nnodes > 1"),

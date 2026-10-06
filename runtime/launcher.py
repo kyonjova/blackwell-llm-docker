@@ -1722,7 +1722,9 @@ def configure_nodes(values: dict, replicas: int, derive) -> None:
     node-rank; rank 0 serves the API and the other ranks run vLLM headless.
     """
     nodes = values.get("nnodes", 1)
-    placement = [key for key in ("node-rank", "master-addr", "master-port") if key in values]
+    placement = [
+        key for key in ("node-rank", "master-addr", "master-port") if key in values
+    ]
     if nodes < 1:
         raise ConfigError("nnodes must be at least 1")
     if nodes == 1:
@@ -1738,7 +1740,9 @@ def configure_nodes(values: dict, replicas: int, derive) -> None:
     rank = values.get("node-rank", 0)
     if not 0 <= rank < nodes:
         raise ConfigError(f"node-rank must be between 0 and {nodes - 1}, got {rank}")
-    ranks = values.get("tensor-parallel-size", 1) * values.get("pipeline-parallel-size", 1)
+    ranks = values.get("tensor-parallel-size", 1) * values.get(
+        "pipeline-parallel-size", 1
+    )
     if ranks % nodes:
         raise ConfigError(
             f"tensor-parallel-size x pipeline-parallel-size ({ranks}) must split "

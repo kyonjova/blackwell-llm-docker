@@ -16,5 +16,8 @@ def test_arm64_hosts_read_the_arm64_policy(monkeypatch):
     assert path.name == "platform-environment.linux-arm64.json"
     policy = json.loads(path.read_text())
     # The arm64 NGC image lists 11.0 and omits 7.5.
-    assert policy["environment"]["TORCH_CUDA_ARCH_LIST"] == "8.0 8.6 9.0 10.0 11.0 12.0+PTX"
+    assert (
+        policy["environment"]["TORCH_CUDA_ARCH_LIST"]
+        == "8.0 8.6 9.0 10.0 11.0 12.0+PTX"
+    )
     assert launcher.platform_environment() == policy["environment"]
