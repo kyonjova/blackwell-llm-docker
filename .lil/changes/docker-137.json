@@ -1,6 +1,6 @@
 {
   "schema": "local-inference-release-change/v1",
-  "id": "docker-136",
+  "id": "docker-137",
   "category": "internal",
   "summary": "The DGX Spark image follows every completed publisher run, so a beta release is built for arm64 even when the same run failed for the canonical channel",
   "models": [
@@ -14,7 +14,7 @@
     "voipmonitor"
   ],
   "pull_requests": [
-    136
+    137
   ],
   "requires": []
 }
