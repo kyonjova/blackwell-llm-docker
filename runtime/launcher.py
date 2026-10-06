@@ -173,7 +173,7 @@ def deployment_presets() -> dict:
             "linked_options",
         }
         kv_fields = {"kv_bytes_per_extra_slot", "kv_bytes_for_external_cache"}
-        optional = kv_fields | {"vllm_fallback"}
+        optional = kv_fields | {"vllm_fallback", "kv_bytes_by_dcp"}
         if not required <= set(item) <= required | optional:
             raise ConfigError(f"Invalid deployment preset fields: {name}")
         fallback = item.get("vllm_fallback")
@@ -192,6 +192,15 @@ def deployment_presets() -> dict:
             value = item.get(field, 0)
             if type(value) is not int or value < 0:
                 raise ConfigError(f"Invalid preset {field}: {name}")
+        by_dcp = item.get("kv_bytes_by_dcp", {})
+        if not isinstance(by_dcp, dict) or not all(
+            re.fullmatch(r"[1-9][0-9]*", size)
+            and int(size) > 1
+            and type(amount) is int
+            and amount > 0
+            for size, amount in by_dcp.items()
+        ):
+            raise ConfigError(f"Invalid preset kv_bytes_by_dcp: {name}")
         for key in ("profile", "hardware"):
             if not isinstance(item[key], str) or not re.fullmatch(
                 r"[a-z][a-z0-9-]*", item[key]
@@ -890,6 +899,29 @@ def resolve(
                 "kv-cache-memory-bytes",
                 values["kv-cache-memory-bytes"] - sum(size for size, _ in reductions),
                 "; ".join(reason for _, reason in reductions),
+            )
+        # With DCP > 1, context-sized indexer and DCP exchange buffers grow
+        # outside vLLM's memory budget, so a preset can carry a KV size per
+        # DCP group, qualified at the longest prompt plus a full batch of
+        # concurrent prefills. An unlisted group size takes the next larger
+        # group's size, which leaves more room.
+        by_dcp = {
+            int(size): amount
+            for size, amount in deployment.get("kv_bytes_by_dcp", {}).items()
+        }
+        dcp = values.get("decode-context-parallel-size", 1)
+        qualified = [size for size in sorted(by_dcp) if size >= dcp]
+        if (
+            dcp > 1
+            and qualified
+            and origins.get("kv-cache-memory-bytes", "preset:").startswith(
+                ("preset:", "model:", "common:")
+            )
+        ):
+            derive(
+                "kv-cache-memory-bytes",
+                by_dcp[qualified[0]],
+                f"KV size qualified at DCP={qualified[0]}",
             )
 
     # A repository-specific code revision must not leak to an operator's model.

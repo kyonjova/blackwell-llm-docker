@@ -70,16 +70,43 @@ presets:
   glm53-csf-tp8:
     profile: glm53
     hardware: rtx-pro-6000-pcie
-    description: GLM-5.3 (744B) on eight 96-GB RTX PRO GPUs with TP8 and MTP3 from the model's built-in layer, serving the FP4-CSF checkpoint GLM-5.3-NVFP4-CSF (NVFP4 routed experts with losslessly compressed scales, about 536K KV tokens at 92% of GPU memory). B12X runs the DSA sparse attention with IndexCache, the W4A16 routed experts and the fused PCIe all-reduce + RMSNorm, and attention weights are prefetched into L2 during decode. VRAM prefix cache only.
+    description: GLM-5.3 (744B) on eight 96-GB RTX PRO GPUs with TP8 and MTP3 from the model's built-in layer, serving the FP4-CSF checkpoint GLM-5.3-NVFP4-CSF (NVFP4 routed experts with losslessly compressed scales) with its BF16 attention and shared experts quantized to MXFP8 while loading; the MTP layer drafts with NVFP4 experts and an NVFP4 copy of the vocabulary head. About 616K KV tokens at 92% of GPU memory; DCP=2 holds the full 1M context (about 1.19M tokens) at about 15% fewer decode steps. B12X runs the DSA sparse attention with IndexCache, the W4A16 routed experts and the fused PCIe all-reduce + RMSNorm, and attention weights are prefetched into L2 during decode. VRAM prefix cache only.
     options:
       model: local-inference-lab/GLM-5.3-NVFP4-CSF
       revision: a4d406932f2db96db8e852867c7939f448e0cd6f
       quantization: nvfp4_csf
       load-format: nvfp4_csf
       tensor-parallel-size: 8
-    environment: {}
-    modes: {}
+      # The checkpoint keeps attention and the shared experts in BF16; MXFP8
+      # while loading frees about 1.6 GiB per GPU and decodes faster.
+      quantization-config:
+        targets:
+          model.layers.*.self_attn.*: mxfp8
+          model.layers.*.mlp.shared_experts.*: mxfp8
+    environment:
+      # The MTP layer drafts with a W4A16 NVFP4 copy of the vocabulary head.
+      VLLM_GLM53_MTP_DRAFT_HEAD: nvfp4
+      # DCP > 1 exchanges queries and attention outputs over B12X PCIe and
+      # gathers the compressed KV cache for prompts up to the full 1M context.
+      VLLM_USE_B12X_DCP_A2A: "1"
+      VLLM_B12X_MLA_CKV_GATHER_MAX_TOKENS: "1048576"
+    modes:
+      mtp:
+        config:
+          quantization_config:
+            targets:
+              model.layers.78.mlp.experts: nvfp4_a16
+              model.layers.78.self_attn.*: mxfp8
+              model.layers.78.mlp.shared_experts.*: mxfp8
     linked_options: {}
+    # KV bytes per GPU at DCP > 1. At 92% of GPU memory a 1M-token prompt runs
+    # DCP=2 out of memory (context-sized indexer and DCP buffers grow outside
+    # vLLM's budget) and DCP=8 out of room for 64 concurrent 8K prefills.
+    # Qualified with a 1,048,448-token prompt, then 64 concurrent 8K prompts,
+    # then 4 minutes of 1K-96K prompts: at least 500 MiB stays free per GPU.
+    kv_bytes_by_dcp:
+      "2": 32480690176
+      "8": 28991029248
   glm53-csf-tp6:
     profile: glm53
     hardware: rtx-pro-6000-pcie

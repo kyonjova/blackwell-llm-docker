@@ -497,6 +497,12 @@ options:
       parameters still take precedence.
     why: GLM, DS4, DS4.1 and MiMo use temperature 1.0 and top_p 0.95 from their source launchers; for
       MiMo top_p 1.0 makes the model ramble.
+  quantization-config:
+    group: model
+    summary: Native vLLM online quantization as JSON. Its targets map module-name patterns to schemes such
+      as mxfp8, quantized from the checkpoint's BF16 weights while loading.
+    why: The GLM-5.3 (744B) TP8 preset quantizes the BF16 attention and shared-expert weights to MXFP8,
+      which frees about 1.6 GiB per GPU for the KV cache and decodes faster.
   speculative-config:
     group: speculation
     summary: Native vLLM speculative decoding configuration as JSON. Normally derived by the launcher
