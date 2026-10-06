@@ -77,11 +77,34 @@ presets:
       quantization: nvfp4_csf
       load-format: nvfp4_csf
       tensor-parallel-size: 8
+    environment: {}
+    modes: {}
+    linked_options: {}
+  glm53-csf-tp6:
+    profile: glm53
+    hardware: rtx-pro-6000-pcie
+    description: GLM-5.3 (744B) on six 96-GB RTX PRO GPUs with TP6 and MTP3 from the model's built-in layer, serving the FP4-CSF checkpoint GLM-5.3-NVFP4-CSF. TP6 pads the attention heads to 66 and the expert channels to 2112 (352 per GPU) with zero weights. About 228K KV tokens at 94% of GPU memory; DCP=2 doubles that to about 452K at about 17% fewer decode steps, DCP=3 triples it to about 678K, and DCP=6 holds the full 1M context (about 1.36M tokens) at about two thirds of the DCP1 decode speed. VRAM prefix cache only.
+    options:
+      model: local-inference-lab/GLM-5.3-NVFP4-CSF
+      revision: a4d406932f2db96db8e852867c7939f448e0cd6f
+      quantization: nvfp4_csf
+      load-format: nvfp4_csf
+      tensor-parallel-size: 6
+      # Six GPUs leave less memory for activations: a 4,096-token prefill
+      # budget and 16 request slots. At 95% the first DCP=2 prefill runs out
+      # of memory in the indexer's top-k exchange.
+      gpu-memory-utilization: 0.94
+      max-num-batched-tokens: 4096
+      max-num-seqs: 16
     environment:
-      # Split the 4-token (C1 with MTP3) decode MoE along K: the FC1 phase
-      # otherwise has 128 tiles for 188 SMs, and each tile's 48-stage chain
-      # carries the rebuild of the compressed scales.
-      B12X_W4A16_SMALL_M_SPLITK: "1"
+      # DCP=2 exchanges queries and attention outputs over B12X PCIe.
+      VLLM_USE_B12X_DCP_A2A: "1"
+      # The DCP groups' small decode exchanges run on NCCL: two channels
+      # decode 2-3% faster at DCP=2 than the profile's sixteen and leave
+      # memory for the 94% budget.
+      NCCL_MIN_NCHANNELS: "2"
+      NCCL_MAX_NCHANNELS: "2"
+      NCCL_BUFFSIZE: "4194304"
     modes: {}
     linked_options: {}
   glm53-tp3:

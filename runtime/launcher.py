@@ -924,6 +924,16 @@ def resolve(
             "MiMo target share of the step",
         )
 
+    if (
+        identifier == "glm53"
+        and values["decode-context-parallel-size"] == 6
+        and "dcp-comm-backend" not in values
+    ):
+        # The B12X PCIe DCP all-to-all covers 2, 4 and 8 ranks. At DCP6 the
+        # generic all-to-all prefills about seven times slower than
+        # all-gather plus reduce-scatter; at DCP3 it still decodes faster.
+        derive("dcp-comm-backend", "ag_rs", "GLM DCP6 exchange")
+
     if identifier == "qwen38-flash-next":
         # B12X QSA shards compressed KV across DCP ranks in groups of four
         # tokens and refuses vLLM's default interleave of one, so every

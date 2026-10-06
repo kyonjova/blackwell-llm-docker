@@ -65,7 +65,7 @@ environment:
 checkpoints:
   csf:
     description: >-
-      The NVFP4 checkpoint stored as FP4-CSF: the routed experts' FP4 scales are compressed losslessly, B12X reads them in compressed form, and they stay compressed in GPU memory. Same weights as the original; at TP8 9% more KV cache (535,808 against 489,920 tokens) for 1.5-2.5% fewer decode steps per second, and a smaller download.
+      The NVFP4 checkpoint stored as FP4-CSF: the routed experts' FP4 scales are compressed losslessly, B12X reads them in compressed form, and they stay compressed in GPU memory. Same weights as the original; at TP8 9% more KV cache (535,808 against 489,920 tokens) for up to 2% fewer decode steps per second at one request, and a smaller download.
     options:
       model: local-inference-lab/GLM-5.3-NVFP4-CSF
       revision: a4d406932f2db96db8e852867c7939f448e0cd6f
