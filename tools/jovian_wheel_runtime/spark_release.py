@@ -25,6 +25,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -187,17 +188,73 @@ def build_component(role: str, component: dict, work: Path, cache: Path) -> Path
     return bundle
 
 
+FAILED = "container-release-linux-arm64.failed.json"
+
+
+def has_arm64_support(repository: str, commit: str, path: str) -> bool:
+    found = subprocess.run(
+        ["gh", "api", f"repos/{repository}/contents/{path}?ref={commit}", "--silent"],
+        capture_output=True,
+    )
+    return found.returncode == 0
+
+
+def select_release(repository: str) -> str:
+    """The newest published beta release to build, or "" when there is none.
+
+    A release is skipped when it already has an arm64 receipt or a failure
+    marker (a manual run with --release-tag retries it), and when one of its
+    components or its recipe predates linux/arm64 support, so that the
+    five-minute publisher schedule does not start a doomed build each time.
+    """
+    releases = json.loads(run(["gh", "api", f"repos/{repository}/releases?per_page=30"]))
+    candidates = [
+        release for release in releases
+        if not release["draft"]
+        and release["tag_name"].startswith("karmic-kraken-beta-")
+        and any(asset["name"] == "container-release.json" for asset in release["assets"])
+    ]
+    if not candidates:
+        return ""
+    release = candidates[0]
+    names = {asset["name"] for asset in release["assets"]}
+    if RECEIPT in names or FAILED in names:
+        return ""
+    tag = release["tag_name"]
+    assembly = json.loads(run(["gh", "release", "download", tag, "--repo", repository,
+                               "--pattern", "community-assembly.json", "--output", "-"]))
+    required = [(repository, assembly["recipe_commit"],
+                 "tools/jovian_wheel_runtime/linux-arm64/foundation.lock")]
+    for role, component in sorted(assembly["components"].items()):
+        script = Path(BUNDLE_SCRIPTS[role])
+        required.append((component["repository"], component["source_commit"],
+                         str(script.parent / "linux-arm64" / "runtime.lock")))
+    missing = [f"{repo}@{commit[:12]}" for repo, commit, path in required
+               if not has_arm64_support(repo, commit, path)]
+    if missing:
+        print(f"{tag}: no linux/arm64 support in {', '.join(missing)}", file=sys.stderr)
+        return ""
+    return tag
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--release-tag", required=True)
+    parser.add_argument("--select", action="store_true",
+                        help="print the release tag to build (empty when none) and exit")
+    parser.add_argument("--release-tag")
     parser.add_argument("--repository", default="local-inference-lab/blackwell-llm-docker")
-    parser.add_argument("--work", type=Path, required=True)
+    parser.add_argument("--work", type=Path)
     parser.add_argument(
         "--cache", type=Path,
         default=Path(os.environ.get("LIL_SPARK_CACHE", Path.home() / ".cache/lil-spark")),
     )
     parser.add_argument("--build-only", action="store_true")
     args = parser.parse_args()
+    if args.select:
+        print(select_release(args.repository))
+        return
+    if not args.release_tag or args.work is None:
+        parser.error("--release-tag and --work are required to build")
     args.work.mkdir(parents=True, exist_ok=False)
     assembly = json.loads(
         release_asset(args.repository, args.release_tag, "community-assembly.json", args.work).read_text()
