@@ -72,3 +72,34 @@ def test_old_bundles_are_pruned(tmp_path):
         os.utime(tmp_path / "bundles" / "nccl" / commit, (index, index))
     kept = sorted(path.name for path in (tmp_path / "bundles" / "nccl").iterdir())
     assert len(kept) == spark_release.KEPT_BUNDLES
+
+
+def _releases(*assets):
+    return [{"draft": False, "tag_name": "karmic-kraken-beta-" + "a" * 64,
+             "assets": [{"name": "container-release.json"}, *({"name": a} for a in assets)]}]
+
+
+def _assembly():
+    return {"recipe_commit": "r" * 40, "components": {
+        role: {"repository": f"local-inference-lab/{role}", "source_commit": "c" * 40}
+        for role in spark_release.BUNDLE_SCRIPTS}}
+
+
+@pytest.mark.parametrize(
+    "assets, supported, expected",
+    [
+        ((), True, "karmic-kraken-beta-" + "a" * 64),
+        ((), False, ""),
+        (("container-release-linux-arm64.json",), True, ""),
+        (("container-release-linux-arm64.failed.json",), True, ""),
+    ],
+)
+def test_the_schedule_builds_only_supported_unbuilt_releases(monkeypatch, assets, supported, expected):
+    import json
+
+    def run(argv):
+        return json.dumps(_releases(*assets) if argv[:2] == ["gh", "api"] else _assembly())
+
+    monkeypatch.setattr(spark_release, "run", run)
+    monkeypatch.setattr(spark_release, "has_arm64_support", lambda *args: supported)
+    assert spark_release.select_release("local-inference-lab/blackwell-llm-docker") == expected
