@@ -145,3 +145,18 @@ def test_glm53_dcp_key_gather_needs_a_vllm_that_defines_it():
         "VLLM_B12X_MLA_CKV_GATHER": "1",
         "VLLM_DCP_INDEXER_KEY_GATHER": None,
     }
+
+
+@pytest.mark.parametrize("dcp,cap", [("2", None), ("3", None), ("6", "1048576")])
+def test_glm53_dcp6_gathers_up_to_the_full_context(dcp, cap):
+    plan = resolve("glm53", env={"DCP": dcp}, preset="glm53-csf-tp6")
+    assert plan.environment.get("VLLM_B12X_MLA_CKV_GATHER_MAX_TOKENS") == cap
+
+
+def test_glm53_mtp_experts_run_nvfp4_on_b12x():
+    config = resolve("glm53", env={}).values["speculative-config"]
+    assert config["moe_backend"] == "b12x"
+    assert config["quantization_config"] == {
+        "targets": {"model.layers.78.mlp.experts": "nvfp4_a16"},
+        "strict_targets": True,
+    }

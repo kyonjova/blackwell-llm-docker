@@ -934,12 +934,22 @@ def resolve(
             if gather == "auto"
             else gather
         )
-        for name in ("VLLM_B12X_MLA_CKV_GATHER", "VLLM_DCP_INDEXER_KEY_GATHER"):
+        derived = {
+            "VLLM_B12X_MLA_CKV_GATHER": enabled,
+            "VLLM_DCP_INDEXER_KEY_GATHER": enabled,
+        }
+        if enabled == "1" and values["decode-context-parallel-size"] == 6:
+            # DCP6 holds the full 1M context; past the default 524,288-token
+            # gather cap its all-gather/reduce-scatter fallback prefills at
+            # about 2,000 tokens/s (a 1M prompt: 360 s, 329 s with this cap,
+            # for 0.9% of the KV cache). At DCP2/3 the cap gains nothing.
+            derived["VLLM_B12X_MLA_CKV_GATHER_MAX_TOKENS"] = "1048576"
+        for name, value in derived.items():
             if name in explicit_env or (
                 vllm_environment is not None and name not in vllm_environment
             ):
                 continue
-            set_env(name, enabled, "derived:DCP CKV policy")
+            set_env(name, value, "derived:DCP CKV policy")
 
     if (
         identifier == "glm53"

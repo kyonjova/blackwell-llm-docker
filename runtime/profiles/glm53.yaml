@@ -83,7 +83,18 @@ modes:
   off: {}
   mtp:
     draft_tokens: 3
-    config: {method: mtp, draft_sample_method: probabilistic, moe_backend: triton, attention_backend: B12X}
+    # The checkpoints keep the MTP layer in BF16; its routed experts are
+    # quantized to NVFP4 at load and run W4A16 on B12X. At TP8 that frees
+    # 1.6 GiB per GPU (+4.6% KV cache) and drafts faster, at the same
+    # acceptance (2.53 against 2.50 tokens per step).
+    config:
+      method: mtp
+      draft_sample_method: probabilistic
+      moe_backend: b12x
+      attention_backend: B12X
+      quantization_config:
+        targets: {model.layers.78.mlp.experts: nvfp4_a16}
+        strict_targets: true
 cache:
   gpu: implemented
   external: unsupported
