@@ -12,7 +12,9 @@ channel>, and attaches container-release-linux-arm64.json to the release.
 A component commit without linux/arm64 support in its bundle script fails the
 build; the arm64 image never mixes amd64 wheels in. vLLM reuses the native
 objects of an earlier arm64 build when csrc/, cmake/ and the other native inputs
-are unchanged (VLLM_PRECOMPILED_BUNDLE), as its amd64 release does.
+are unchanged (VLLM_PRECOMPILED_BUNDLE), as its amd64 release does, and every
+component reuses its verified arm64 bundle when its source commit was built
+before (LIL_SPARK_CACHE).
 """
 
 from __future__ import annotations
@@ -117,7 +119,43 @@ def reusable_vllm_bundle(source: Path, cache: Path) -> Path | None:
     return None
 
 
+# Bundles kept per component; a beta usually changes one or two components.
+KEPT_BUNDLES = 4
+
+
+def cached_bundle(cache: Path, role: str, commit: str) -> Path | None:
+    """A verified arm64 bundle built earlier from the same source commit."""
+    bundle = cache / "bundles" / role / commit / "bundle"
+    if not (bundle / "SHA256SUMS").is_file():
+        return None
+    check = subprocess.run(["sha256sum", "--check", "--quiet", "SHA256SUMS"], cwd=bundle,
+                           capture_output=True)
+    return bundle if check.returncode == 0 else None
+
+
+def keep_bundle(cache: Path, role: str, commit: str, bundle: Path) -> None:
+    directory = cache / "bundles" / role
+    directory.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{commit}-", dir=directory))
+    shutil.copytree(bundle, staging / "bundle")
+    target = directory / commit
+    if target.exists():
+        shutil.rmtree(target)
+    staging.rename(target)
+    entries = sorted(
+        (path for path in directory.iterdir() if not path.name.startswith(".")),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for stale in entries[KEPT_BUNDLES:]:
+        shutil.rmtree(stale)
+
+
 def build_component(role: str, component: dict, work: Path, cache: Path) -> Path:
+    cached = cached_bundle(cache, role, component["source_commit"])
+    if cached is not None:
+        print(f"Reusing the arm64 {role} bundle of {component['source_commit']}", flush=True)
+        return cached
     source = work / "sources" / role
     checkout(component["repository"], component["source_commit"], source)
     if not supports_arm64(role, source):
@@ -145,6 +183,7 @@ def build_component(role: str, component: dict, work: Path, cache: Path) -> Path
             shutil.rmtree(keep)
         keep.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(bundle, keep / "bundle")
+    keep_bundle(cache, role, component["source_commit"], bundle)
     return bundle
 
 
