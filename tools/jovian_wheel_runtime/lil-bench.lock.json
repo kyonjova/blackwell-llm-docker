@@ -1,6 +1,6 @@
 {
   "repository": "local-inference-lab/llm-inference-bench",
-  "release": "v0.7.7",
-  "commit": "c71ec1f2b34a4f1c8f702f1750ccd70da0e389e2",
-  "archive_sha256": "25372047cddd6a7d3b5297711dade14d74c37742afc6841eca2cadf538be50d3"
+  "release": "v0.7.8",
+  "commit": "12c2a73237591ed2cd2a99f3cfcf5ce257bb8132",
+  "archive_sha256": "961592d755e85fe1413f294156de6b8bd51846a64937e96545e22bf87c877c5a"
 }

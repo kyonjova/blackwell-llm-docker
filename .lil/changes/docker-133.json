@@ -12,7 +12,8 @@
     "PRESET=glm53-dgx-spark-x2: TP2 over two boxes' RoCE link, the NVFP4-MTP Spark checkpoint, 351,730 KV tokens, about 30 tok/s for one request (lil-bench C1 32.6, C2 52.0, prefill 8k 1,955 tok/s).",
     "PRESET=qwen38-dgx-spark-x2: TP2 over two boxes, 3.39M KV tokens, about 50 tok/s for one request.",
     "NNODES, NODE_RANK, MASTER_ADDR and MASTER_PORT place one tensor-parallel group across machines; ranks above 0 run headless.",
-    "The DGX Spark image is published as <channel>-spark-<date>-<id> with the karmic-kraken-beta-spark alias, built from the same component commits as the amd64 image."
+    "The DGX Spark image is published as <channel>-spark-<date>-<id> with the karmic-kraken-beta-spark alias, built from the same component commits as the amd64 image.",
+    "The bundled llm-inference-bench is v0.7.8 (lil-bench 1.4): GB10 runs record unified memory and skip p2pmark as a single GPU, and runs across several machines record their node count."
   ],
   "authors": [
     "voipmonitor"
