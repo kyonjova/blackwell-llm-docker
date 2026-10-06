@@ -107,3 +107,41 @@ def test_glm53_explicit_dcp_backend_is_kept():
         "glm53", env={"DCP": "6", "DCP_COMM_BACKEND": "a2a"}, preset="glm53-csf-tp6"
     )
     assert _dcp_backend(plan) == "a2a"
+
+
+def _gather_env(plan):
+    return {
+        name: plan.environment.get(name)
+        for name in ("VLLM_B12X_MLA_CKV_GATHER", "VLLM_DCP_INDEXER_KEY_GATHER")
+    }
+
+
+@pytest.mark.parametrize(
+    "dcp,enabled", [("1", "0"), ("2", "1"), ("3", "1"), ("6", "1")]
+)
+def test_glm53_dcp_prefill_gathers_the_full_ckv_cache(dcp, enabled):
+    plan = resolve("glm53", env={"DCP": dcp}, preset="glm53-csf-tp6")
+    assert _gather_env(plan) == {
+        "VLLM_B12X_MLA_CKV_GATHER": enabled,
+        "VLLM_DCP_INDEXER_KEY_GATHER": enabled,
+    }
+
+
+def test_glm53_dcp_ckv_gather_can_be_turned_off():
+    plan = resolve(
+        "glm53", env={"DCP": "2", "DCP_CKV_GATHER": "0"}, preset="glm53-csf-tp6"
+    )
+    assert set(_gather_env(plan).values()) == {"0"}
+
+
+def test_glm53_dcp_key_gather_needs_a_vllm_that_defines_it():
+    plan = resolve(
+        "glm53",
+        env={"DCP": "2"},
+        preset="glm53-csf-tp6",
+        vllm_environment=frozenset({"VLLM_B12X_MLA_CKV_GATHER"}),
+    )
+    assert _gather_env(plan) == {
+        "VLLM_B12X_MLA_CKV_GATHER": "1",
+        "VLLM_DCP_INDEXER_KEY_GATHER": None,
+    }

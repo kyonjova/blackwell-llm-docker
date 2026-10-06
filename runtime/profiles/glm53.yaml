@@ -22,6 +22,9 @@ defaults:
   max-num-batched-tokens: 8192
   # The B12X DSA indexer and sparse MLA caches use 64-token pages.
   block-size: 64
+  # With decode context parallelism, prefill gathers the full compressed KV
+  # cache and the indexer keys on every rank (auto: on when DCP > 1).
+  dcp-ckv-gather: auto
   # Above 0.92 the first 8K-token prefills can run out of memory at TP8 once
   # the collectives allocate their buffers; 0.975 fails in the sampler.
   gpu-memory-utilization: 0.92

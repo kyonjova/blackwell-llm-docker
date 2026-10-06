@@ -924,6 +924,23 @@ def resolve(
             "MiMo target share of the step",
         )
 
+    if identifier == "glm53":
+        # DCP prefill gathers the full compressed KV cache and the indexer
+        # keys on every rank instead of exchanging partial attention: about
+        # 1.4x (DCP2) to 2.6x (DCP6) the prefill speed at the same decode.
+        gather = values["dcp-ckv-gather"]
+        enabled = (
+            str(int(values["decode-context-parallel-size"] > 1))
+            if gather == "auto"
+            else gather
+        )
+        for name in ("VLLM_B12X_MLA_CKV_GATHER", "VLLM_DCP_INDEXER_KEY_GATHER"):
+            if name in explicit_env or (
+                vllm_environment is not None and name not in vllm_environment
+            ):
+                continue
+            set_env(name, enabled, "derived:DCP CKV policy")
+
     if (
         identifier == "glm53"
         and values["decode-context-parallel-size"] == 6
