@@ -1,0 +1,26 @@
+schema_version: 1
+kind: hardware
+id: dgx-spark
+status: research-only
+description: >-
+  NVIDIA DGX Spark (GB10, SM121) with 128 GB of memory shared by the CPU and
+  the GPU, one GPU per box. Several boxes form one tensor-parallel group over
+  their ConnectX-7 RoCE ports; there is no PCIe peer-to-peer all-reduce.
+  Requires the linux/arm64 image.
+defaults: {}
+environment:
+  CUTE_DSL_ARCH: sm_121a
+  # Runtime torch cpp_extension builds target only this GPU; the image
+  # inherits NVIDIA's multi-architecture list from the NGC base.
+  TORCH_CUDA_ARCH_LIST: "12.1a"
+  VLLM_ENABLE_PCIE_ALLREDUCE: "0"
+  # Multi-box TP: NCCL over the RoCE ports. NCCL_SOCKET_IFNAME,
+  # GLOO_SOCKET_IFNAME, NCCL_IB_HCA and VLLM_HOST_IP depend on the cabling
+  # and are set per deployment.
+  NCCL_NET_PLUGIN: none
+  NCCL_IB_DISABLE: "0"
+  NCCL_IB_GID_INDEX: "3"
+  NCCL_IB_ADDR_FAMILY: AF_INET
+  NCCL_CUMEM_ENABLE: "0"
+  NCCL_NVLS_ENABLE: "0"
+  NCCL_IGNORE_CPU_AFFINITY: "1"
