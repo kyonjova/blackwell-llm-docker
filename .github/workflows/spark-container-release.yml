@@ -1,0 +1,95 @@
+name: DGX Spark (linux/arm64) image
+
+# Rebuilds the newest published beta release for linux/arm64 (GB10, SM121):
+# every component from the release's source commits, then the runtime image,
+# published as <image>-spark tags with container-release-linux-arm64.json on
+# the same GitHub release. Builds run under QEMU on the amd64 wheel builder
+# (tools/jovian_wheel_runtime/spark_release.py).
+
+on:
+  workflow_run:
+    workflows: [Community wheel-built Docker channels]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to build (default: newest beta release without an arm64 receipt)"
+        required: false
+      build_only:
+        description: Build without publishing
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spark-container-release
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    # A publisher run can fail for one channel after publishing another, so
+    # every completed run is followed; spark_release.py --select decides.
+    if: github.repository == 'local-inference-lab/blackwell-llm-docker'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Select the release
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${REQUESTED:-}" ]]; then
+            tag=${REQUESTED}
+          else
+            tag=$(python3 tools/jovian_wheel_runtime/spark_release.py --select)
+          fi
+          printf 'release_tag=%s\n' "${tag}" >> "${GITHUB_OUTPUT}"
+
+  build:
+    needs: resolve
+    if: needs.resolve.outputs.release_tag != ''
+    runs-on: [self-hosted, linux, x64, lil-wheel-builder]
+    # Native code compiles under QEMU; a cold vLLM build takes hours.
+    timeout-minutes: 2880
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Build and publish the arm64 image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+          BUILD_ONLY: ${{ inputs.build_only && '--build-only' || '' }}
+          LIL_SPARK_CACHE: /var/lib/github-flashinfer/cache/spark
+          LIL_COMPONENT_ARCHIVE_CACHE: /var/lib/github-flashinfer/cache/component-release-archives
+        run: |
+          set -euo pipefail
+          tools/jovian_wheel_runtime/ensure_spark_builder.sh
+          python3 tools/jovian_wheel_runtime/spark_release.py \
+            --release-tag "${RELEASE_TAG}" \
+            --work "${RUNNER_TEMP}/spark-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            ${BUILD_ONLY}
+      - name: Mark the release as failed for the schedule
+        if: failure() && !inputs.build_only
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          marker="${RUNNER_TEMP}/container-release-linux-arm64.failed.json"
+          printf '{"release_tag": "%s", "run": "%s/%s/actions/runs/%s"}\n' \
+            "${RELEASE_TAG}" "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}" > "${marker}"
+          gh release upload "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --clobber "${marker}"

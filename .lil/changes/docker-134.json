@@ -1,0 +1,20 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-134",
+  "category": "internal",
+  "summary": "The DGX Spark image workflow builds only releases whose components support linux/arm64 and does not retry a failed release on the five-minute schedule",
+  "models": [
+    "all"
+  ],
+  "compatibility": "No change to images. A failed Spark build is retried by running the workflow with release_tag.",
+  "details": [
+    "Releases built before the components gained linux/arm64 bundle support are skipped instead of starting a failing build after every publisher run."
+  ],
+  "authors": [
+    "voipmonitor"
+  ],
+  "pull_requests": [
+    134
+  ],
+  "requires": []
+}

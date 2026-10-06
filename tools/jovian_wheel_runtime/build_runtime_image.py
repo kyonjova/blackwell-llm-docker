@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import runtime_platform
 from prepare_runtime_foundation import prepare
 
 
@@ -53,11 +54,12 @@ def main() -> None:
     subprocess.run(["sha256sum", "--check", "SHA256SUMS"], cwd=bundle, check=True)
     manifest = bundle / "manifest.json"
     manifest_digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
-    source_image = dict(
-        line.split("=", 1)
-        for line in (tools / "foundation.lock").read_text().splitlines()
-        if "=" in line
-    )["source.image"]
+    platform = runtime_platform.selected()
+    lock_dir = runtime_platform.lock_dir(tools, platform)
+    foundation_lock = runtime_platform.read_lock(lock_dir / "foundation.lock")
+    source_image = foundation_lock["source.image"]
+    if foundation_lock.get("source.image.platform", platform) != platform:
+        raise ValueError("The foundation lock describes another platform")
     source_commit = run(["git", "-C", str(root), "rev-parse", "HEAD"]).decode().strip()
     if run(["git", "-C", str(root), "status", "--porcelain"]):
         raise ValueError("Runtime image builds require a clean recipe checkout")
@@ -68,17 +70,20 @@ def main() -> None:
     if present.returncode:
         subprocess.run(["docker", "pull", source_image], check=True)
     inspection = json.loads(run(["docker", "image", "inspect", source_image]))
-    builder = os.environ.get("BUILDX_BUILDER", "lil-wheel-cu134-sm120")
+    builder = os.environ.get(
+        "BUILDX_BUILDER", foundation_lock.get("buildx.builder", "lil-wheel-cu134-sm120")
+    )
     foundation, neutral_inspection = prepare(
         source_image,
         inspection[0],
-        root / "runtime/platform-environment.json",
+        runtime_platform.environment_policy(root, platform),
         Path(
             os.environ.get(
                 "LIL_FOUNDATION_CACHE", Path.home() / ".cache/lil-foundation"
             )
         ),
         builder,
+        platform,
     )
     with tempfile.TemporaryDirectory(prefix="lil-runtime-build-metadata-") as tmp:
         metadata = Path(tmp)
@@ -92,6 +97,8 @@ def main() -> None:
                 "build",
                 "--builder",
                 builder,
+                "--platform",
+                platform,
                 "--file",
                 str(tools / "Dockerfile.runtime"),
                 "--build-context",
@@ -102,6 +109,13 @@ def main() -> None:
                 f"model-neutral-foundation={foundation}",
                 "--build-arg",
                 f"SOURCE_IMAGE={source_image}",
+                "--build-arg",
+                f"PLATFORM_LOCK_DIR={lock_dir.relative_to(root)}",
+                *(
+                    ["--build-arg", f"UV_IMAGE={foundation_lock['uv.container-image']}"]
+                    if "uv.container-image" in foundation_lock
+                    else []
+                ),
                 "--build-arg",
                 f"RUNTIME_SOURCE_COMMIT={source_commit}",
                 "--tag",

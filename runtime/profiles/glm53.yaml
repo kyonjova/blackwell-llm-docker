@@ -1,0 +1,87 @@
+schema_version: 1
+kind: model
+id: glm53
+status: implemented
+description: GLM-5.3 (744B) NVFP4 with MTP proposals from its built-in layer; B12X DSA sparse attention, W4A16 routed experts and PCIe collectives.
+evidence:
+  - https://github.com/local-inference-lab/vllm/pull/985
+  - https://github.com/local-inference-lab/vllm/pull/986
+  - https://github.com/local-inference-lab/vllm/pull/987
+  - https://github.com/local-inference-lab/b12x/pull/483
+  - local-inference-lab/vllm:serve-glm53.sh
+defaults:
+  checkpoint: csf
+  model: local-inference-lab/GLM-5.3-NVFP4
+  served-model-name: GLM-5.3
+  tensor-parallel-size: 8
+  mode: mtp
+  # The longest context the KV cache holds for one request: about 536K tokens
+  # with the FP4-CSF checkpoint at TP8, about 490K with the original.
+  max-model-len: -1
+  max-num-seqs: 64
+  max-num-batched-tokens: 8192
+  # The B12X DSA indexer and sparse MLA caches use 64-token pages.
+  block-size: 64
+  # Above 0.92 the first 8K-token prefills can run out of memory at TP8 once
+  # the collectives allocate their buffers; 0.975 fails in the sampler.
+  gpu-memory-utilization: 0.92
+  attention-backend: B12X
+  moe-backend: b12x
+  linear-backend: b12x
+  quantization: modelopt_fp4
+  enable-flashinfer-autotune: false
+  max-cudagraph-capture-size: 256
+  compilation-config: {cudagraph_mode: FULL_AND_PIECEWISE, custom_ops: [all]}
+  # IndexCache: the indexer runs on the F layers and the S layers reuse the
+  # previous F layer's top-k selection.
+  hf-overrides:
+    use_index_cache: true
+    index_topk_pattern: FFFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSS
+  async-scheduling: true
+  generation-config: vllm
+  reasoning-parser: glm45
+  tool-call-parser: glm47
+  default-chat-template-kwargs: {reasoning_effort: high}
+  enable-force-include-usage: true
+  enable-request-id-headers: true
+environment:
+  OMP_NUM_THREADS: "1"
+  CUDA_DEVICE_MAX_CONNECTIONS: "32"
+  VLLM_USE_FLASHINFER_SAMPLER: "1"
+  VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS: "1"
+  VLLM_DISABLE_SHARED_EXPERTS_STREAM: "0"
+  # Routed FP4 experts run W4A16 (BF16 activations) in decode and prefill.
+  VLLM_B12X_MOE_FP4_FORCE_A16: "1"
+  B12X_W4A16_SMALL_M_HOST_BARRIER_RESET: "0"
+  B12X_W4A8_TINY_DECODE: "1"
+  B12X_DENSE_SPLITK_TURBO: "1"
+  # Two CTAs per SM with three pipeline stages for the narrow (256 channels
+  # per rank at TP8) decode MoE: 4-8% faster MoE calls, and it hides most of
+  # the per-stage rebuild of FP4-CSF scales.
+  B12X_W4A16_SMALL_M_OCCUPANCY: "2"
+  VLLM_LM_HEAD_A16: "0"
+  VLLM_MXFP8_LM_HEAD: "0"
+  VLLM_MTP_NVFP4_LM_HEAD: "0"
+checkpoints:
+  csf:
+    description: >-
+      The NVFP4 checkpoint stored as FP4-CSF: the routed experts' FP4 scales are compressed losslessly, B12X reads them in compressed form, and they stay compressed in GPU memory. Same weights as the original; at TP8 9% more KV cache (535,808 against 489,920 tokens) for up to 2% fewer decode steps per second at one request, and a smaller download.
+    options:
+      model: local-inference-lab/GLM-5.3-NVFP4-CSF
+      revision: a4d406932f2db96db8e852867c7939f448e0cd6f
+      quantization: nvfp4_csf
+      load-format: nvfp4_csf
+  original:
+    description: The ModelOpt NVFP4 checkpoint with uncompressed expert scales, at the revision that keeps the BF16 MTP layer unquantized (Hub discussion 2).
+    options:
+      model: local-inference-lab/GLM-5.3-NVFP4
+      revision: 1f3bb90cbff7f63cfb5c04c0ab723e6f75b633a8
+modes:
+  off: {}
+  mtp:
+    draft_tokens: 3
+    config: {method: mtp, draft_sample_method: probabilistic, moe_backend: triton, attention_backend: B12X}
+cache:
+  gpu: implemented
+  external: unsupported
+  migration_contract: none
