@@ -39,7 +39,7 @@ def test_template_is_installed_with_the_profiles():
     assert "templates/glm53-flash.jinja" in payload_hashes()
 
 
-@pytest.mark.parametrize("preset", [None, "glm53-spark-tp2"])
+@pytest.mark.parametrize("preset", [None, "glm53-tp2"])
 def test_glm_serves_the_runtime_template(preset):
     plan = resolve("glm53-flash", env={}, preset=preset)
     assert plan.values["chat-template"] == "runtime:templates/glm53-flash.jinja"

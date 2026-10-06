@@ -1,0 +1,20 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-128",
+  "category": "feature",
+  "summary": "The bundled llm-inference-bench (v0.7.7) runs tool-eval-bench with the community leaderboard settings: --tool-eval",
+  "models": [
+    "all"
+  ],
+  "compatibility": "No user action required. The first --tool-eval run needs network access to install tool-eval-bench into its own environment.",
+  "details": [
+    "docker exec -it -e LLM_BENCH_CACHE_DIR=/cache/llm-bench <container> python3 /opt/lil/bench/llm_decode_bench.py --tool-eval --port <PORT> runs SeraphimSerapis/tool-eval-bench (MIT) at a pinned commit with --hardmode --seed 42 --temperature 0 --parallel 4 --max-turns 30 --timeout 600 against the server and prints its score, categories and failed scenarios; the serving venv is not modified."
+  ],
+  "authors": [
+    "voipmonitor"
+  ],
+  "pull_requests": [
+    128
+  ],
+  "requires": []
+}

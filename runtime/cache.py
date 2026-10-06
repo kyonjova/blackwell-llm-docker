@@ -40,6 +40,9 @@ class CacheService:
     stop_grace: float = STOP_GRACE_SECONDS
     # Delete unused disk-tier namespaces of earlier images or settings.
     prune_stale_tiers: bool = False
+    # The L1 size is a profile or preset default, so the supervisor may shrink
+    # it to fit the host; an operator's explicit size is never changed.
+    l1_adjustable: bool = False
 
 
 def configure(values, origins, environment, env_origins, identifier, runtime_identity):
@@ -209,8 +212,6 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
                 "Explicit checkpoint retention conflicts with the cache object geometry"
             )
         put("prefix-cache-retention-interval", retention)
-        if engine and origins["gpu-memory-utilization"].startswith("model:"):
-            put("gpu-memory-utilization", 0.950)
     elif qwen:
         # GDN state must be restored with its exact attention/PLE boundary.
         # Independent aligned chunks are not a substitute for that bundle.
@@ -463,6 +464,8 @@ def configure(values, origins, environment, env_origins, identifier, runtime_ide
         namespace,
         stop_grace,
         bool(values.get("cache-l2-prune-stale")),
+        l1_adjustable=engine
+        and origins["cache-l1-gib"].startswith(("model:", "common:", "preset:")),
     )
 
 
@@ -506,7 +509,9 @@ def resolve_identity(plan, contract, helper: Path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     values = plan.values
-    target = module.resolve_checkpoint(values["model"], values.get("revision"))
+    target = plan.target_identity or module.resolve_checkpoint(
+        values["model"], values.get("revision")
+    )
     draft = {"identity": "", "revision": ""}
     if values["mode"] == "mtp" or values["mode"] == "dspark":
         draft = target

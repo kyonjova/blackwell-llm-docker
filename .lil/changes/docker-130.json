@@ -1,0 +1,31 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-130",
+  "category": "performance",
+  "summary": "GLM-5.3-Flash at TP4 serves the QAD MXFP8 FP4-CSF checkpoint with NVFP4 prefill activations and 96% of GPU memory: 6.87M KV tokens instead of 6.05M with the previous TP4 default, faster decode and prefill; DFlash2 works with FP4-CSF checkpoints again",
+  "models": [
+    "GLM-5.3-Flash",
+    "DeepSeek-V4-Flash",
+    "DeepSeek-V4-Flash-Vision-Exp",
+    "DeepSeek-V4.1-Flash",
+    "Qwen3.8-Flash-Next"
+  ],
+  "compatibility": "The glm53-flash profile (TP4) now downloads local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD (179 GB; already present if glm53-tp2 fetched it) instead of GLM-5.3-Flash-NVFP4-CSF-QAD. PREFILL_ACTIVATIONS=a16 restores BF16 prefill activations, GPU_MEMORY_UTILIZATION=0.93 the previous memory share and CHECKPOINT=original the uncompressed BF16 checkpoint. CACHE_MODE=lmcache now keeps the profile's memory share instead of 0.95. The six FP4-CSF checkpoint pins move to their current revisions; weights are unchanged, so only license and card files download.",
+  "details": [
+    "Against the previous TP4 default (BF16 FP4-CSF checkpoint, a16 prefill, 93% of GPU memory) on the same four GPUs: 6,871,032 KV tokens against 6,049,330, decode 289 against 258 tok/s at C1 and 969 against 900 at C8, and 8K/32K prefill 15,413/16,955 against 13,373/14,386 tok/s.",
+    "Checkpoint: at TP4 the MXFP8 FP4-CSF checkpoint loads 42.64 GiB per GPU against 46.93 GiB for the BF16 original and leaves 11% more KV tokens (6,871,032 against 6,165,626 at the same settings); decode was 8.4%, 9.1%, 7.5% and 6.1% faster at C1, C8, C16 and C32, and 8K/32K prefill 2.6%/3.3% faster.",
+    "Prefill activations a4: 8K and 32K prompts prefilled at 15,420 and 16,947 tok/s against 13,705 and 14,858 with a16, at the same decode speed; both answered 30 of 30 estonia runs.",
+    "Memory: 0.93 left 4 GiB per GPU unused. Under 32 streams mixing 1K-168K-token prompts with up to ten images of 6000x4000 and then 32 agents growing past 200K tokens each, 0.96 left 1,057 to 1,169 MiB free at the worst peak (MTP, LMCache and DFlash2 runs, no errors); 0.965 left 377 to 663 MiB.",
+    "DFlash2 (SPECULATOR=dflash2) with an FP4-CSF target failed at startup because vLLM read the drafter with the target's FP4-CSF loader (NVFP4-CSF loader requires quant_method=nvfp4_csf); the drafter now gets its own default load format.",
+    "The MTP drafter's experts stay on Marlin: B12X decoded at the same speed at TP4 in a crossover on two GPU groups.",
+    "The TP4 cache default stays the GPU prefix cache: it holds 6.9M tokens, and with 32 agents growing to about 217K tokens each the LMCache RAM tier added only 1 to 2 points of cache hits.",
+    "Checkpoint pins: GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD a1559e26, DeepSeek-V4-Flash-0731-lossless-CSF aa4458bf, DeepSeek-V4-Flash-Vision-Exp-lossless-CSF f43cead0, DeepSeek-V4.1-Flash-lossless-CSF 3e127631, Qwen3.8-Flash-Next-NVFP4-MXFP8-CSF-QAD 285dfa06."
+  ],
+  "authors": [
+    "voipmonitor"
+  ],
+  "pull_requests": [
+    130
+  ],
+  "requires": []
+}

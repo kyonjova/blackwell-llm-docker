@@ -30,7 +30,9 @@ def test_glm_target_budget_is_not_reduced_by_dflash(mode, depth, rows, dcp, dtyp
     assert plan.values["max-num-scheduled-tokens"] == 4096
     assert plan.values["prefix-cache-retention-interval"] == 0
     assert plan.values["target-page-size"] == "auto"
-    assert plan.values["gpu-memory-utilization"] == 0.95
+    # The profile's memory share was qualified with LMCache too.
+    assert plan.values["gpu-memory-utilization"] == 0.96
+    assert plan.origins["gpu-memory-utilization"] == "model:glm53-flash"
     assert plan.cache_service.environment["CUDA_VISIBLE_DEVICES"] == ""
     assert "UNRESOLVED-CHECKPOINT" in plan.cache_service.namespace
     assert plan.argv.count("--kv-transfer-config") == 1
@@ -485,3 +487,12 @@ def test_on_evict_default_falls_back_without_request_boundary_checkpoints():
         "ds4-flash", env={"CACHE_MODE": "lmcache", "LMCACHE_L2_ENABLED": "true"}
     )
     assert ds4.values["cache-l2-checkpoint-writes"] == "always"
+
+
+@pytest.mark.parametrize("identifier", ["glm53-flash", "ds4-flash"])
+def test_only_a_default_l1_size_may_shrink_to_fit_the_host(identifier):
+    default = resolve(identifier, env={"LMCACHE_MODE": "ram"})
+    explicit = resolve(identifier, env={"LMCACHE_MODE": "ram", "LMCACHE_L1_GB": "32"})
+    assert default.cache_service.l1_adjustable
+    assert not explicit.cache_service.l1_adjustable
+    assert explicit.cache_service.shm_bytes == 32 * 1024**3

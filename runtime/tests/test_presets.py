@@ -7,84 +7,29 @@ import sys
 
 import pytest
 
+from runtime import launcher
 from runtime.entrypoint import command
 from runtime.launcher import ROOT, ConfigError, deployment_presets, resolve
 from runtime.packaging import audit_image_metadata, owned_environment, payload_sources
 
+TP2_KV = 7650410496
+QAD_CHECKPOINT = "local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD"
+QAD_REVISION = "fd660d51d1fc3caae26a4bf31b7451475bbb9bdc"
 
-def spark(env=None, **kwargs):
+
+def tp2(env=None, **kwargs):
     return resolve(
         "glm53-flash",
         "rtx-pro-6000-pcie",
-        preset="glm53-spark-tp2",
+        preset="glm53-tp2",
         env=env or {},
         **kwargs,
     )
 
 
-def test_spark_overlay_preserves_the_bounded_tp2_memory_recipe():
-    plan = spark()
-    expected = {
-        "model": "local-inference-lab/GLM-5.3-Flash-NVFP4-Spark",
-        "tensor-parallel-size": 2,
-        "decode-context-parallel-size": 2,
-        "max-num-seqs": 8,
-        "max-num-batched-tokens": 3072,
-        "max-model-len": -1,
-        "kv-cache-memory-bytes": 4240441344,
-        "load-format": "safetensors",
-        "max-cudagraph-capture-size": 32,
-        "cudagraph-capture-sizes": [1, 2, 4, 8, 12, 16, 20, 24, 28, 32],
-    }
-    assert {key: plan.values[key] for key in expected} == expected
-    assert plan.values["speculative-config"] == {
-        "method": "mtp",
-        "num_speculative_tokens": 3,
-        "draft_sample_method": "probabilistic",
-        "rejection_sample_method": "standard",
-        "moe_backend": "b12x",
-        "attention_backend": "B12X",
-    }
-    assert plan.environment["NCCL_MIN_NCHANNELS"] == "2"
-    assert plan.environment["NCCL_MAX_NCHANNELS"] == "2"
-    assert plan.environment["NCCL_BUFFSIZE"] == "1048576"
-    assert plan.environment["CUBLAS_WORKSPACE_CONFIG"] == ":4096:1"
-    assert (
-        plan.environment["PYTORCH_CUDA_ALLOC_CONF"]
-        == "expandable_segments:True,large_segment_size_mb:12"
-    )
-    assert "--limit-mm-per-prompt" not in plan.argv
-    assert plan.values["additional-config"]["kda_prefill_backend"] == "b12x"
-    for name in (
-        "VLLM_GLM53_EMBED_HOST",
-        "VLLM_GLM53_VISION_MXFP8",
-        "VLLM_SHARE_PYNCCL_COMMS",
-    ):
-        assert plan.environment[name] == "1"
-
-
-def test_spark_extra_request_slots_shrink_the_preset_kv_allocation():
-    sixteen = spark(env={"MAX_NUM_SEQS": "16"})
-    assert sixteen.values["max-num-seqs"] == 16
-    assert sixteen.values["kv-cache-memory-bytes"] == 4240441344 - 8 * 67108864
-    assert sixteen.values["max-cudagraph-capture-size"] == 64
-    assert sixteen.origins["kv-cache-memory-bytes"].startswith("derived:")
-    fewer = spark(env={"MAX_NUM_SEQS": "4"})
-    assert fewer.values["kv-cache-memory-bytes"] == 4240441344
-    explicit = spark(env={"MAX_NUM_SEQS": "16", "KV_CACHE_MEMORY_BYTES": "5000000000"})
-    assert explicit.values["kv-cache-memory-bytes"] == 5000000000
-
-
-def test_spark_external_cache_keeps_room_for_its_gpu_buffers():
-    lmcache = spark(argv=["--cache-mode", "lmcache"])
-    assert lmcache.values["kv-cache-memory-bytes"] == 4240441344 - 201326592
-    both = spark(env={"MAX_NUM_SEQS": "16"}, argv=["--cache-mode", "lmcache"])
-    assert both.values["kv-cache-memory-bytes"] == 4240441344 - 8 * 67108864 - 201326592
-
-
-def test_spark_settings_do_not_leak_into_tp4_or_qwen():
+def test_tp2_settings_do_not_leak_into_tp4_or_qwen():
     before = resolve("glm53-flash", "rtx-pro-6000-pcie", env={}).public()
-    spark()
+    tp2()
     after = resolve("glm53-flash", "rtx-pro-6000-pcie", env={}).public()
     assert after == before
     assert after["settings"]["tensor-parallel-size"]["value"] == 4
@@ -101,7 +46,7 @@ def test_spark_settings_do_not_leak_into_tp4_or_qwen():
 
 @pytest.mark.parametrize("mode,width", [("off", 0), ("mtp", 3), ("dflash2", 7)])
 def test_mode_override_rebuilds_the_speculator_instead_of_pinning_mtp(mode, width):
-    plan = spark(argv=["--mode", mode])
+    plan = tp2(argv=["--mode", mode])
     assert plan.values["draft-tokens"] == width
     if width:
         assert plan.values["speculative-config"]["num_speculative_tokens"] == width
@@ -110,7 +55,7 @@ def test_mode_override_rebuilds_the_speculator_instead_of_pinning_mtp(mode, widt
 
 
 def test_explicit_inputs_override_preset_values():
-    plan = spark(
+    plan = tp2(
         config={"options": {"max-num-seqs": 8}},
         cli_env={"NCCL_MIN_NCHANNELS": "4"},
         argv=["--max-num-seqs", "16", "--kv-cache-memory-bytes", "3758096384"],
@@ -151,14 +96,14 @@ def test_explicit_inputs_override_preset_values():
 def test_more_request_slots_keep_a_graph_for_every_verifier_batch(seqs, sizes):
     # MTP3 verifies four rows per request. Raising MAX_NUM_SEQS must not leave
     # 5-7 running requests (20/24/28 rows) without a CUDA graph.
-    plan = spark(cli_env={"MAX_NUM_SEQS": str(seqs)})
+    plan = tp2(cli_env={"MAX_NUM_SEQS": str(seqs)})
     assert plan.values["max-cudagraph-capture-size"] == sizes[-1]
     assert plan.values["cudagraph-capture-sizes"] == sizes
 
 
 @pytest.mark.parametrize("mode,input_rows", [("mtp", 4096), ("dflash2", 4096 + 8 * 7)])
 def test_lmcache_target_budget_follows_the_changed_prefill_budget(mode, input_rows):
-    plan = spark(
+    plan = tp2(
         argv=[
             "--mode",
             mode,
@@ -176,25 +121,32 @@ def test_lmcache_target_budget_follows_the_changed_prefill_budget(mode, input_ro
 
 def test_explicit_cache_object_override_is_not_replaced():
     with pytest.raises(ConfigError, match="must match"):
-        spark(argv=["--cache-mode", "lmcache", "--cache-object-tokens", "4096"])
+        tp2(argv=["--cache-mode", "lmcache", "--cache-object-tokens", "6144"])
 
 
 def test_unknown_or_wrong_model_preset_is_rejected():
     with pytest.raises(ConfigError, match="Unknown deployment"):
         resolve("glm53-flash", preset="../../other", env={})
     with pytest.raises(ConfigError, match="different model"):
-        resolve("ds4-flash", preset="glm53-spark-tp2", env={})
+        resolve("ds4-flash", preset="glm53-tp2", env={})
+
+
+def test_the_retired_spark_preset_names_its_replacement():
+    with pytest.raises(
+        ConfigError, match="PRESET=glm53-spark-tp2 was removed; use PRESET=glm53-tp2"
+    ):
+        resolve("glm53-flash", "rtx-pro-6000-pcie", preset="glm53-spark-tp2", env={})
 
 
 def test_profile_cli_and_entrypoint_accept_preset_selection():
-    assert "--help" not in command([], {"PRESET": "glm53-spark-tp2"}, {})
+    assert "--help" not in command([], {"PRESET": "glm53-tp2"}, {})
     raw = subprocess.check_output(
         [
             sys.executable,
             "-m",
             "runtime.launcher",
             "--preset",
-            "glm53-spark-tp2",
+            "glm53-tp2",
             "--print-config",
             "--port",
             "5213",
@@ -211,19 +163,20 @@ def test_profile_cli_and_entrypoint_accept_preset_selection():
 
 def test_presets_are_packaged_and_schema_checked():
     assert "presets.yaml" in payload_sources()
-    assert deployment_presets()["glm53-spark-tp2"]["profile"] == "glm53-flash"
+    assert deployment_presets()["glm53-tp2"]["profile"] == "glm53-flash"
+    assert "glm53-spark-tp2" not in deployment_presets()
 
 
 def test_foundation_defaults_are_below_presets_and_user_environment():
     default = resolve("glm53-flash", env={})
     assert default.environment["NCCL_NET_PLUGIN"] == "spcx"
     assert default.environment_origins["NCCL_NET_PLUGIN"] == "platform:foundation"
-    assert spark().environment["NCCL_NET_PLUGIN"] == "none"
+    assert tp2().environment["NCCL_NET_PLUGIN"] == "none"
     for value in ("spcx", "none", "operator-plugin"):
         plan = resolve(
             "glm53-flash",
             "rtx-pro-6000-pcie",
-            preset="glm53-spark-tp2",
+            preset="glm53-tp2",
             env={"NCCL_NET_PLUGIN": value},
         )
         assert plan.environment["NCCL_NET_PLUGIN"] == value
@@ -243,7 +196,7 @@ def test_image_audit_covers_every_preset_environment_name():
 @pytest.mark.parametrize("amount", ["0", "-1"])
 def test_fixed_kv_allocation_must_be_positive(amount):
     with pytest.raises(ConfigError, match="must be positive"):
-        spark(argv=["--kv-cache-memory-bytes", amount])
+        tp2(argv=["--kv-cache-memory-bytes", amount])
 
 
 def test_glm_tp3_preset_selects_expert_parallel_and_tp3_tuning():
@@ -273,18 +226,42 @@ SAVINGS = frozenset(
 )
 
 
-def test_spark_keeps_the_four_slot_recipe_on_a_vllm_without_the_memory_savings():
-    current = spark(vllm_environment=SAVINGS | {"VLLM_USE_V2_MODEL_RUNNER"})
+SAVINGS = frozenset(
+    {"VLLM_GLM53_EMBED_HOST", "VLLM_GLM53_VISION_MXFP8", "VLLM_SHARE_PYNCCL_COMMS"}
+)
+
+
+def test_a_preset_keeps_its_fallback_recipe_on_an_older_vllm(monkeypatch):
+    real = launcher.deployment_presets()
+    fallback = {
+        **real["glm53-tp2"],
+        "vllm_fallback": {
+            "requires_environment": sorted(SAVINGS),
+            "options": {"max-num-seqs": 4, "kv-cache-memory-bytes": 4190109696},
+        },
+    }
+    monkeypatch.setattr(
+        launcher, "deployment_presets", lambda: {**real, "glm53-fallback-tp2": fallback}
+    )
+
+    def plan(env=None, **kwargs):
+        return resolve(
+            "glm53-flash",
+            "rtx-pro-6000-pcie",
+            preset="glm53-fallback-tp2",
+            env=env or {},
+            **kwargs,
+        )
+
+    current = plan(vllm_environment=SAVINGS | {"VLLM_USE_V2_MODEL_RUNNER"})
     assert current.values["max-num-seqs"] == 8
-    assert current.values["kv-cache-memory-bytes"] == 4240441344
-    older = spark(vllm_environment=frozenset({"VLLM_USE_V2_MODEL_RUNNER"}))
+    older = plan(vllm_environment=frozenset({"VLLM_USE_V2_MODEL_RUNNER"}))
     assert older.values["max-num-seqs"] == 4
-    assert older.values["kv-cache-memory-bytes"] == 4190109696
     assert older.values["cudagraph-capture-sizes"] == [1, 2, 4, 8, 12, 16]
     assert not SAVINGS & set(older.environment)
-    assert "fallback" in older.origins["kv-cache-memory-bytes"]
+    assert "fallback" in older.origins["max-num-seqs"]
     # Explicit choices still win over the fallback recipe.
-    chosen = spark(
+    chosen = plan(
         env={"MAX_NUM_SEQS": "6", "KV_CACHE_MEMORY_BYTES": "3758096384"},
         vllm_environment=frozenset(),
     )
@@ -347,3 +324,132 @@ def test_installed_b12x_mxfp8_moe_needs_both_packages(
         (b12x / "moe/fused_moe/source.py").write_text(formats)
     monkeypatch.syspath_prepend(str(tmp_path))
     assert installed_b12x_mxfp8_moe() is expected
+
+
+def test_tp2_preset_serves_the_stored_qad_checkpoint():
+    """The launch validated on two RTX PRO 6000 Max-Q (8 GiB KV per GPU)."""
+    plan = tp2()
+    expected = {
+        "model": QAD_CHECKPOINT,
+        "revision": QAD_REVISION,
+        "quantization": "nvfp4_csf",
+        "load-format": "nvfp4_csf",
+        "served-model-name": "GLM-5.3-Flash",
+        "tensor-parallel-size": 2,
+        "decode-context-parallel-size": 2,
+        "mode": "mtp",
+        "max-model-len": -1,
+        "max-num-seqs": 8,
+        "max-num-batched-tokens": 4096,
+        "max-num-scheduled-tokens": 4096,
+        "cache-object-tokens": 4096,
+        "kv-cache-memory-bytes": TP2_KV,
+        "gpu-memory-utilization": 0.985,
+        "max-cudagraph-capture-size": 32,
+        "cudagraph-capture-sizes": [1, 2, 4, 8, 12, 16, 20, 24, 28, 32],
+        "moe-backend": "b12x",
+        "cache-mode": "lmcache",
+        "cache-l2-enabled": False,
+        "expert-activations": "bf16",
+        "router-weights": "fp32",
+        "prefill-activations": "a4",
+    }
+    assert {key: plan.values[key] for key in expected} == expected
+    # The preset's own checkpoint, not one of the profile's variants.
+    assert "checkpoint" not in plan.values
+    assert plan.values["speculative-config"] == {
+        "method": "mtp",
+        "num_speculative_tokens": 3,
+        "draft_sample_method": "probabilistic",
+        "rejection_sample_method": "standard",
+        "moe_backend": "b12x",
+        "attention_backend": "B12X",
+        "revision": QAD_REVISION,
+    }
+    assert "--code-revision" not in plan.argv
+    expected_env = {
+        "NCCL_MIN_NCHANNELS": "2",
+        "NCCL_MAX_NCHANNELS": "2",
+        "NCCL_BUFFSIZE": "1048576",
+        "NCCL_NET_PLUGIN": "none",
+        "NCCL_TUNER_PLUGIN": "none",
+        "NCCL_SOCKET_IFNAME": "lo",
+        "GLOO_SOCKET_IFNAME": "lo",
+        "CUBLAS_WORKSPACE_CONFIG": ":4096:1",
+        "OMP_NUM_THREADS": "1",
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,large_segment_size_mb:12",
+        "VLLM_PCIE_TWOSHOT_ALLREDUCE_MAX_SIZE": "off",
+        # Prefill all-reduces use the b12x PCIe DMA path (measured faster at TP2/DCP2).
+        "VLLM_PCIE_DMA_MIN_BYTES": "6MB",
+        "VLLM_B12X_MLA_CKV_GATHER": "1",
+        "VLLM_B12X_MLA_CKV_GATHER_MAX_TOKENS": "65536",
+        "VLLM_GLM53_EMBED_HOST": "1",
+        # The checkpoint keeps the vision tower in BF16.
+        "VLLM_GLM53_VISION_MXFP8": "1",
+        "VLLM_SHARE_PYNCCL_COMMS": "1",
+        "VLLM_B12X_MOE_FP4_FORCE_A16": "1",
+        "B12X_W4A16_FP32_TOPK_WEIGHTS": "1",
+        "B12X_W4A16_A4_PREFILL_MIN_TOKENS": "1536",
+        # One target page per DCP rank fills one 4096-token cache object.
+        "VLLM_GLM53_SPLIT_TARGET_BLOCK_SIZE": "auto",
+    }
+    assert {name: plan.environment.get(name) for name in expected_env} == expected_env
+    assert "B12X_W4A16_A4_PREFILL_TERMS" not in plan.environment
+    # The RAM tier only: no disk adapter, and the L1 arena may fit the host.
+    assert "--l2-adapter" not in plan.cache_service.argv
+    assert plan.cache_service.l1_adjustable
+
+
+def test_tp2_is_described_as_the_default_tp2_recipe():
+    presets = deployment_presets()
+    assert "default TP2 recipe" in presets["glm53-tp2"]["description"]
+    assert "7,296 MiB KV cache per GPU" in presets["glm53-tp2"]["description"]
+    assert "LMCache" in presets["glm53-tp2"]["description"]
+
+
+def test_tp2_serves_only_its_fp4_csf_checkpoint():
+    with pytest.raises(
+        ConfigError,
+        match="PRESET=glm53-tp2 serves an FP4-CSF checkpoint of its own.*"
+        "CHECKPOINT=original does not apply",
+    ):
+        tp2({"CHECKPOINT": "original"})
+    same_kind = tp2({"CHECKPOINT": "csf"})
+    assert same_kind.values["model"] == QAD_CHECKPOINT
+    assert same_kind.values["revision"] == QAD_REVISION
+
+
+def test_tp2_needs_an_image_that_reads_nvfp4_csf():
+    with pytest.raises(
+        ConfigError,
+        match="cannot read nvfp4_csf checkpoints, which PRESET=glm53-tp2 serves",
+    ):
+        tp2(csf_formats=frozenset({"mxfp4_csf"}))
+    assert tp2(csf_formats=frozenset({"nvfp4_csf"})).values["model"] == (QAD_CHECKPOINT)
+
+
+def test_tp2_extra_slots_shrink_the_kv_cache_and_both_cache_modes_keep_it():
+    sixteen = tp2({"MAX_NUM_SEQS": "16"})
+    assert sixteen.values["kv-cache-memory-bytes"] == TP2_KV - 8 * 67108864
+    assert sixteen.values["max-cudagraph-capture-size"] == 64
+    # The qualified size already leaves room for the LMCache GPU buffers.
+    vram = tp2({"CACHE_MODE": "vram"})
+    assert vram.values["kv-cache-memory-bytes"] == TP2_KV
+    assert vram.cache_service is None
+    assert "max-num-scheduled-tokens" not in vram.values
+    disk = tp2({"LMCACHE_MODE": "disk"})
+    assert disk.values["kv-cache-memory-bytes"] == TP2_KV
+    assert "--l2-adapter" in disk.cache_service.argv
+    explicit = tp2({"MAX_NUM_SEQS": "16", "KV_CACHE_MEMORY_BYTES": "6442450944"})
+    assert explicit.values["kv-cache-memory-bytes"] == 6442450944
+
+
+def test_tp2_prefill_activation_choices():
+    a4 = tp2({"PREFILL_ACTIVATIONS": "a4"})
+    assert a4.environment["B12X_W4A16_A4_PREFILL_MIN_TOKENS"] == "1536"
+    assert "B12X_W4A16_A4_PREFILL_TERMS" not in a4.environment
+    assert a4.environment["VLLM_B12X_MOE_FP4_FORCE_A16"] == "1"
+    with pytest.raises(ConfigError, match="prefill-activations must be one of"):
+        tp2({"PREFILL_ACTIVATIONS": "a8"})
+    with pytest.raises(ConfigError, match="needs expert-activations bf16"):
+        tp2({"EXPERT_ACTIVATIONS": "fp4", "PREFILL_ACTIVATIONS": "a4"})

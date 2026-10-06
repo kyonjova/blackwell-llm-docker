@@ -44,6 +44,12 @@ SHM_ROOT = Path("/dev/shm")
 # Share of a filesystem's space (free plus what the tier already holds) that
 # a disk tier may claim; the rest stays for the model, logs and other writers.
 L2_DISK_SHARE = 0.9
+# A default L1 arena may take this share of the free /dev/shm and of the
+# available RAM (the arena is pinned), and is refused below the minimum.
+L1_SHM_SHARE = 0.9
+L1_RAM_SHARE = 0.5
+L1_MIN_GIB = 8
+CGROUP_ROOT = Path("/sys/fs/cgroup")
 # Arena locks stay open for the supervisor's lifetime. The kernel releases a
 # flock when its holder exits, including on SIGKILL or an OOM kill, so a held
 # lock proves a running owner and a free one proves the arena is stale.
@@ -239,6 +245,112 @@ def fit_disk_tiers(service: CacheService) -> None:
         )
 
 
+def _cgroup_memory_room() -> int | None:
+    """Memory the container's cgroup still allows, or None without a limit.
+
+    Pages of the arena are charged to the cgroup of the process that touches
+    them, also in the host's /dev/shm, so a memory-limited container is bound
+    by its limit rather than by the host's free RAM.
+    """
+    try:
+        limit = (CGROUP_ROOT / "memory.max").read_text().strip()
+        if limit != "max":
+            used = int((CGROUP_ROOT / "memory.current").read_text())
+            return max(0, int(limit) - used)
+        return None
+    except (OSError, ValueError):
+        pass
+    try:  # cgroup v1
+        limit = int((CGROUP_ROOT / "memory/memory.limit_in_bytes").read_text())
+        used = int((CGROUP_ROOT / "memory/memory.usage_in_bytes").read_text())
+        return max(0, limit - used) if limit < 1 << 60 else None
+    except (OSError, ValueError):
+        return None
+
+
+def _mem_available() -> int | None:
+    """RAM this container can still use: MemAvailable, bounded by a cgroup limit."""
+    available = None
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                available = int(line.split()[1]) * 1024
+                break
+    except (OSError, ValueError, IndexError):
+        pass
+    room = _cgroup_memory_room()
+    if room is not None:
+        available = room if available is None else min(available, room)
+    return available
+
+
+def fit_l1_arena(service: CacheService) -> None:
+    """Size the engine-driven L1 arena to the host, or refuse if it cannot fit.
+
+    Engine-driven transfer pins the whole arena in /dev/shm at startup. A size
+    that comes from a profile or preset default shrinks to a share of the free
+    /dev/shm and of the available RAM; an explicit size must fit as given.
+    """
+    stats = os.statvfs(SHM_ROOT)
+    free = stats.f_bavail * stats.f_frsize
+    available = _mem_available()
+    if not service.l1_adjustable:
+        if free < service.shm_bytes:
+            raise ConfigError(
+                "Insufficient free /dev/shm for the complete engine-driven L1 arena"
+            )
+        if available is not None and service.shm_bytes > available:
+            raise ConfigError(
+                f"The LMCache RAM tier of {service.shm_bytes / 1024**3:g} GiB exceeds the "
+                f"{available / 1024**3:.0f} GiB of RAM this container can still use; "
+                "lower LMCACHE_L1_GB or set CACHE_MODE=vram"
+            )
+        return
+    limit = free * L1_SHM_SHARE
+    if available is not None:
+        limit = min(limit, available * L1_RAM_SHARE)
+    usable = math.floor(limit / 1024**3)
+    requested = service.shm_bytes / 1024**3
+    if usable >= requested:
+        return
+    host = f"/dev/shm has {free / 1024**3:.0f} GiB free" + (
+        f" and {available / 1024**3:.0f} GiB of RAM is available to this container"
+        if available is not None
+        else ""
+    )
+    if usable < L1_MIN_GIB:
+        raise ConfigError(
+            f"No room for the LMCache RAM tier: {host}, and it needs at least "
+            f"{L1_MIN_GIB} GiB. Free memory or set CACHE_MODE=vram"
+        )
+    service.shm_bytes = usable * 1024**3
+    argv = service.argv
+    argv[argv.index("--l1-size-gb") + 1] = str(float(usable))
+    init = argv.index("--l1-init-size-gb") + 1
+    if float(argv[init]) > usable:
+        argv[init] = str(float(usable))
+    announce(
+        f"LMCache RAM tier sized to {usable} GiB instead of {requested:g} GiB: "
+        f"{host}. Set LMCACHE_L1_GB to choose the size"
+    )
+
+
+def release_arena(service: CacheService | None) -> None:
+    """Free the L1 arena once every process that mapped it has stopped.
+
+    With --ipc host the arena lives in the host's /dev/shm, so an arena left
+    behind keeps its RAM until the next start of the same instance.
+    """
+    if service is None or not service.shm_bytes:
+        return
+    arena = SHM_ROOT / service.shm_name
+    try:
+        arena.unlink()
+    except FileNotFoundError:
+        return
+    announce(f"Released the cache SHM arena {arena}")
+
+
 def preflight(service: CacheService, environment: dict) -> None:
     if any("UNRESOLVED-CHECKPOINT" in arg for arg in service.argv):
         raise ConfigError(
@@ -294,11 +406,7 @@ def preflight(service: CacheService, environment: dict) -> None:
                 f"Removed the stale cache SHM arena {shm} left by a cache service "
                 "that did not shut down cleanly"
             )
-        stats = os.statvfs(SHM_ROOT)
-        if stats.f_bavail * stats.f_frsize < service.shm_bytes:
-            raise ConfigError(
-                "Insufficient free /dev/shm for the complete engine-driven L1 arena"
-            )
+        fit_l1_arena(service)
     report_stale_tiers(service)
     fit_disk_tiers(service)
 
@@ -469,5 +577,6 @@ def _supervise(
         return 128 + requested_signal
     finally:
         stop_groups(children, service.stop_grace if service is not None else stop_grace)
+        release_arena(service)
         for sig, handler in previous.items():
             signal.signal(sig, handler)

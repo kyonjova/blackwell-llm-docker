@@ -26,6 +26,15 @@ CASES = [
 ]
 
 
+def service_fields(service):
+    """Cache service settings without the host-fitting policy of default sizes."""
+    if service is None:
+        return None
+    fields = asdict(service)
+    fields.pop("l1_adjustable")
+    return fields
+
+
 @pytest.mark.parametrize("identifier,mode", CASES)
 @pytest.mark.parametrize(
     "cache_mode,l2", [("vram", False), ("lmcache", False), ("lmcache", True)]
@@ -48,9 +57,9 @@ def test_explicit_exports_preserve_resolved_execution(
     assert frozen == saved
     assert imported.argv == bound.argv
     assert imported.environment == bound.environment
-    assert (asdict(imported.cache_service) if imported.cache_service else None) == (
-        asdict(bound.cache_service) if bound.cache_service else None
-    )
+    assert service_fields(imported.cache_service) == service_fields(bound.cache_service)
+    # A materialized document fixes the L1 size, so it is not fitted to the host.
+    assert not (imported.cache_service and imported.cache_service.l1_adjustable)
     assert not any(
         "UNBOUND-RUNTIME" in value for value in imported.environment.values()
     )
@@ -65,7 +74,9 @@ def test_direct_cache_transport_and_native_offload(cache):
     assert actual.argv == expected.argv
     assert actual.environment == expected.environment
     if cache == "lmcache":
-        assert asdict(actual.cache_service) == asdict(expected.cache_service)
+        assert service_fields(actual.cache_service) == service_fields(
+            expected.cache_service
+        )
 
 
 def test_dflash_slots_are_materialized_once():
@@ -263,6 +274,10 @@ def test_installed_explicit_cli_preserves_profile_execution(
     )
     expected, actual = json.loads(native.stdout), json.loads(explicit.stdout)
     assert actual["argv"] == expected["argv"]
+    # Only a default L1 size is fitted to the host; the export fixes it.
+    for result in (expected, actual):
+        if result["cache_service"]:
+            result["cache_service"].pop("l1_adjustable")
     assert actual["cache_service"] == expected["cache_service"]
     assert {k: v["value"] for k, v in actual["environment"].items()} == {
         k: v["value"] for k, v in expected["environment"].items()
@@ -287,7 +302,7 @@ def test_installed_explicit_execution_invokes_bootstrap_once(tmp_path):
         bin_directory=tmp_path / "bin",
         python_site=tmp_path / "site",
     )
-    plan = resolve("glm53-flash", "rtx-pro-6000-pcie", env={})
+    plan = resolve("glm53-flash", "rtx-pro-6000-pcie", env={"CHECKPOINT": "original"})
     result = subprocess.run(
         [
             sys.executable,
