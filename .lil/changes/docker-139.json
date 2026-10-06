@@ -1,0 +1,17 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-139",
+  "category": "performance",
+  "summary": "GLM-5.3 (744B) at TP8 holds 616K KV tokens and decodes 8% faster, and DCP=2 serves the full 1M context with a KV cache that no longer runs out of memory",
+  "models": ["GLM-5.3"],
+  "compatibility": "glm53-csf-tp8 now fixes the KV size at DCP > 1 (KV_CACHE_MEMORY_BYTES overrides it). GLM-5.3 presets turn on the DCP prefill gathers when DCP > 1 (DCP_CKV_GATHER=0 turns them off). Other models are unchanged.",
+  "details": [
+    "glm53-csf-tp8 quantizes the checkpoint's BF16 attention and shared experts to MXFP8 while loading (new option quantization-config), runs the MTP layer's attention and shared experts in MXFP8 and its routed experts W4A16 NVFP4 on B12X, and drafts with an NVFP4 copy of the vocabulary head. On 8x RTX PRO 6000: 616,448 KV tokens at DCP1 (535,808 before) and decode steps/s C1 / C2 / C4 89.8 / 144.0 / 213.5 (83 / 138 / 196 before).",
+    "With DCP > 1, GLM-5.3 prefill gathers the full compressed KV cache and the indexer keys (vLLM #998); DCP6 gathers up to the full 1M context. glm53-csf-tp8 at DCP2: 1,186,944 KV tokens (the full 1,048,576-token context), decode 76.2 / 123.6 / 184.6 steps/s, prefill 7,771 / 7,420 tok/s at 8K / 128K, and a needle is found in a 961,990-token prompt.",
+    "Presets can fix the KV cache per DCP size (kv_bytes_by_dcp). At 92% of GPU memory a 1M-token prompt ran glm53-csf-tp8 at DCP2 out of memory, because context-sized indexer and DCP exchange buffers grow outside vLLM's budget. The preset now uses 30.25 GiB per GPU at DCP2 and 27 GiB at DCP4 and DCP8, which leave at least 500 MiB free per GPU through a 1,048,448-token prompt, 64 concurrent 8K prompts and four minutes of 1K-96K prompts.",
+    "DCP8 holds 4.24M KV tokens but prefills only about 800 tokens/s while new prompts overlap running requests."
+  ],
+  "authors": ["voipmonitor"],
+  "pull_requests": [139],
+  "requires": ["vllm-998", "vllm-999", "vllm-1000"]
+}
