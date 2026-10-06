@@ -30,9 +30,9 @@ concurrency:
 
 jobs:
   resolve:
-    if: >-
-      github.repository == 'local-inference-lab/blackwell-llm-docker' &&
-      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    # A publisher run can fail for one channel after publishing another, so
+    # every completed run is followed; spark_release.py --select decides.
+    if: github.repository == 'local-inference-lab/blackwell-llm-docker'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
