@@ -234,6 +234,29 @@ options:
       KV cache at the cost of more cross-GPU communication.
     why: Profile defaults are 4 for GLM, DS4.1 and MiMo, 2 for DS4 and DS4 Vision, and 1 for Qwen. Presets
       select 2 (GLM, Qwen, MiMo) or 3 (GLM TP3).
+  nnodes:
+    group: parallelism
+    summary: Splits one tensor-parallel group across this many machines, one vLLM process group per
+      machine (DGX Spark boxes over RoCE). Every node runs the container with the same options and its
+      own node-rank; rank 0 serves the API and the other ranks run headless. 1 (unset) runs on one machine.
+    why: Unset by default. GLM-5.3-Flash needs two DGX Spark boxes; the tensor-parallel size must split
+      evenly across the nodes.
+  node-rank:
+    group: parallelism
+    summary: This machine's rank among nnodes, from 0. Ranks above 0 add --headless.
+    why: Set per node; rank 0 is the API node.
+  master-addr:
+    group: parallelism
+    summary: Address of the rank-0 node that every node uses to join the group (its RoCE fabric address).
+    why: Required with nnodes above 1.
+  master-port:
+    group: parallelism
+    summary: TCP port on the rank-0 node for joining the group.
+    why: Unset uses vLLM's default.
+  headless:
+    group: parallelism
+    summary: Runs the engine workers without the API server. Derived for node ranks above 0.
+    why: Set automatically on multi-node worker ranks.
   replicas:
     group: parallelism
     summary: Runs this many independent single-GPU servers (TP1) in the container, one per visible GPU,

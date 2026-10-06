@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import quote
 
+import runtime_platform
 from build_runtime_image import runtime_smoke_command
 from container_channel import api, digest, download, run
 from prepare_runtime_auxiliary import prepare as prepare_auxiliary
@@ -192,15 +193,16 @@ def main() -> None:
     bundles = args.output / "components"
     download(assembly, bundles)
     runtime = args.output / "runtime"
+    lock_dir = runtime_platform.lock_dir(tools, runtime_platform.selected())
     command = [
         "python3",
         str(tools / "assemble_qwen38_runtime_bundle.py"),
         "--output",
         str(runtime),
         "--qwen-lock",
-        str(tools / "qwen38-runtime.lock"),
+        str(lock_dir / "qwen38-runtime.lock"),
         "--ngc-foundation-lock",
-        str(tools / "foundation.lock"),
+        str(lock_dir / "foundation.lock"),
     ]
     for role in assembly["components"]:
         command += [f"--{role}-bundle", str(bundles / role)]

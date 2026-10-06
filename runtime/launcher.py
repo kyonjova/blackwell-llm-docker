@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import os
+import platform as host_platform
 import re
 import shutil
 import sys
@@ -103,12 +104,23 @@ def read_yaml(path: Path) -> dict:
     return result
 
 
+def platform_environment_path() -> Path:
+    """The foundation policy of the machine's image: linux/arm64 images carry
+    platform-environment.linux-arm64.json beside the linux/amd64 default."""
+    if host_platform.machine() == "aarch64":
+        candidate = ROOT / "platform-environment.linux-arm64.json"
+        if candidate.is_file():
+            return candidate
+    return ROOT / "platform-environment.json"
+
+
 def platform_environment() -> dict[str, str]:
     """Read foundation defaults below model policy and explicit user settings."""
+    path = platform_environment_path()
     try:
-        data = json.loads((ROOT / "platform-environment.json").read_text())
+        data = json.loads(path.read_text())
     except (OSError, ValueError) as error:
-        raise ConfigError("Cannot read platform-environment.json") from error
+        raise ConfigError(f"Cannot read {path.name}") from error
     if (
         not isinstance(data, dict)
         or set(data) != {"schema_version", "source_image", "environment"}
@@ -956,6 +968,7 @@ def resolve(
     ple_copy_per_replica = False
     if replicas < 1:
         raise ConfigError("replicas must be at least 1")
+    configure_nodes(values, replicas, derive)
     if replicas > 1:
         for key in (
             "tensor-parallel-size",
@@ -1700,6 +1713,43 @@ def chat_template_path(value: str) -> str | None:
     ):
         raise ConfigError(f"Unknown runtime chat template: {value}")
     return str(path)
+
+
+def configure_nodes(values: dict, replicas: int, derive) -> None:
+    """One tensor-parallel group across several machines (DGX Spark boxes).
+
+    Every node runs this launcher with the same options and its own
+    node-rank; rank 0 serves the API and the other ranks run vLLM headless.
+    """
+    nodes = values.get("nnodes", 1)
+    placement = [
+        key for key in ("node-rank", "master-addr", "master-port") if key in values
+    ]
+    if nodes < 1:
+        raise ConfigError("nnodes must be at least 1")
+    if nodes == 1:
+        if placement or values.get("headless"):
+            raise ConfigError(f"{', '.join(placement) or 'headless'} needs nnodes > 1")
+        return
+    if replicas > 1:
+        raise ConfigError("replicas and nnodes > 1 cannot be combined")
+    if "master-addr" not in values:
+        raise ConfigError(
+            "nnodes > 1 needs master-addr (MASTER_ADDR), the address of the rank-0 node"
+        )
+    rank = values.get("node-rank", 0)
+    if not 0 <= rank < nodes:
+        raise ConfigError(f"node-rank must be between 0 and {nodes - 1}, got {rank}")
+    ranks = values.get("tensor-parallel-size", 1) * values.get(
+        "pipeline-parallel-size", 1
+    )
+    if ranks % nodes:
+        raise ConfigError(
+            f"tensor-parallel-size x pipeline-parallel-size ({ranks}) must split "
+            f"evenly across nnodes={nodes}"
+        )
+    if rank > 0 and not values.get("headless"):
+        derive("headless", True, "multi-node worker rank serves no API")
 
 
 def make_argv(values: dict, passthrough: list[str]) -> list[str]:

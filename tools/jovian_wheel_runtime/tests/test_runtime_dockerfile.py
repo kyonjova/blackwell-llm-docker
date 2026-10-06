@@ -29,10 +29,12 @@ def test_quack_kernel_dependency_is_locked_and_verified():
     assert '"quack-kernels": "0.6.5"' in verifier
     assert "import quack" in verifier
     assert "import torch_c_dlpack_ext" in verifier
-    assert (
-        "--overlay-lock /source/tools/jovian_wheel_runtime/ngc-runtime-overlay.lock"
-        in recipe
-    )
+    assert "ARG PLATFORM_LOCK_DIR=tools/jovian_wheel_runtime" in recipe
+    assert "--overlay-lock /source/${PLATFORM_LOCK_DIR}/ngc-runtime-overlay.lock" in recipe
+    arm64 = (tool_dir / "linux-arm64" / "ngc-runtime-overlay.lock").read_text()
+    assert "quack-kernels==0.6.5" in arm64
+    # The CPython 3.12 Linux aarch64 wheel of the same release.
+    assert "3562ee411258676f9c38b8ad39306d1c8d027b6a86f6a87c920d2d009a9d1510" in arm64
 
 
 def test_deepseek_hc_head_dependencies_are_locked_and_verified():

@@ -1,0 +1,43 @@
+schema_version: 1
+kind: hardware
+id: dgx-spark
+status: research-only
+description: >-
+  NVIDIA DGX Spark (GB10, SM121) with 128 GB of memory shared by the CPU and
+  the GPU, one GPU per box. Several boxes form one tensor-parallel group over
+  their ConnectX-7 RoCE ports; there is no PCIe peer-to-peer all-reduce.
+  Requires the linux/arm64 image.
+defaults: {}
+environment:
+  CUTE_DSL_ARCH: sm_121a
+  # Runtime torch cpp_extension builds target only this GPU; the image
+  # inherits NVIDIA's multi-architecture list from the NGC base.
+  TORCH_CUDA_ARCH_LIST: "12.1a"
+  VLLM_ENABLE_PCIE_ALLREDUCE: "0"
+  # Multi-box TP: NCCL over the RoCE ports. NCCL_SOCKET_IFNAME,
+  # GLOO_SOCKET_IFNAME, NCCL_IB_HCA and VLLM_HOST_IP depend on the cabling
+  # and are set per deployment.
+  NCCL_NET_PLUGIN: none
+  NCCL_IB_DISABLE: "0"
+  NCCL_IB_GID_INDEX: "3"
+  NCCL_IB_ADDR_FAMILY: AF_INET
+  NCCL_CUMEM_ENABLE: "0"
+  NCCL_NVLS_ENABLE: "0"
+  NCCL_IGNORE_CPU_AFFINITY: "1"
+  # GPU memory is the boxes' RAM, so host-side compiler processes count
+  # against the same 128 GB. One B12X compiler worker per stage and no
+  # candidate autotuning kept the measured peaks above the 4% free-memory
+  # floor of the test boxes' earlyoom, which kills vLLM workers below it.
+  B12X_WEIGHTS_COMPILE_WORKERS: "1"
+  B12X_STATE_COMPILE_WORKERS: "1"
+  B12X_BIND_COMPILE_WORKERS: "1"
+  B12X_AUTOTUNE: "0"
+model_environment:
+  glm53-flash:
+    # The BF16 draft head shares the target's vocabulary head; an NVFP4 copy
+    # would cost memory the KV cache needs.
+    VLLM_GLM53_MTP_DRAFT_HEAD: bf16
+  qwen38-flash-next:
+    # Host memory is GPU memory; keeping the PLE table on the device lets the
+    # memory budget account for it (26.8 GiB).
+    VLLM_PLE_CPU_OFFLOAD: "0"

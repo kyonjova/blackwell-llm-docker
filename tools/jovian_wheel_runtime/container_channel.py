@@ -22,6 +22,7 @@ import tempfile
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 
+import runtime_platform
 from assemble_qwen38_runtime_bundle import (
     EXPECTED_SCHEMAS,
     ngc_foundation_manifest,
@@ -300,7 +301,8 @@ def resolve(config_path: Path, output: Path, name: str = "karmic-kraken") -> dic
             )
         components[role], manifests[role] = select_component(role, component)
     manifests["foundation"] = ngc_foundation_manifest(
-        config_path.parent / "foundation.lock"
+        runtime_platform.lock_dir(config_path.parent, runtime_platform.selected())
+        / "foundation.lock"
     )
     validate_compatibility(manifests)
     root = config_path.resolve().parents[2]

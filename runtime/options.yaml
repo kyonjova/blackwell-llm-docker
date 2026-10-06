@@ -39,7 +39,9 @@
   },
   "kv-cache-memory-bytes": {
     "type": "integer",
-    "env": ["KV_CACHE_MEMORY_BYTES"]
+    "env": [
+      "KV_CACHE_MEMORY_BYTES"
+    ]
   },
   "attention-backend": {
     "type": "string",
@@ -808,6 +810,36 @@
     "enum": [
       "a16",
       "a4"
+    ]
+  },
+  "nnodes": {
+    "type": "integer",
+    "env": [
+      "NNODES"
+    ]
+  },
+  "node-rank": {
+    "type": "integer",
+    "env": [
+      "NODE_RANK"
+    ]
+  },
+  "master-addr": {
+    "type": "string",
+    "env": [
+      "MASTER_ADDR"
+    ]
+  },
+  "master-port": {
+    "type": "integer",
+    "env": [
+      "MASTER_PORT"
+    ]
+  },
+  "headless": {
+    "type": "boolean",
+    "env": [
+      "HEADLESS"
     ]
   }
 }
