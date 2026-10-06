@@ -282,6 +282,13 @@ options:
       communication.
     why: The common layer sets 1. The glm53-tp2 preset uses DCP2, which halves the KV bytes per token on
       each GPU.
+  dcp-comm-backend:
+    group: parallelism
+    summary: How decode-context-parallel attention exchanges its partial results, all-to-all (a2a) or
+      all-gather plus reduce-scatter (ag_rs). vLLM's model default applies when it is unset.
+    why: GLM-5.3 (744B) derives ag_rs at DCP6, which the B12X PCIe all-to-all does not cover; there the
+      generic all-to-all prefills about 300 tokens/s against about 2,200 with ag_rs. At DCP3 the
+      all-to-all decodes about 4% faster at the same prefill speed, so DCP3 keeps the model default.
   max-num-seqs:
     group: scheduling
     summary: Maximum number of requests processed concurrently. More slots raise aggregate throughput

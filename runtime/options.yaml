@@ -182,6 +182,16 @@
       "DCP_SIZE"
     ]
   },
+  "dcp-comm-backend": {
+    "type": "string",
+    "env": [
+      "DCP_COMM_BACKEND"
+    ],
+    "enum": [
+      "a2a",
+      "ag_rs"
+    ]
+  },
   "max-num-seqs": {
     "type": "integer",
     "env": [

@@ -83,3 +83,27 @@ def test_qwen_dcp1_and_explicit_interleave_are_unchanged():
         "--cp-kv-cache-interleave-size": "8",
         "--dcp-kv-cache-interleave-size": "8",
     }
+
+
+def _dcp_backend(plan):
+    argv = plan.argv
+    if "--dcp-comm-backend" not in argv:
+        return None
+    return argv[argv.index("--dcp-comm-backend") + 1]
+
+
+@pytest.mark.parametrize(
+    "dcp,backend", [("1", None), ("2", None), ("3", None), ("6", "ag_rs")]
+)
+def test_glm53_tp6_dcp6_uses_ag_rs(dcp, backend):
+    # The B12X PCIe DCP all-to-all covers 2, 4 and 8 ranks; the generic
+    # all-to-all prefills DCP6 about seven times slower than ag_rs.
+    plan = resolve("glm53", env={"DCP": dcp}, preset="glm53-csf-tp6")
+    assert _dcp_backend(plan) == backend
+
+
+def test_glm53_explicit_dcp_backend_is_kept():
+    plan = resolve(
+        "glm53", env={"DCP": "6", "DCP_COMM_BACKEND": "a2a"}, preset="glm53-csf-tp6"
+    )
+    assert _dcp_backend(plan) == "a2a"
