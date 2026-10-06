@@ -122,3 +122,55 @@ presets:
     environment: {}
     modes: {}
     linked_options: {}
+  glm53-dgx-spark-x2:
+    profile: glm53-flash
+    hardware: dgx-spark
+    description: GLM-5.3-Flash on two DGX Spark (GB10) boxes, one tensor-parallel group over their RoCE link (TP2, two nodes). It serves GLM-5.3-Flash-NVFP4-Spark, whose MTP experts are NVFP4 and run on B12X, with MTP3, eight request slots and the prefix cache in GPU memory. Run one container per box with NODE_RANK 0 and 1 and MASTER_ADDR set to the rank-0 box's RoCE address; rank 0 serves the API. Research-only.
+    options:
+      model: local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+      quantization: modelopt_mixed
+      served-model-name: GLM-5.3-Flash
+      tensor-parallel-size: 2
+      nnodes: 2
+      mode: mtp
+      max-model-len: -1
+      max-num-seqs: 8
+      max-num-batched-tokens: 4096
+      gpu-memory-utilization: 0.9
+      max-cudagraph-capture-size: auto
+      cudagraph-capture-sizes: [1, 2, 4, 8, 12, 16, 20, 24, 28, 32]
+      # The Spark checkpoint's experts lose accuracy with NVFP4 prefill rows.
+      prefill-activations: a16
+      cache-mode: vram
+    environment: {}
+    modes:
+      mtp:
+        config: {moe_backend: b12x}
+    linked_options: {}
+  qwen38-dgx-spark:
+    profile: qwen38-flash-next
+    hardware: dgx-spark
+    description: Qwen3.8 Flash Next on one DGX Spark (GB10). The weights take most of the 128 GB shared memory, so it runs one request at a time with a 64K context. Research-only.
+    options:
+      max-model-len: 65536
+      max-num-seqs: 1
+      max-num-batched-tokens: 2048
+      gpu-memory-utilization: 0.9
+      cache-mode: vram
+    environment: {}
+    modes: {}
+    linked_options: {}
+  qwen38-dgx-spark-x2:
+    profile: qwen38-flash-next
+    hardware: dgx-spark
+    description: Qwen3.8 Flash Next on two DGX Spark (GB10) boxes, one tensor-parallel group over their RoCE link (TP2, two nodes). Run one container per box with NODE_RANK 0 and 1 and MASTER_ADDR set to the rank-0 box's RoCE address; rank 0 serves the API. Research-only.
+    options:
+      tensor-parallel-size: 2
+      nnodes: 2
+      max-num-seqs: 4
+      max-num-batched-tokens: 2048
+      gpu-memory-utilization: 0.9
+      cache-mode: vram
+    environment: {}
+    modes: {}
+    linked_options: {}
