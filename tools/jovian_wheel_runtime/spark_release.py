@@ -13,8 +13,8 @@ A component commit without linux/arm64 support in its bundle script fails the
 build; the arm64 image never mixes amd64 wheels in. vLLM reuses the native
 objects of an earlier arm64 build when csrc/, cmake/ and the other native inputs
 are unchanged (VLLM_PRECOMPILED_BUNDLE), as its amd64 release does, and every
-component reuses its verified arm64 bundle when its source commit was built
-before (LIL_SPARK_CACHE).
+component reuses its verified arm64 bundle when a commit with the same source
+tree was built before (LIL_SPARK_CACHE).
 """
 
 from __future__ import annotations
@@ -124,9 +124,14 @@ def reusable_vllm_bundle(source: Path, cache: Path) -> Path | None:
 KEPT_BUNDLES = 4
 
 
-def cached_bundle(cache: Path, role: str, commit: str) -> Path | None:
-    """A verified arm64 bundle built earlier from the same source commit."""
-    bundle = cache / "bundles" / role / commit / "bundle"
+def source_tree(repository: str, commit: str) -> str:
+    """Git tree of a commit: commits with the same tree build the same bundle."""
+    return run(["gh", "api", f"repos/{repository}/commits/{commit}", "--jq", ".commit.tree.sha"]).strip()
+
+
+def cached_bundle(cache: Path, role: str, tree: str) -> Path | None:
+    """A verified arm64 bundle built earlier from the same source tree."""
+    bundle = cache / "bundles" / role / tree / "bundle"
     if not (bundle / "SHA256SUMS").is_file():
         return None
     check = subprocess.run(["sha256sum", "--check", "--quiet", "SHA256SUMS"], cwd=bundle,
@@ -134,12 +139,12 @@ def cached_bundle(cache: Path, role: str, commit: str) -> Path | None:
     return bundle if check.returncode == 0 else None
 
 
-def keep_bundle(cache: Path, role: str, commit: str, bundle: Path) -> None:
+def keep_bundle(cache: Path, role: str, tree: str, bundle: Path) -> None:
     directory = cache / "bundles" / role
     directory.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=f".{commit}-", dir=directory))
+    staging = Path(tempfile.mkdtemp(prefix=f".{tree}-", dir=directory))
     shutil.copytree(bundle, staging / "bundle")
-    target = directory / commit
+    target = directory / tree
     if target.exists():
         shutil.rmtree(target)
     staging.rename(target)
@@ -153,9 +158,12 @@ def keep_bundle(cache: Path, role: str, commit: str, bundle: Path) -> None:
 
 
 def build_component(role: str, component: dict, work: Path, cache: Path) -> Path:
-    cached = cached_bundle(cache, role, component["source_commit"])
+    # A merge commit often has exactly the tree of the branch built before it;
+    # the reused bundle's manifest names the commit it was built from.
+    tree = source_tree(component["repository"], component["source_commit"])
+    cached = cached_bundle(cache, role, tree)
     if cached is not None:
-        print(f"Reusing the arm64 {role} bundle of {component['source_commit']}", flush=True)
+        print(f"Reusing the arm64 {role} bundle of source tree {tree}", flush=True)
         return cached
     source = work / "sources" / role
     checkout(component["repository"], component["source_commit"], source)
@@ -184,7 +192,7 @@ def build_component(role: str, component: dict, work: Path, cache: Path) -> Path
             shutil.rmtree(keep)
         keep.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(bundle, keep / "bundle")
-    keep_bundle(cache, role, component["source_commit"], bundle)
+    keep_bundle(cache, role, tree, bundle)
     return bundle
 
 
@@ -297,6 +305,9 @@ def main() -> None:
                 "repository": assembly["components"][role]["repository"],
                 "source_commit": assembly["components"][role]["source_commit"],
                 "manifest_sha256": run(["sha256sum", str(bundle / "manifest.json")]).split()[0],
+                "built_from_commit": json.loads((bundle / "manifest.json").read_text())
+                .get("source", {})
+                .get("commit"),
             }
             for role, bundle in bundles.items()
         },
