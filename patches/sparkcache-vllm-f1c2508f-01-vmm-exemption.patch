@@ -1,0 +1,28 @@
+SparkCache vLLM patch 1/2 -- VMM (expandable-segments) connector exemption.
+SparkCache-vLLM-Pin: f1c2508f1018f47ee8a78478a819d202f359887b
+Source: FujitsuPolycom/sparkcache patches/vllm-da4d7be/020-sparkcache-vmm-exemption.patch;
+same hunk as the e77be225/ab86b707 files, re-generated against KK integration
+f1c2508f (karmic-kraken-beta-20261005). That vLLM adds SupportsVmmSafeTransfers;
+once SparkCache's connector declares it, this patch can be dropped.
+
+diff --git a/vllm/config/vllm.py b/vllm/config/vllm.py
+index 68c369e..b557259 100644
+--- a/vllm/config/vllm.py
++++ b/vllm/config/vllm.py
+@@ -1309,6 +1309,16 @@ class VllmConfig:
+             == "engine_driven"
+         ):
+             return
++        if (
++            self.kv_transfer_config is not None
++            and self.kv_transfer_config.kv_connector
++            == "SparkContextCacheConnector"
++        ):
++            # SparkContextCacheConnector does not register GPU virtual addresses
++            # with an external transport. Stores copy tensors to host memory and
++            # restores write through torch indexing, so expandable-segment remaps
++            # cannot stale an external memory registration.
++            return
+ 
+         raise ValueError(
+             f"KV connector {self.kv_transfer_config.kv_connector} is "

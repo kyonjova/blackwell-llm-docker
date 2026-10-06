@@ -95,7 +95,7 @@ fi
 [[ -n "${ENV_FILE}" ]] \
   || warn "no profile found beside this script: building from IN-SCRIPT FALLBACK PINS, which are not the source of truth and are probably stale"
 
-ALLOWED_KEYS=" ALLOW_FOREIGN_ARCH B12X_COMMIT B12X_PATCH_FILE B12X_PATCH_SHA256 B12X_PIN B12X_REF B12X_REPO BUILD_BASE_IMAGE_TAG CUTLASS_COMMIT CUTLASS_DSL_VERSION CUTLASS_REF DEEPGEMM_COMMIT DEEPGEMM_REPO DEEPGEMM_REF EXLLAMAV3_COMMIT EXLLAMAV3_REPO FASTSAFETENSORS_SPEC FLASHINFER_BUILD_CUBIN FLASHINFER_COMMIT FLASHINFER_REF FLASHINFER_REPO FROZEN_ACK HUMMING_KERNELS_SPEC IMAGE IMAGE_REPO IMAGE_TAG INSTANTTENSOR_COMMIT INSTANTTENSOR_REF INSTANTTENSOR_REPO LAUNCHER_COMMIT LAUNCHER_REF LAUNCHER_REPO LMCACHE_BUILD_VERSION LMCACHE_COMMIT LMCACHE_REF LMCACHE_REPO LOGGING MAX_JOBS NCCL_COMMIT NCCL_REF NCCL_REPO NVCC_THREADS PATCH_DEEPGEMM_LIBDW PATCH_EXLLAMAV3_AVX PATCH_GPU_ARCH PATCH_IO_URING PATCH_LMCACHE_INTEGRATION PATCH_SPARKCACHE PATCH_HOST_ARCH PATCH_PCIE_ENV PATCH_PIPCHECK_WHEELTAG PATCH_VLLM_REQ_MARKERS PATCH_VLLM_WHEEL_TAGS PIN_PREFLIGHT PIN_SOURCE_COMMITS PROFILE_NAME QUACK_KERNELS_SPEC SECCOMP_PROFILE_SRC SPARKCACHE_COMMIT SPARKCACHE_REPO SPARKCACHE_VLLM_PATCHES SPARKINFER_COMMIT SPARKINFER_REF SPARKINFER_REPO SYSTEM_BASE_IMAGE TILELANG_VERSION TOKENSPEED_MLA_VERSION TORCHVISION_VERSION TORCH_BUNDLED_NCCL_VERSION TORCH_VERSION TVM_FFI_VERSION VLLM_BUILD_VERSION VLLM_COMMIT VLLM_MAX_JOBS VLLM_NVCC_THREADS VLLM_PATCH_FILE VLLM_PATCH_SHA256 VLLM_PATCH_URL VLLM_PIN VLLM_REF VLLM_REPO VLLM_REQUIRED_LAUNCHERS VLLM_RUNTIME_EXTRA_PACKAGES XGRAMMAR_COMMIT XGRAMMAR_REF XGRAMMAR_TRANSFORMERS5_COMPAT XGRAMMAR_VERSION "
+ALLOWED_KEYS=" ALLOW_FOREIGN_ARCH B12X_COMMIT B12X_PATCH_FILE B12X_PATCH_SHA256 B12X_PIN B12X_REF B12X_REPO BUILD_BASE_IMAGE_TAG CUTLASS_COMMIT CUTLASS_DSL_VERSION CUTLASS_REF DEEPGEMM_COMMIT DEEPGEMM_REPO DEEPGEMM_REF EXLLAMAV3_COMMIT EXLLAMAV3_REPO FASTOKENS_SHA256 FASTOKENS_VERSION FASTSAFETENSORS_SPEC FLASHINFER_BUILD_CUBIN FLASHINFER_COMMIT FLASHINFER_REF FLASHINFER_REPO FROZEN_ACK HUMMING_KERNELS_SPEC IMAGE IMAGE_REPO IMAGE_TAG INSTANTTENSOR_COMMIT INSTANTTENSOR_REF INSTANTTENSOR_REPO LAUNCHER_COMMIT LAUNCHER_REF LAUNCHER_REPO LMCACHE_BUILD_VERSION LMCACHE_COMMIT LMCACHE_REF LMCACHE_REPO LOGGING MAX_JOBS NCCL_COMMIT NCCL_REF NCCL_REPO NVCC_THREADS PATCH_DEEPGEMM_LIBDW PATCH_EXLLAMAV3_AVX PATCH_FASTOKENS PATCH_GPU_ARCH PATCH_IO_URING PATCH_LMCACHE_INTEGRATION PATCH_SPARKCACHE PATCH_HOST_ARCH PATCH_PCIE_ENV PATCH_PIPCHECK_WHEELTAG PATCH_VLLM_REQ_MARKERS PATCH_VLLM_WHEEL_TAGS PIN_PREFLIGHT PIN_SOURCE_COMMITS PROFILE_NAME QUACK_KERNELS_SPEC SECCOMP_PROFILE_SRC SPARKCACHE_COMMIT SPARKCACHE_REPO SPARKCACHE_VLLM_PATCHES SPARKINFER_COMMIT SPARKINFER_REF SPARKINFER_REPO SYSTEM_BASE_IMAGE TILELANG_VERSION TOKENSPEED_MLA_VERSION TORCHVISION_VERSION TORCH_BUNDLED_NCCL_VERSION TORCH_VERSION TVM_FFI_VERSION VLLM_BUILD_VERSION VLLM_COMMIT VLLM_MAX_JOBS VLLM_NVCC_THREADS VLLM_PATCH_FILE VLLM_PATCH_SHA256 VLLM_PATCH_URL VLLM_PIN VLLM_REF VLLM_REPO VLLM_REQUIRED_LAUNCHERS VLLM_RUNTIME_EXTRA_PACKAGES XGRAMMAR_COMMIT XGRAMMAR_REF XGRAMMAR_TRANSFORMERS5_COMPAT XGRAMMAR_VERSION "
 if [[ -n "${ENV_FILE}" ]]; then
   [[ -f "${ENV_FILE}" ]] || die "env file not found: ${ENV_FILE}"
   # Canonicalize now: the repo-root cd below would break a relative path for
@@ -387,6 +387,121 @@ if [[ "${PIN_PREFLIGHT:-1}" == 1 ]] && command -v curl >/dev/null 2>&1; then
   fi
 fi
 
+# ------------------------------------------------------- CuTe DSL pre-flight
+# b12x pins nvidia-cutlass-dsl EXACTLY (==X in its pyproject), and the only
+# gate that enforces it is the final stage's strict pip check -- after the
+# FlashInfer and vLLM compiles, hours in. The DSL itself is installed far
+# earlier (build-base, base) from CUTLASS_DSL_VERSION. So compare the two now,
+# from the pinned sources, and refuse a profile that cannot pass:
+#   * b12x pyproject at B12X_COMMIT pins nvidia-cutlass-dsl==V   -> V must equal
+#     CUTLASS_DSL_VERSION (die otherwise).
+#   * QUACK_KERNELS_SPEC=quack-kernels==Q -> Q's PyPI requires_dist must admit
+#     CUTLASS_DSL_VERSION (quack 0.6.4 needs ==4.6.2, 0.6.5 needs >=4.7; die
+#     otherwise -- the FIX_FULL re-pin cannot fix a quack/DSL conflict).
+#   * vLLM tools/jovian_wheel_release/runtime.lock at VLLM_COMMIT names the
+#     DSL KK's own wheels ship with -> warn on a difference (the Dockerfile
+#     rewrites requirements/cuda.txt to CUTLASS_DSL_VERSION, so it still
+#     builds, but the pin then runs a DSL its authors did not qualify).
+# Network failures are inconclusive and only warn, like the pin pre-flight.
+dsl_preflight() {
+  local b12x_nwo="${B12X_REPO#*github.com/}" vllm_nwo="${VLLM_REPO#*github.com/}"
+  b12x_nwo="${b12x_nwo%.git}"; vllm_nwo="${vllm_nwo%.git}"
+  local raw="https://raw.githubusercontent.com" b12x_py vllm_lock quack_json="" quack_ver=""
+  b12x_py="$(curl -fsS --max-time 20 "${raw}/${b12x_nwo}/${B12X_COMMIT}/pyproject.toml" 2>/dev/null || true)"
+  vllm_lock="$(curl -fsS --max-time 20 "${raw}/${vllm_nwo}/${VLLM_COMMIT}/tools/jovian_wheel_release/runtime.lock" 2>/dev/null || true)"
+  if [[ "${QUACK_KERNELS_SPEC}" =~ ^quack-kernels==([0-9][0-9A-Za-z.+-]*)$ ]]; then
+    quack_ver="${BASH_REMATCH[1]}"
+    quack_json="$(curl -fsS --max-time 20 "https://pypi.org/pypi/quack-kernels/${quack_ver}/json" 2>/dev/null || true)"
+  fi
+  B12X_PY="${b12x_py}" VLLM_LOCK="${vllm_lock}" QUACK_JSON="${quack_json}" QUACK_VER="${quack_ver}" \
+  DSL="${CUTLASS_DSL_VERSION}" python3 - <<'PYEOF'
+import json, os, re, sys
+
+dsl = os.environ["DSL"]
+
+def key(v):
+    return tuple(int(x) if x.isdigit() else x for x in re.findall(r"\d+|[A-Za-z]+", v))
+
+def admits(spec, v):
+    """Minimal PEP 440 subset: comma-joined ==, !=, >=, <=, >, < clauses."""
+    for clause in filter(None, (c.strip() for c in spec.split(","))):
+        m = re.fullmatch(r"(==|!=|>=|<=|>|<)\s*([0-9][0-9A-Za-z.]*)", clause)
+        if not m:
+            return None                      # unknown operator: inconclusive
+        op, ref = m.groups()
+        a, b = key(v), key(ref)
+        ok = {"==": a == b, "!=": a != b, ">=": a >= b,
+              "<=": a <= b, ">": a > b, "<": a < b}[op]
+        if not ok:
+            return False
+    return True
+
+errors, warns, notes = [], [], []
+
+py = os.environ["B12X_PY"]
+if not py:
+    warns.append("b12x pyproject.toml unreachable: DSL pin unverified")
+else:
+    # The DSL and its four library dists (-libs-base/-core/-cu12/-cu13).
+    pins = re.findall(r'"(nvidia-cutlass-dsl(?:-libs-[a-z0-9]+)?)(?:\[[^\]]*\])?\s*([^";]*)"', py)
+    if not pins:
+        notes.append("b12x pyproject declares no nvidia-cutlass-dsl requirement")
+    for dist, spec in pins:
+        verdict = admits(spec, dsl)
+        if verdict is False:
+            errors.append(f"b12x at this B12X_PIN requires {dist}{spec}, "
+                          f"but CUTLASS_DSL_VERSION={dsl}: the final-stage pip check would fail. "
+                          "Set CUTLASS_DSL_VERSION to the b12x pin (and a matching QUACK_KERNELS_SPEC), "
+                          "or pick a b12x commit on this DSL")
+        elif verdict is None:
+            warns.append(f"b12x requirement '{dist}{spec}' not understood: unverified")
+        else:
+            notes.append(f"b12x {dist}{spec} admits {dsl}")
+
+lock = os.environ["VLLM_LOCK"]
+m = re.search(r"(?m)^cutlass-dsl\.version=(\S+)$", lock)
+if not lock:
+    warns.append("vLLM runtime.lock unreachable: KK's wheel DSL unverified")
+elif m and m.group(1) != dsl:
+    warns.append(f"vLLM runtime.lock at this VLLM_PIN ships CUTLASS DSL {m.group(1)}, "
+                 f"this profile installs {dsl}: builds, but not the DSL KK qualified this pin with")
+elif m:
+    notes.append(f"vLLM runtime.lock cutlass-dsl.version={m.group(1)}")
+
+qver, qjson = os.environ["QUACK_VER"], os.environ["QUACK_JSON"]
+if qver and not qjson:
+    warns.append(f"PyPI metadata for quack-kernels {qver} unreachable: quack/DSL compatibility unverified")
+elif qjson:
+    reqs = json.loads(qjson)["info"].get("requires_dist") or []
+    base = [r for r in reqs if r.startswith("nvidia-cutlass-dsl") and "extra ==" not in r]
+    for r in base:
+        spec = re.sub(r"^nvidia-cutlass-dsl(\[[^\]]*\])?\s*", "", r.split(";")[0]).strip()
+        verdict = admits(spec, dsl)
+        if verdict is False:
+            errors.append(f"quack-kernels {qver} requires nvidia-cutlass-dsl{spec}, but "
+                          f"CUTLASS_DSL_VERSION={dsl}: pick the quack release built for that DSL "
+                          "(0.6.4 for 4.6.2, 0.6.5 for 4.7.x)")
+        elif verdict:
+            notes.append(f"quack-kernels {qver} nvidia-cutlass-dsl{spec} admits {dsl}")
+
+for n in notes:
+    print("DSL pre-flight: " + n, file=sys.stderr)
+for w in warns:
+    print("WARN: DSL pre-flight: " + w, file=sys.stderr)
+for e in errors:
+    print("ERROR: DSL pre-flight: " + e, file=sys.stderr)
+sys.exit(1 if errors else 3 if warns else 0)
+PYEOF
+}
+if [[ "${PIN_PREFLIGHT:-1}" == 1 ]] && command -v curl >/dev/null 2>&1; then
+  _dsl_rc=0; dsl_preflight || _dsl_rc=$?
+  case "${_dsl_rc}" in
+    0) note "CuTe DSL pre-flight OK: CUTLASS_DSL_VERSION=${CUTLASS_DSL_VERSION} consistent with b12x ${B12X_COMMIT:0:9} and ${QUACK_KERNELS_SPEC}" ;;
+    3) warn "CuTe DSL pre-flight INCOMPLETE (see above): a DSL mismatch would surface only at the final-stage pip check" ;;
+    *) die "CuTe DSL pre-flight failed (see above); CUTLASS_DSL_VERSION=${CUTLASS_DSL_VERSION} ${QUACK_KERNELS_SPEC}" ;;
+  esac
+fi
+
 # ----------------------------------------------------------- LMCache pin
 # build-vllm-b12x-cu132.sh resolves an unset LMCACHE_COMMIT from the branch
 # head at build time (PIN_SOURCE_COMMITS=1), so without a profile pin LMCache
@@ -423,7 +538,7 @@ fi
 for t in PATCH_GPU_ARCH PATCH_HOST_ARCH PATCH_PCIE_ENV \
          PATCH_PIPCHECK_WHEELTAG PATCH_VLLM_REQ_MARKERS PATCH_EXLLAMAV3_AVX \
          PATCH_VLLM_WHEEL_TAGS PATCH_DEEPGEMM_LIBDW PATCH_IO_URING PATCH_LMCACHE_INTEGRATION \
-         PATCH_SPARKCACHE; do
+         PATCH_SPARKCACHE PATCH_FASTOKENS; do
   v="${!t:-auto}"
   case "${v}" in on|off|auto) ;; *) die "${t} must be on, off, or auto: ${v}" ;; esac
   printf -v "${t}" '%s' "${v}"
@@ -584,17 +699,17 @@ text = path.read_text()
 # version ACTUALLY installed (QUACK_KERNELS_SPEC). vllm's requirements/cuda.txt
 # carries nvidia-cutlass-dsl==4.7.1 + quack-kernels==0.6.5 from the upstream
 # vllm-project merge "[CI] Bump CUTLASS DSL to 4.7 (#54927)" (ec6b0494f,
-# 2026-09-11) -- NOT a karmic-kraken decision. KK's own wheel pipeline
-# (tools/jovian_wheel_release/normalize_wheel.py + runtime.lock at the pin)
-# rewrites nvidia-cutlass-dsl back to 4.6.2 ("The SM120 foundation, B12X and
-# FlashInfer share DSL 4.6.2. Upstream's 4.7.1 bump accompanies FA4, which
-# does not support SM120") and drops quack-kernels from Requires-Dist
-# entirely. b12x pins 4.6.2 on master AND integration/karmic-kraken-beta.
-# quack 0.6.5 requires cutlass-dsl>=4.7, so 0.6.4 (built for 4.6.2) is the
-# release that matches the KK contract. Upstream blackwell-llm-docker already
-# rewrites the cutlass-dsl pin in cuda.txt but not quack's, so the strict pip
-# check fails on that one line. The rewrite is printed in the build log;
-# every other requirement stays strict.
+# 2026-09-11). The DSL a pin actually runs is KK's decision, recorded in
+# tools/jovian_wheel_release/runtime.lock at that pin: dev/karmic-kraken
+# through at least ab86b707 says 4.6.2 ("The SM120 foundation, B12X and
+# FlashInfer share DSL 4.6.2"), integration/karmic-kraken-beta from 2026-09-30
+# (vllm-951/-954, b12x 4bacd509+, FlashInfer efd67581) says 4.7.1. The
+# Dockerfile rewrites the cutlass-dsl line in cuda.txt to CUTLASS_DSL_VERSION
+# but not quack's, so a 4.6.2 profile (quack 0.6.4, which needs ==4.6.2)
+# would fail the strict pip check on that one line; on a 4.7.1 profile (quack
+# 0.6.5) the re-pin is a no-op. The DSL pre-flight above checks the
+# CUTLASS_DSL_VERSION / b12x / quack triple before the build starts. The
+# rewrite is printed in the build log; every other requirement stays strict.
 FIX_WHEEL =("{py} -c \"import sysconfig,pathlib; "
              "[p.write_text(p.read_text().replace('_sbsa','_aarch64')) "
              "for d in {{sysconfig.get_paths()['purelib'],sysconfig.get_paths()['platlib']}} "
@@ -954,11 +1069,21 @@ fi
 #               kv_readers_per_object became num_kv_readers, and kv_tp_size is
 #               now per SERVER (tp_size // n_servers).
 # The replacement list below was run CPU-only against the pinned tree
-# (9acfefdb, native C++ extension built, no GPU): 380 passed, 18 skipped.
+# (native C++ extension built with NO_GPU_EXT=1, no GPU, no vLLM):
+#   9acfefdb (2026-09-25), 17 files: 380 passed, 18 skipped
+#   820af25f (2026-10-03), 26 files: 430 passed, 19 skipped, plus
+#     multiprocess/test_mq.py::test_mq_report_block_allocation_empty, which
+#     failed once under container load and passed alone (ZMQ timing; the
+#     file is unchanged since 9acfefdb -- re-run the build if it trips).
 # It adds the checkpoint suites (index, storage, identity, retention,
-# reuse/evict store policies, abandoned stores, find-refresh). The two
-# test_vllm_* files skip their vLLM halves without vLLM; in stage 3 they
-# import the KK vLLM that vllm-build installed -- a real API check.
+# reuse/evict store policies, abandoned stores, find-refresh) and, from
+# 820af25f, the robustness suites of PRs #92-#108 (eviction loops surviving
+# an exception, abandoned leases, cancel/shutdown drains, restore capacity
+# and RAM-failure listing, SHM pool remap, side requests, multimodal roots).
+# The test_vllm_* files and test_checkpoint_multimodal_roots skip their vLLM
+# halves without vLLM; in stage 3 they import the KK vLLM that vllm-build
+# installed -- a real API check (multimodal_roots imports only scheduler-side
+# vllm.v1.core / vllm.multimodal modules, safe without a GPU).
 # The final-stage check additionally imports the MP server and BOTH vLLM
 # connectors (LMCacheMPConnector, LMCacheRecurrentCheckpointConnector) so an
 # LMCache/KK API break fails the build, not the first boot, and asserts the
@@ -1018,6 +1143,15 @@ new_tests = [
     "multiprocess/test_checkpoint_identity.py",
     "multiprocess/test_checkpoint_index.py",
     "multiprocess/test_checkpoint_storage.py",
+    "distributed/test_eviction_loop_errors.py",
+    "multiprocess/test_checkpoint_abandoned_leases.py",
+    "multiprocess/test_checkpoint_cancel_drain.py",
+    "multiprocess/test_checkpoint_restore_capacity.py",
+    "multiprocess/test_checkpoint_restore_ram_failures.py",
+    "multiprocess/test_checkpoint_shm_pool.py",
+    "multiprocess/test_checkpoint_shutdown_drain.py",
+    "multiprocess/test_checkpoint_side_requests.py",
+    "test_checkpoint_multimodal_roots.py",
     "test_vllm_mp_adapter.py",
     "test_vllm_mp_connector_metadata.py",
 ]
@@ -1245,6 +1379,98 @@ PYEOF
   plog "PATCH_SPARKCACHE: sparkcache ${SPARKCACHE_COMMIT:0:12} + ${SPARKCACHE_VLLM_PATCHES}"
 else
   plog "PATCH_SPARKCACHE=${PATCH_SPARKCACHE}: skipped"
+fi
+
+# ------------------------------------------------------------ PATCH_FASTOKENS
+# fastokens (crusoecloud/fastokens, Apache-2.0): a Rust re-implementation of
+# the Hugging Face `tokenizers` backend. KK vLLM already carries the switch
+# (VLLM_USE_FASTOKENS=1 -> vllm/tokenizers/fastokens.py, minimum 0.2.0);
+# without the package, setting it stops vLLM at tokenizer load. The image
+# only INSTALLS it: tokenization changes only when a rank env sets
+# VLLM_USE_FASTOKENS=1. Upstream's runtime images ship 0.3.2 and enable it by
+# default after an equivalence study (runtime/README.md "Tokenizer backend":
+# identical ids on real text, code, chat with tools/reasoning and 1M-token
+# prompts for every profile's tokenizer; rare documented differences).
+# One wheel, no Python dependencies, cp39-abi3 manylinux_2_28_aarch64; the
+# install is hash-checked (FASTOKENS_SHA256 = that wheel's PyPI sha256, so a
+# re-uploaded or substituted file fails the build) and binary-only (no Rust
+# toolchain, no sdist fallback). The build then checks the version, that the
+# installed vLLM declares VLLM_USE_FASTOKENS and accepts this version, and
+# that fastokens matches `tokenizers` on a byte-level BPE (upstream's check).
+# Final stage only, after the runtime-package install: no compile cache moves.
+#   on   = install + verify; die without FASTOKENS_VERSION/FASTOKENS_SHA256
+#   auto = same as on when FASTOKENS_VERSION is set, otherwise skip
+#   off  = nothing
+fk_apply=0
+case "${PATCH_FASTOKENS}" in
+  on)   [[ -n "${FASTOKENS_VERSION:-}" ]] || die "PATCH_FASTOKENS=on needs FASTOKENS_VERSION (e.g. 0.3.2)"; fk_apply=1 ;;
+  auto) [[ -z "${FASTOKENS_VERSION:-}" ]] || fk_apply=1 ;;
+esac
+if [[ "${fk_apply}" == 1 ]]; then
+  [[ "${FASTOKENS_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || die "FASTOKENS_VERSION must be an exact X.Y.Z release: ${FASTOKENS_VERSION}"
+  [[ "${FASTOKENS_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] \
+    || die "PATCH_FASTOKENS needs FASTOKENS_SHA256: the sha256 of fastokens-${FASTOKENS_VERSION}-cp39-abi3-manylinux_2_28_aarch64.whl (https://pypi.org/project/fastokens/${FASTOKENS_VERSION}/#files)"
+  python3 - "${dockerfile}" "${FASTOKENS_VERSION}" "${FASTOKENS_SHA256}" <<'PYEOF'
+import pathlib, sys
+path, version, sha = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+text = path.read_text()
+BS_NL = chr(92) + chr(10)
+# Inserted right BEFORE the final stage's LMCache dependency install, i.e.
+# after the runtime-package RUN and its strict pip check (whose own text the
+# wheel-tag patch rewrites, so it cannot serve as the anchor).
+anchor = "# Install only the dependencies needed by the in-process RAM and buffered\n"
+n = text.count(anchor)
+assert n == 1, f"PATCH_FASTOKENS: final-stage LMCache-install anchor found {n} times -- update the anchor"
+run = ("# PATCH_FASTOKENS: fastokens " + version + " (hash-checked wheel; inert until VLLM_USE_FASTOKENS=1)\n"
+       "RUN printf '%s\\n' 'fastokens==" + version + " --hash=sha256:" + sha + "' > /tmp/fastokens.req " + BS_NL +
+       " && /opt/venv/bin/python -m pip install --no-deps --only-binary=:all: --require-hashes " + BS_NL +
+       "      -r /tmp/fastokens.req " + BS_NL +
+       " && rm -f /tmp/fastokens.req " + BS_NL +
+       " && /opt/venv/bin/python -m pip check " + BS_NL +
+       " && FASTOKENS_VERSION=\"" + version + "\" /opt/venv/bin/python - <<'PY'\n")
+verify = "\n".join([
+    "import importlib.metadata as md",
+    "import os",
+    "",
+    "from packaging.version import Version",
+    "",
+    "import fastokens",
+    "import vllm.envs",
+    "from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers",
+    "from vllm.tokenizers import fastokens as vllm_fastokens",
+    "",
+    "installed = md.version('fastokens')",
+    "assert installed == os.environ['FASTOKENS_VERSION'], installed",
+    "assert 'VLLM_USE_FASTOKENS' in vllm.envs.environment_variables, 'vLLM does not declare VLLM_USE_FASTOKENS'",
+    "assert Version(installed) >= Version(vllm_fastokens._MIN_FASTOKENS_VERSION), (installed, vllm_fastokens._MIN_FASTOKENS_VERSION)",
+    "samples = [",
+    "    'P\\u0159\\u00edli\\u0161 \\u017elu\\u0165ou\\u010dk\\u00fd k\\u016f\\u0148 \\u00fap\\u011bl.',",
+    "    \"def main():\\n    return {'tokens': [1, 2, 3]}\\n\\n\\n\",",
+    "    '\\u4e2d\\u6587 \\u65e5\\u672c\\u8a9e \\U0001f600\\U0001f468\\u200d\\U0001f469 test',",
+    "]",
+    "reference = Tokenizer(models.BPE())",
+    "reference.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)",
+    "reference.decoder = decoders.ByteLevel()",
+    "reference.train_from_iterator(samples * 8, trainers.BpeTrainer(",
+    "    vocab_size=384, initial_alphabet=pre_tokenizers.ByteLevel.alphabet(), show_progress=False))",
+    "candidate = fastokens.Tokenizer.from_json_str(reference.to_str())",
+    "for text in samples:",
+    "    expected = reference.encode(text).ids",
+    "    actual = candidate.encode(text).ids",
+    "    assert actual == expected and candidate.decode(actual) == reference.decode(expected), text",
+    "print('fastokens', installed, 'matches tokenizers on a byte-level BPE; vLLM declares VLLM_USE_FASTOKENS')",
+    "PY",
+    ""])
+lab = ("LABEL org.local-inference.fastokens.version=\"" + version + "\" " + BS_NL +
+       "      org.local-inference.fastokens.sha256=\"" + sha + "\"\n")
+text = text.replace(anchor, run + verify + lab + "\n" + anchor, 1)
+path.write_text(text)
+print("PATCH_FASTOKENS: fastokens " + version + " (sha256 " + sha[:12] + ") into the final stage", file=sys.stderr)
+PYEOF
+  plog "PATCH_FASTOKENS: fastokens ${FASTOKENS_VERSION} (wheel sha256 ${FASTOKENS_SHA256:0:12}; inert until VLLM_USE_FASTOKENS=1)"
+else
+  plog "PATCH_FASTOKENS=${PATCH_FASTOKENS}: skipped"
 fi
 
 # The exact Dockerfile the build consumed (all patches applied) -- the

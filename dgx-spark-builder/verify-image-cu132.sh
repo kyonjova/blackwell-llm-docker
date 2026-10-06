@@ -4,11 +4,20 @@
 # verification step: build-spark-cu132.sh builds only and defers to this.
 #
 # Usage:  ./verify-image-cu132.sh IMAGE [build.env]
+#         VERIFY_TOKENIZER_DIRS=/path/model-a:/path/model-b ./verify-image-cu132.sh IMAGE build.env
+#
+# VERIFY_TOKENIZER_DIRS (optional, colon-separated host paths of model
+# snapshots holding tokenizer.json): each is mounted read-only and tokenized
+# with the standard backend and with fastokens; ids must match on a fixed
+# corpus and on chat-template output, and the timing of a long document is
+# printed for both. This is the per-model gate before setting
+# VLLM_USE_FASTOKENS=1 in that model's rank env.
 #
 # With a profile, VLLM_PIN / B12X_PIN are compared against what the image
 # reports, and TORCH_VERSION / VLLM_REQUIRED_LAUNCHERS set the expectations
 # for the generic contract. Checks, in order: source identity, the RoCEnante
-# composition (vLLM PR #597 + b12x PR #295), KDA, DeepGEMM, LMCache, SparkCache, io_uring + the
+# composition (vLLM PR #597 + b12x PR #295), KDA, DeepGEMM, LMCache, SparkCache, fastokens,
+# the CuTe DSL set + NVFP4-CSF pairing, io_uring + the
 # baked seccomp profile (image checks, then HOST notes), then the generic
 # image contract.
 set -euo pipefail
@@ -181,6 +190,133 @@ assert has_vmm == ("vmm-exemption" in labelled), "vmm-exemption state does not m
 assert has_040 == has_041 == ("shared-prefix" in labelled), "040/041 must match the label, both or neither"
 PY
 fi
+
+echo "== fastokens (PATCH_FASTOKENS)"
+img_fk="$(label org.local-inference.fastokens.version)"
+want_fk="$(prof FASTOKENS_VERSION)"
+if [[ -z "$img_fk" ]]; then
+  if [[ -n "$want_fk" && "$(prof PATCH_FASTOKENS)" != off ]]; then
+    bad "profile pins fastokens ${want_fk} but the image has no fastokens label (built without PATCH_FASTOKENS?)"
+  else
+    echo "  NOTE  fastokens not in this image (VLLM_USE_FASTOKENS=1 would stop vLLM at tokenizer load)"
+  fi
+else
+  [[ -z "$want_fk" || "$img_fk" == "$want_fk" ]] && ok "fastokens label ${img_fk} matches the profile" \
+    || bad "fastokens label ${img_fk} != profile ${want_fk}"
+  FK_WANT="$img_fk" docker run -i --rm -e FK_WANT --entrypoint /opt/venv/bin/python "$IMAGE" - <<'PY' \
+    && ok "fastokens imports at the labelled version; vLLM declares VLLM_USE_FASTOKENS and accepts it" \
+    || bad "fastokens import/version or the vLLM switch is wrong (see output above)"
+import importlib.metadata as md, os
+from packaging.version import Version
+import fastokens  # noqa: F401
+import vllm.envs
+from vllm.tokenizers import fastokens as vf
+v = md.version("fastokens")
+assert v == os.environ["FK_WANT"], v
+assert "VLLM_USE_FASTOKENS" in vllm.envs.environment_variables
+assert Version(v) >= Version(vf._MIN_FASTOKENS_VERSION), (v, vf._MIN_FASTOKENS_VERSION)
+PY
+  IFS=: read -r -a fk_dirs <<< "${VERIFY_TOKENIZER_DIRS:-}"
+  [[ ${#fk_dirs[@]} -gt 0 ]] || echo "  NOTE  VERIFY_TOKENIZER_DIRS unset: no per-model id comparison (required before VLLM_USE_FASTOKENS=1)"
+  for fk_dir in "${fk_dirs[@]}"; do
+    [[ -n "$fk_dir" ]] || continue
+    if [[ ! -f "$fk_dir/tokenizer.json" ]]; then bad "fastokens: $fk_dir has no tokenizer.json"; continue; fi
+    docker run -i --rm -v "$fk_dir:/tok:ro" -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 \
+      --entrypoint /opt/venv/bin/python "$IMAGE" - <<'PY' \
+      && ok "fastokens == standard backend on $(basename "$fk_dir") (corpus + chat template)" \
+      || bad "fastokens differs from the standard backend on $(basename "$fk_dir") -- keep VLLM_USE_FASTOKENS=0 for it"
+import random, time
+from transformers import AutoTokenizer
+ref = AutoTokenizer.from_pretrained("/tok")          # standard backend, loaded first
+import fastokens
+fastokens.patch_transformers()
+fk = AutoTokenizer.from_pretrained("/tok")           # fastokens backend
+assert type(fk._tokenizer).__module__.startswith("fastokens"), type(fk._tokenizer)
+rng = random.Random(7)
+words = ["alpha", "Beta", "γάμμα", "дельта", "εψιλον", "中文", "日本語", "한국어", "naïve", "café",
+         "e\u0301", "👨\u200d👩\u200d👧", "🙂", "x = f(y) + 3;", "\t", "    ", "\n\n", "1234567",
+         "https://example.com/a?b=c", "</s>", "<|im_start|>", "<think>", "\u00a0", "ﬁ"]
+corpus = [
+    "Hello, world! The quick brown fox jumps over the lazy dog.",
+    "def main():\n    return {'tokens': [1, 2, 3]}\n\n\n# trailing   spaces   \n",
+    "Příliš žluťoučký kůň úpěl ďábelské ódy. 中文 日本語 한국어 العربية हिन्दी",
+    "   leading and trailing whitespace   \n\t\t mixed\r\nline endings\r\n",
+    "".join(rng.choice(words) + rng.choice([" ", "", "\n", "  "]) for _ in range(20000)),
+]
+msgs = [{"role": "system", "content": "You are a careful assistant."},
+        {"role": "user", "content": corpus[2] + "\n" + corpus[1]},
+        {"role": "assistant", "content": "Sure.\n```python\nprint(1)\n```"},
+        {"role": "user", "content": "And now the long one: " + corpus[4][:4000]}]
+try:
+    corpus.append(ref.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True))
+except Exception as e:  # tokenizer without a chat template
+    print("  (no chat template:", type(e).__name__, ")")
+for i, text in enumerate(corpus):
+    a, b = ref.encode(text, add_special_tokens=False), fk.encode(text, add_special_tokens=False)
+    assert a == b, f"sample {i}: first diff at {next(j for j,(x,y) in enumerate(zip(a,b)) if x!=y) if any(x!=y for x,y in zip(a,b)) else min(len(a),len(b))}"
+    assert ref.decode(a) == fk.decode(b), f"sample {i}: decode differs"
+long = corpus[4] * 8
+t0 = time.perf_counter(); n = len(ref.encode(long, add_special_tokens=False)); t1 = time.perf_counter()
+fk.encode(long, add_special_tokens=False); t2 = time.perf_counter()
+print(f"  {n} tokens: standard {1e3*(t1-t0):.0f} ms, fastokens {1e3*(t2-t1):.0f} ms")
+PY
+  done
+fi
+
+echo "== CuTe DSL contract + CSF stack"
+# The DSL is the one compiler b12x, FlashInfer and quack share; b12x pins it
+# exactly. A wrong DSL is invisible until the first kernel compile, so check
+# the installed set against the profile and against b12x's own pins. CSF:
+# vLLM's nvfp4_csf loader needs the paired b12x CSF API (vllm-956 requires
+# b12x-450); a vLLM with it and a b12x without it fails at weight load.
+want_dsl="$(prof CUTLASS_DSL_VERSION)"; want_dsl="${want_dsl:-4.6.2}"
+want_quack="$(prof QUACK_KERNELS_SPEC)"; want_quack="${want_quack#quack-kernels==}"
+WANT_DSL="$want_dsl" WANT_QUACK="$want_quack" docker run -i --rm -e WANT_DSL -e WANT_QUACK \
+  --entrypoint /opt/venv/bin/python "$IMAGE" - <<'PY' \
+  && ok "CuTe DSL ${want_dsl} (all five dists) matches the profile and b12x's pins; quack ${want_quack:-?}" \
+  || bad "CuTe DSL / quack set does not match the profile or b12x's pins (see output above)"
+import importlib.metadata as md, os
+from packaging.requirements import Requirement
+want = os.environ["WANT_DSL"]
+dists = ["nvidia-cutlass-dsl", "nvidia-cutlass-dsl-libs-base", "nvidia-cutlass-dsl-libs-core",
+         "nvidia-cutlass-dsl-libs-cu13"]
+have = {d: md.version(d) for d in dists}
+try:
+    have["nvidia-cutlass-dsl-libs-cu12"] = md.version("nvidia-cutlass-dsl-libs-cu12")
+except md.PackageNotFoundError:
+    pass
+print("  installed:", ", ".join(f"{k.replace('nvidia-cutlass-dsl', 'dsl')}={v}" for k, v in have.items()))
+assert all(v == want for v in have.values()), f"profile CUTLASS_DSL_VERSION={want}"
+for r in md.requires("b12x") or []:
+    req = Requirement(r)
+    if req.name.startswith("nvidia-cutlass-dsl") and (req.marker is None or req.marker.evaluate()):
+        assert req.name in have and req.specifier.contains(have[req.name], prereleases=True), f"b12x requires {r}"
+q = os.environ.get("WANT_QUACK")
+if q:
+    assert md.version("quack-kernels") == q, f"quack-kernels {md.version('quack-kernels')} != profile {q}"
+PY
+# Source probe, not imports: the loader/quantization registries pull in
+# modules that need a GPU driver at import time (see the LMCache note above).
+csf="$(py <<'PY' 2>/dev/null | sed -n 's/^CSF //p'
+import importlib.util, pathlib
+def src(mod):
+    spec = importlib.util.find_spec(mod)
+    return pathlib.Path(spec.origin).read_text() if spec and spec.origin else ""
+q = src("vllm.model_executor.layers.quantization")
+l = src("vllm.model_executor.model_loader")
+v = '"nvfp4_csf"' in q and '"nvfp4_csf": Nvfp4CsfModelLoader' in l
+root = pathlib.Path(importlib.util.find_spec("b12x").origin).parent
+b12x_src = "".join(f.read_text(errors="ignore") for f in (root / "moe").rglob("*.py"))
+b = all(f"class {n}" in b12x_src for n in ("Nvfp4CsfWeights", "CsfScalePlanes"))
+print("CSF", "vllm=" + str(v), "b12x=" + str(b))
+PY
+)"
+case "$csf" in
+  "vllm=True b12x=True")   ok "NVFP4-CSF: vLLM quantization + loader 'nvfp4_csf' and b12x CSF weights present (checkpoint ...-CSF-QAD loadable)" ;;
+  "vllm=False b12x=False") echo "  NOTE  NVFP4-CSF not in this image (dev/karmic-kraken line); CSF checkpoints need the integration profile" ;;
+  "vllm="*)                bad "NVFP4-CSF half-present ($csf): vLLM and b12x CSF support must come as a pair" ;;
+  *)                       bad "NVFP4-CSF probe failed to run (vllm or b12x import error)" ;;
+esac
 
 echo "== io_uring loader path (PATCH_IO_URING)"
 # The b12x loader's Spark read path compiles against liburing at first use;
