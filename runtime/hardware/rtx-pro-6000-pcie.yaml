@@ -20,6 +20,15 @@ environment:
 model_environment:
   glm53-flash:
     VLLM_PCIE_TWOSHOT_ALLREDUCE_MAX_SIZE: "off"
+  glm53:
+    VLLM_PCIE_ONESHOT_ALLREDUCE_MAX_SIZE: 64KB
+    # Eight BF16 rows of the 6144-wide residual: the all-reduce before each
+    # RMSNorm runs fused through MTP3 decode at two requests.
+    VLLM_PCIE_ONESHOT_FUSED_ADD_RMS_NORM_MAX_SIZE: 96KB
+    # Prefill all-reduces go through the b12x PCIe DMA path with FP8 transport.
+    VLLM_PCIE_DMA_MIN_BYTES: 6MB
+    VLLM_PCIE_DMA_FP8: i8_ring
+    B12X_PCIE_DMA_FP8: i8_ring
   ds41-flash:
     VLLM_PCIE_DMA_MIN_BYTES: 6MB
     VLLM_PCIE_ONESHOT_ALLREDUCE_MAX_SIZE: 96KB

@@ -33,6 +33,12 @@ CSF = {
         "local-inference-lab/GLM-5.3-Flash-NVFP4",
         None,
     ),
+    "glm53": Variants(
+        "local-inference-lab/GLM-5.3-NVFP4-CSF",
+        "nvfp4_csf",
+        "local-inference-lab/GLM-5.3-NVFP4",
+        "1f3bb90cbff7f63cfb5c04c0ab723e6f75b633a8",
+    ),
     "ds41-flash": Variants(
         "local-inference-lab/DeepSeek-V4.1-Flash-lossless-CSF",
         "mxfp4_csf",
@@ -91,7 +97,8 @@ def test_original_checkpoint_keeps_the_profile_settings(profile_id):
     assert plan.values["model"] == variants.original
     assert plan.values.get("revision") == variants.original_revision
     assert plan.values["load-format"] == "instanttensor"
-    assert plan.values.get("quantization") in (None, "modelopt_mixed")
+    # GLM-5.3 (744B) is a single-algorithm ModelOpt NVFP4 checkpoint.
+    assert plan.values.get("quantization") in (None, "modelopt_mixed", "modelopt_fp4")
 
 
 def test_a_model_naming_a_variant_selects_it():
