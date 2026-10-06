@@ -8,6 +8,9 @@ FROM ${UV_IMAGE} AS uv
 FROM model-neutral-foundation AS runtime
 ARG SOURCE_IMAGE
 ARG RUNTIME_SOURCE_COMMIT
+# Platform-specific locks: tools/jovian_wheel_runtime for linux/amd64,
+# tools/jovian_wheel_runtime/<platform> otherwise (runtime_platform.py).
+ARG PLATFORM_LOCK_DIR=tools/jovian_wheel_runtime
 LABEL org.opencontainers.image.title="LIL multi-model CUDA 13.4 runtime" \
       org.opencontainers.image.description="Model-profile serving over a source-locked NVIDIA PyTorch foundation" \
       org.opencontainers.image.source="https://github.com/local-inference-lab/blackwell-llm-docker" \
@@ -28,7 +31,7 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv,ro \
       --venv /opt/venv \
       --uv /usr/local/bin/uv \
       --source-image "${SOURCE_IMAGE}" \
-      --overlay-lock /source/tools/jovian_wheel_runtime/ngc-runtime-overlay.lock \
+      --overlay-lock /source/${PLATFORM_LOCK_DIR}/ngc-runtime-overlay.lock \
       --entrypoint /source/tools/jovian_wheel_runtime/runtime-entrypoint.sh \
       --verifier /source/tools/jovian_wheel_runtime/verify_qwen38_runtime.py \
  && python /source/recipes/glm53/install_dependency_python_patches.py \

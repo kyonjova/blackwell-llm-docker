@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import os
+import platform as host_platform
 import re
 import shutil
 import sys
@@ -103,12 +104,23 @@ def read_yaml(path: Path) -> dict:
     return result
 
 
+def platform_environment_path() -> Path:
+    """The foundation policy of the machine's image: linux/arm64 images carry
+    platform-environment.linux-arm64.json beside the linux/amd64 default."""
+    if host_platform.machine() == "aarch64":
+        candidate = ROOT / "platform-environment.linux-arm64.json"
+        if candidate.is_file():
+            return candidate
+    return ROOT / "platform-environment.json"
+
+
 def platform_environment() -> dict[str, str]:
     """Read foundation defaults below model policy and explicit user settings."""
+    path = platform_environment_path()
     try:
-        data = json.loads((ROOT / "platform-environment.json").read_text())
+        data = json.loads(path.read_text())
     except (OSError, ValueError) as error:
-        raise ConfigError("Cannot read platform-environment.json") from error
+        raise ConfigError(f"Cannot read {path.name}") from error
     if (
         not isinstance(data, dict)
         or set(data) != {"schema_version", "source_image", "environment"}
