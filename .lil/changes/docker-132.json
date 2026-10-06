@@ -1,0 +1,16 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-132",
+  "category": "feature",
+  "summary": "GLM-5.3 (744B) on eight RTX PRO 6000 GPUs: new glm53 profile and PRESET=glm53-csf-tp8 with the FP4-CSF checkpoint, TP8 and MTP3",
+  "models": ["GLM-5.3"],
+  "compatibility": "New profile and preset; other models are unchanged. PROFILE=glm53 CHECKPOINT=original serves GLM-5.3-NVFP4 at 1f3bb90c.",
+  "details": [
+    "PRESET=glm53-csf-tp8 serves local-inference-lab/GLM-5.3-NVFP4-CSF (a4d40693) with TP8, MTP3 from the built-in layer, 64 request slots, 8,192-token prefill budget, IndexCache, B12X attention/MoE/linear and the fused PCIe all-reduce + RMSNorm.",
+    "8x RTX PRO 6000: 535,808 KV tokens (the longest context) at 92% of GPU memory; MTP-normalized decode steps/s C1 82.9, C2 135.7, C4 193.9 at context 0. The original checkpoint holds 489,920 tokens at C1 85.0, C2 138.7, C4 196.8.",
+    "The profile runs small-batch W4A16 MoE with two CTAs per SM (b12x B12X_W4A16_SMALL_M_OCCUPANCY=2); the CSF preset also splits its 4-token MoE calls along K."
+  ],
+  "authors": ["voipmonitor"],
+  "pull_requests": [132],
+  "requires": ["vllm-993", "b12x-483", "b12x-485"]
+}

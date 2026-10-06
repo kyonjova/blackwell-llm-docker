@@ -121,6 +121,16 @@ prompt tokens from cache (90% of turns under 18 s), against 155 turns, 65% and
   The external cache (`CACHE_MODE=lmcache`) is not available at TP3; the VRAM
   prefix cache is. The first start tunes FlashInfer MoE kernels and stores the
   result under `/cache`.
+- GLM-5.3 (744B) on eight GPUs: `PRESET=glm53-csf-tp8` (profile `glm53`)
+  serves `local-inference-lab/GLM-5.3-NVFP4-CSF` with TP8 and MTP3 from the
+  model's built-in layer, 64 request slots and an 8,192-token prefill budget.
+  The FP4-CSF checkpoint holds 535,808 KV tokens at 92% of GPU memory, which
+  is also the longest context (489,920 with `PROFILE=glm53
+  CHECKPOINT=original`). B12X runs the DSA sparse attention with IndexCache,
+  the W4A16 routed experts with two CTAs per SM for small batches
+  (`B12X_W4A16_SMALL_M_OCCUPANCY=2`) and the fused PCIe all-reduce +
+  RMSNorm; attention weights are prefetched into L2 during decode. The
+  external cache is not available; the VRAM prefix cache is.
 - MiMo-V2.6-Flash on two GPUs: `PRESET=mimo26-flash-tp2` serves
   `XiaomiMiMo/MiMo-V2.6-Flash-RL` (FP8 weights, text, images and audio) on
   b12x with the checkpoint's own DFlash drafter: seven draft tokens, adaptive
@@ -285,8 +295,9 @@ GLM TP3 preset, which runs FlashInfer CUTLASS experts, has none of them.
 
 ### FP4-CSF checkpoints
 
-Qwen3.8-Flash-Next, GLM-5.3-Flash, DeepSeek-V4.1-Flash, DeepSeek-V4-Flash and
-DeepSeek-V4-Flash Vision serve their FP4-CSF checkpoints by default
+Qwen3.8-Flash-Next, GLM-5.3-Flash, GLM-5.3 (744B), DeepSeek-V4.1-Flash,
+DeepSeek-V4-Flash and DeepSeek-V4-Flash Vision serve their FP4-CSF checkpoints
+by default
 (`checkpoint: csf`). An FP4-CSF checkpoint holds the same weights as the
 original with losslessly compressed routed-expert scales. B12X reads the
 compressed scales while it runs the experts, and they stay compressed in GPU
@@ -296,6 +307,7 @@ memory, which leaves more room for the KV cache. The downloads are smaller too.
 | --- | --- | --- |
 | Qwen3.8-Flash-Next | `local-inference-lab/Qwen3.8-Flash-Next-NVFP4-MXFP8-CSF-QAD` | `local-inference-lab/Qwen3.8-Flash-Next-NVFP4` (QAD) |
 | GLM-5.3-Flash | `local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD` (MXFP8 attention and shared experts) | `local-inference-lab/GLM-5.3-Flash-NVFP4` (QAD) |
+| GLM-5.3 (744B) | `local-inference-lab/GLM-5.3-NVFP4-CSF` | `local-inference-lab/GLM-5.3-NVFP4` at `1f3bb90c` (keeps the BF16 MTP layer unquantized) |
 | DeepSeek-V4.1-Flash | `local-inference-lab/DeepSeek-V4.1-Flash-lossless-CSF` | `deepseek-ai/DeepSeek-V4.1-Flash` |
 | DeepSeek-V4-Flash | `local-inference-lab/DeepSeek-V4-Flash-0731-lossless-CSF` | `deepseek-ai/DeepSeek-V4-Flash-0731` at `9e165c30` |
 | DeepSeek-V4-Flash Vision | `local-inference-lab/DeepSeek-V4-Flash-Vision-Exp-lossless-CSF` | `deepseek-ai/DeepSeek-V4-Flash-Vision-Exp` at `6821d6ad` |
@@ -312,6 +324,7 @@ concurrency, two runs; prefill: one 8K and one 32K prompt):
 | DeepSeek-V4.1-Flash (4) | 12,951,057 vs 9,566,426 (+35%) | C8 -3.1%, C16 -3.5%, C32 -1.2% | -1.3% / -1.7% |
 | DeepSeek-V4-Flash (2) | 1,853,797 vs 1,308,256 (+42%) | C4 +0.9%, C8 -0.8% | +0.7% / +2.2% |
 | DeepSeek-V4-Flash Vision (2) | 1,850,842 vs 1,306,708 (+42%) | C1 +4.2%, C2 -0.2%, C4 +3.1% | -1.4% / -2.9% |
+| GLM-5.3 (744B) `glm53-csf-tp8` (8)* | 535,808 vs 489,920 (+9.4%) | steps/s C1 -2.5%, C2 -2.2%, C4 -1.5% | -2.7% / -1.2% |
 
 The GLM-5.3-Flash TP4 row compares the QAD MXFP8 FP4-CSF checkpoint with the
 BF16 original, both with a4 prefill and 96% of GPU memory, on RTX PRO 6000
@@ -321,6 +334,16 @@ the decode gain.
 
 The DeepSeek-V4.1-Flash decode cost comes from expanding the compressed scales
 of every routed expert in each layer before the B12X W4A8 kernels run.
+
+\* GLM-5.3 (744B) was measured on RTX PRO 6000 Workstation Edition GPUs
+(600 W) with MTP-normalized decode steps per second, both checkpoints with the
+`glm53` profile. At TP8 each GPU holds only 256 of an expert's 2,048
+channels, so rebuilding the compressed scales in every pipeline stage costs
+relatively more than on the smaller models. Two CTAs per SM hide most of it
+for both checkpoints (the original decodes 1-4% faster with it as well), and
+the preset splits the 4-token MoE calls along K
+(`B12X_W4A16_SMALL_M_SPLITK=1`). `PROFILE=glm53 CHECKPOINT=original` trades
+the extra KV cache for that decode speed.
 
 Qwen3.8-Flash-Next's C16 difference is capacity, not kernel speed. Each
 running request holds about 44K tokens of KV cache even at context zero: one

@@ -67,6 +67,23 @@ presets:
     # Spark TP2 measurements. The KV size above already leaves room for the
     # LMCache connector's GPU buffers, so CACHE_MODE=vram keeps it as is.
     kv_bytes_per_extra_slot: 67108864
+  glm53-csf-tp8:
+    profile: glm53
+    hardware: rtx-pro-6000-pcie
+    description: GLM-5.3 (744B) on eight 96-GB RTX PRO GPUs with TP8 and MTP3 from the model's built-in layer, serving the FP4-CSF checkpoint GLM-5.3-NVFP4-CSF (NVFP4 routed experts with losslessly compressed scales, about 536K KV tokens at 92% of GPU memory). B12X runs the DSA sparse attention with IndexCache, the W4A16 routed experts and the fused PCIe all-reduce + RMSNorm, and attention weights are prefetched into L2 during decode. VRAM prefix cache only.
+    options:
+      model: local-inference-lab/GLM-5.3-NVFP4-CSF
+      revision: a4d406932f2db96db8e852867c7939f448e0cd6f
+      quantization: nvfp4_csf
+      load-format: nvfp4_csf
+      tensor-parallel-size: 8
+    environment:
+      # Split the 4-token (C1 with MTP3) decode MoE along K: the FC1 phase
+      # otherwise has 128 tiles for 188 SMs, and each tile's 48-stage chain
+      # carries the rebuild of the compressed scales.
+      B12X_W4A16_SMALL_M_SPLITK: "1"
+    modes: {}
+    linked_options: {}
   glm53-tp3:
     profile: glm53-flash
     hardware: rtx-pro-6000-pcie
