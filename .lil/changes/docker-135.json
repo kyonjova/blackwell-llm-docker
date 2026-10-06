@@ -1,0 +1,20 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-135",
+  "category": "internal",
+  "summary": "DGX Spark image builds reuse a component's arm64 bundle whenever a commit with the same source tree was built, such as the merge of an already built branch",
+  "models": [
+    "all"
+  ],
+  "compatibility": "No change to images. The arm64 receipt records the commit each reused bundle was built from.",
+  "details": [
+    "The bundle cache was keyed by commit, so a merge commit with an identical tree rebuilt FlashInfer (about two hours under QEMU) and NCCL from scratch."
+  ],
+  "authors": [
+    "voipmonitor"
+  ],
+  "pull_requests": [
+    135
+  ],
+  "requires": []
+}

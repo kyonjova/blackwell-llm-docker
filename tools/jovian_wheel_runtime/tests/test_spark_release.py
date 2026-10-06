@@ -103,3 +103,18 @@ def test_the_schedule_builds_only_supported_unbuilt_releases(monkeypatch, assets
     monkeypatch.setattr(spark_release, "run", run)
     monkeypatch.setattr(spark_release, "has_arm64_support", lambda *args: supported)
     assert spark_release.select_release("local-inference-lab/blackwell-llm-docker") == expected
+
+
+def test_a_commit_with_an_already_built_tree_is_not_rebuilt(tmp_path, monkeypatch):
+    import subprocess
+
+    bundle = tmp_path / "built" / "bundle"
+    bundle.mkdir(parents=True)
+    (bundle / "manifest.json").write_text('{"source": {"commit": "' + "b" * 40 + '"}}')
+    subprocess.run("sha256sum manifest.json > SHA256SUMS", shell=True, cwd=bundle, check=True)
+    spark_release.keep_bundle(tmp_path / "cache", "flashinfer", "t" * 40, bundle)
+    monkeypatch.setattr(spark_release, "source_tree", lambda repository, commit: "t" * 40)
+    monkeypatch.setattr(spark_release, "checkout", lambda *args: pytest.fail("rebuilt"))
+    component = {"repository": "local-inference-lab/flashinfer", "source_commit": "m" * 40}
+    reused = spark_release.build_component("flashinfer", component, tmp_path / "work", tmp_path / "cache")
+    assert reused == tmp_path / "cache" / "bundles" / "flashinfer" / ("t" * 40) / "bundle"
