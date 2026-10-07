@@ -1,0 +1,16 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-140",
+  "category": "feature",
+  "summary": "GLM-5.3-Flash and Qwen3.8-Flash-Next serve the reorganized QAD checkpoints, whose vision towers are stored quantized",
+  "models": ["GLM-5.3-Flash", "Qwen3.8-Flash-Next"],
+  "compatibility": "No user action required. The presets download the new revisions once (about 178 GB and 102 GB); the decoder weights are unchanged.",
+  "details": [
+    "GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD@dec48abd and Qwen3.8-Flash-Next-NVFP4-MXFP8-CSF-QAD@dc5b8ab2 use the Hugging Face layout: config.json recipes mark the CSF expert scales, and vLLM reads the snapshot directly, without a serving directory.",
+    "Their vision towers use MXFP8 attention and W4A16 NVFP4 MLPs from the checkpoint; glm53-tp2 no longer quantizes the tower to MXFP8 while loading.",
+    "TP2 on RTX PRO 6000 Max-Q: glm53-tp2 1,844,162 KV tokens, vision checks 11/11, 220-226 tok/s on a coding prompt; qwen38-tp2 5,065,660 KV tokens, 10/11, 297-309 tok/s; no CJK leakage."
+  ],
+  "authors": ["voipmonitor"],
+  "pull_requests": [140],
+  "requires": ["vllm-1002"]
+}
