@@ -68,7 +68,7 @@ checkpoints:
       Lossless FP4-CSF container of the QAD NVFP4/MXFP8 checkpoint: the same weights as the original, with the routed-expert scales compressed losslessly. B12X reads the compressed scales and they stay compressed in GPU memory, which leaves more room for the KV cache; the download is smaller too.
     options:
       model: local-inference-lab/Qwen3.8-Flash-Next-NVFP4-MXFP8-CSF-QAD
-      revision: ac1c8d8edfb88a41df837e8ca431e0ec237c139d
+      revision: dc5b8ab2fa14bc4fecd6886273b7ebc6095662e2
       quantization: nvfp4_csf
       load-format: nvfp4_csf
   original:

@@ -1514,6 +1514,62 @@ def csf_missing_files(root: Path) -> list[str]:
     ]
 
 
+def csf_hf_layout(root: Path) -> bool:
+    """A Hugging Face-layout FP4-CSF checkpoint: config.json and the safetensors
+    index at the top, with ModelOpt layer recipes marking CSF expert scales."""
+    if (root / "manifest.json").is_file():
+        return False
+    try:
+        config = json.loads((root / "config.json").read_text())
+    except (OSError, ValueError):
+        return False
+    holder = config if "quantization_config" in config else config.get("text_config")
+    quant = (holder or {}).get("quantization_config") or {}
+    layers = quant.get("quantized_layers") or {}
+    return (root / "model.safetensors.index.json").is_file() and any(
+        isinstance(recipe, dict) and recipe.get("weight_scale_encoding") == "csf"
+        for recipe in layers.values()
+    )
+
+
+def csf_hf_shards(root: Path) -> list[str]:
+    """The checkpoint-local shard paths a Hugging Face-layout index names."""
+    index = json.loads((root / "model.safetensors.index.json").read_text())
+    shards = sorted(set(index.get("weight_map", {}).values()))
+    for name in shards:
+        path = Path(name)
+        if path.is_absolute() or ".." in path.parts:
+            raise ConfigError(f"{root} indexes a shard outside the checkpoint: {name}")
+    return shards
+
+
+def csf_hf_missing_files(root: Path) -> list[str]:
+    """Shards the index of a Hugging Face-layout checkpoint names that are absent."""
+    return [name for name in csf_hf_shards(root) if not (root / name).is_file()]
+
+
+def csf_hf_content_digest(root: Path) -> str:
+    """Identity of a Hugging Face-layout checkpoint's content.
+
+    Covers config.json, the index and every indexed shard. A shard in the Hub
+    cache is a link to a blob named by its LFS SHA-256; a shard elsewhere is
+    identified by its size.
+    """
+    digest = hashlib.sha256(b"lil-fp4-csf-hf-v1\0")
+    for name in ("config.json", "model.safetensors.index.json"):
+        digest.update((root / name).read_bytes() + b"\0")
+    for name in csf_hf_shards(root):
+        target = Path(os.path.realpath(root / name))
+        content = (
+            target.name
+            if target.parent.name == "blobs"
+            and re.fullmatch(r"[0-9a-f]{64}", target.name)
+            else str(target.stat().st_size)
+        )
+        digest.update(f"{name}\0{content}\0".encode())
+    return digest.hexdigest()
+
+
 def hub_cache() -> Path:
     """The Hugging Face hub cache directory, located as huggingface_hub does."""
     if os.environ.get("HF_HUB_CACHE"):
@@ -1527,6 +1583,11 @@ def pinned_csf_manifests() -> dict[str, dict[str, str]]:
     return read_yaml(ROOT / "checkpoints.yaml").get("manifests") or {}
 
 
+def pinned_csf_contents() -> dict[str, dict[str, str]]:
+    """Content digests of pinned Hugging Face-layout FP4-CSF revisions."""
+    return read_yaml(ROOT / "checkpoints.yaml").get("contents") or {}
+
+
 def cached_csf_twin(repository: str, revision: str | None) -> Path | None:
     """A complete cached snapshot with the pinned revision's FP4-CSF manifest.
 
@@ -1535,18 +1596,28 @@ def cached_csf_twin(repository: str, revision: str | None) -> Path | None:
     change only the model card or license files keep it, so such a snapshot
     holds exactly the pinned checkpoint.
     """
-    expected = (pinned_csf_manifests().get(repository) or {}).get(revision)
     snapshots = hub_cache() / f"models--{repository.replace('/', '--')}" / "snapshots"
-    if expected is None or not snapshots.is_dir():
-        return None
-    for snapshot in sorted(snapshots.iterdir()):
-        manifest = snapshot / "manifest.json"
-        if (
-            manifest.is_file()
-            and hashlib.sha256(manifest.read_bytes()).hexdigest() == expected
-            and not csf_missing_files(snapshot)
-        ):
-            return snapshot
+    expected = (pinned_csf_manifests().get(repository) or {}).get(revision)
+    if expected is not None and snapshots.is_dir():
+        for snapshot in sorted(snapshots.iterdir()):
+            manifest = snapshot / "manifest.json"
+            if (
+                manifest.is_file()
+                and hashlib.sha256(manifest.read_bytes()).hexdigest() == expected
+                and not csf_missing_files(snapshot)
+            ):
+                return snapshot
+    # A Hugging Face-layout revision is identified by its config, index and
+    # the LFS SHA-256 of every shard.
+    expected = (pinned_csf_contents().get(repository) or {}).get(revision)
+    if expected is not None and snapshots.is_dir():
+        for snapshot in sorted(snapshots.iterdir()):
+            if (
+                csf_hf_layout(snapshot)
+                and not csf_hf_missing_files(snapshot)
+                and csf_hf_content_digest(snapshot) == expected
+            ):
+                return snapshot
     return None
 
 
@@ -1559,7 +1630,11 @@ def csf_snapshot(repository: str, revision: str | None, method: str) -> Path:
     the pinned one serves it.
     """
     from huggingface_hub import hf_hub_download, snapshot_download
-    from huggingface_hub.errors import LocalEntryNotFoundError, OfflineModeIsEnabled
+    from huggingface_hub.errors import (
+        EntryNotFoundError,
+        LocalEntryNotFoundError,
+        OfflineModeIsEnabled,
+    )
 
     try:
         root = Path(
@@ -1571,8 +1646,26 @@ def csf_snapshot(repository: str, revision: str | None, method: str) -> Path:
         csf_format(root / "manifest.json", repository, method)
         if not csf_missing_files(root):
             return root
+    if (
+        root is not None
+        and method == "nvfp4_csf"
+        and csf_hf_layout(root)
+        and not csf_hf_missing_files(root)
+    ):
+        return root
     try:
         manifest = hf_hub_download(repository, "manifest.json", revision=revision)
+    except EntryNotFoundError:
+        # No manifest: a Hugging Face-layout checkpoint, proven by its config
+        # and index before the weights are downloaded.
+        for name in ("config.json", "model.safetensors.index.json"):
+            config = Path(hf_hub_download(repository, name, revision=revision))
+        if method != "nvfp4_csf" or not csf_hf_layout(config.parent):
+            raise ConfigError(
+                f"{repository} is not an FP4-CSF checkpoint; "
+                "use CHECKPOINT=original for other checkpoints"
+            ) from None
+        return Path(snapshot_download(repository, revision=revision))
     except (LocalEntryNotFoundError, OfflineModeIsEnabled):
         # HF_HUB_OFFLINE, or no network. Hub answers such as a missing
         # revision or denied access still fail the launch.
@@ -1607,6 +1700,9 @@ def prepare_csf_checkpoint(plan: LaunchPlan) -> None:
         root = Path(source).absolute()
     else:
         root = csf_snapshot(source, plan.values.get("revision"), method)
+    if method == "nvfp4_csf" and csf_hf_layout(root):
+        prepare_hf_layout_csf(plan, source, root)
+        return
     csf_format(root / "manifest.json", source, method)
     missing = csf_missing_files(root)
     if missing:
@@ -1648,6 +1744,34 @@ def prepare_csf_checkpoint(plan: LaunchPlan) -> None:
             spec["model"] = str(serving)
     plan.argv = make_argv(plan.values, plan.passthrough)
     print(f"Serving FP4-CSF checkpoint {root} through {serving}", file=sys.stderr)
+
+
+def prepare_hf_layout_csf(plan: LaunchPlan, source: str, root: Path) -> None:
+    """Serve a Hugging Face-layout FP4-CSF checkpoint from its snapshot.
+
+    Its config.json already names the CSF expert scales, so vLLM reads the
+    snapshot directly; no serving directory is needed.
+    """
+    missing = csf_hf_missing_files(root)
+    if missing:
+        raise ConfigError(
+            f"{source} is incomplete; missing: {', '.join(missing[:5])}"
+            + (f" and {len(missing) - 5} more" if len(missing) > 5 else "")
+        )
+    plan.values["model"] = str(root)
+    plan.origins["model"] = f"resolved:FP4-CSF snapshot of {source}"
+    plan.target_identity = {
+        "identity": csf_hf_content_digest(root),
+        "revision": "",
+    }
+    plan.values.pop("revision", None)
+    spec = plan.values.get("speculative-config")
+    if spec and spec.get("model", source) == source:
+        spec.pop("revision", None)
+        if "model" in spec:
+            spec["model"] = str(root)
+    plan.argv = make_argv(plan.values, plan.passthrough)
+    print(f"Serving FP4-CSF checkpoint {root}", file=sys.stderr)
 
 
 def resolve_draft_subfolder(plan: LaunchPlan) -> None:
