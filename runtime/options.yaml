@@ -429,6 +429,12 @@
       "OVERRIDE_GENERATION_CONFIG"
     ]
   },
+  "quantization-config": {
+    "type": "object",
+    "env": [
+      "QUANTIZATION_CONFIG"
+    ]
+  },
   "speculative-config": {
     "type": "object",
     "env": [

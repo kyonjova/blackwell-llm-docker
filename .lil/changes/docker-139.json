@@ -1,0 +1,19 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-139",
+  "category": "performance",
+  "summary": "GLM-5.3 (744B) holds 15-55% more KV tokens and decodes faster at TP8 and TP6; TP8 DCP=2 and TP6 DCP=3 now serve a 1M context without running out of memory",
+  "models": ["GLM-5.3"],
+  "compatibility": "glm53-csf-tp8 fixes the KV size at DCP > 1 and glm53-csf-tp6 at every DCP size (KV_CACHE_MEMORY_BYTES overrides it). GLM-5.3 presets turn on the DCP prefill gathers when DCP > 1 (DCP_CKV_GATHER=0 turns them off). Other models are unchanged.",
+  "details": [
+    "glm53-csf-tp8 and glm53-csf-tp6 quantize the checkpoint's BF16 attention and shared experts to MXFP8 while loading (new option quantization-config), run the MTP layer's attention and shared experts in MXFP8 and its routed experts W4A16 NVFP4 on B12X, and draft with an NVFP4 copy of the vocabulary head.",
+    "TP8 on 8x RTX PRO 6000: DCP1 616,448 KV tokens (535,808 before), decode steps/s C1 / C2 / C4 89.8 / 144.0 / 213.5 (83 / 138 / 196 before); DCP2 1,186,944 tokens (the full 1,048,576-token context), 76.2 / 123.6 / 184.6, prefill 7,771 / 7,420 tok/s at 8K / 128K.",
+    "TP6 on 6x RTX PRO 6000 (before: 94% without the recipe): DCP1 353,152 KV tokens (227,520), C1 72.7 (66.2); DCP2 667,008 (452,223), 56.8; DCP3 1,000,512 (678,336), 51.1; DCP6 2,000,779 (1,362,649), 43.8. Prefill runs 5.6-6.6K tok/s at every DCP size.",
+    "With DCP > 1, GLM-5.3 prefill gathers the full compressed KV cache and the indexer keys (vLLM #998); DCP6 and TP8 gather up to the full 1M context. A needle is found near the longest context at every size, up to 1.03M tokens at TP6 DCP6.",
+    "Presets can fix the KV cache per DCP size (kv_bytes_by_dcp). With DCP, context-sized indexer and exchange buffers grow outside vLLM's budget: at 92% of GPU memory a 1M-token prompt ran TP8 DCP2 out of memory. Every size now leaves at least 500 MiB free per GPU through a prompt at the longest context, 64 concurrent 8K prompts and four minutes of 1K-96K prompts.",
+    "TP8 DCP4 and DCP8 (27 GiB per GPU, 4.24M tokens at DCP8) prefill only about 800 tokens/s while new prompts overlap running requests."
+  ],
+  "authors": ["voipmonitor"],
+  "pull_requests": [139],
+  "requires": ["vllm-998", "vllm-999", "vllm-1000"]
+}

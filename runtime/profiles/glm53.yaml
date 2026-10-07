@@ -22,6 +22,9 @@ defaults:
   max-num-batched-tokens: 8192
   # The B12X DSA indexer and sparse MLA caches use 64-token pages.
   block-size: 64
+  # With decode context parallelism, prefill gathers the full compressed KV
+  # cache and the indexer keys on every rank (auto: on when DCP > 1).
+  dcp-ckv-gather: auto
   # Above 0.92 the first 8K-token prefills can run out of memory at TP8 once
   # the collectives allocate their buffers; 0.975 fails in the sampler.
   gpu-memory-utilization: 0.92
@@ -80,7 +83,18 @@ modes:
   off: {}
   mtp:
     draft_tokens: 3
-    config: {method: mtp, draft_sample_method: probabilistic, moe_backend: triton, attention_backend: B12X}
+    # The checkpoints keep the MTP layer in BF16; its routed experts are
+    # quantized to NVFP4 at load and run W4A16 on B12X. At TP8 that frees
+    # 1.6 GiB per GPU (+4.6% KV cache) and drafts faster, at the same
+    # acceptance (2.53 against 2.50 tokens per step).
+    config:
+      method: mtp
+      draft_sample_method: probabilistic
+      moe_backend: b12x
+      attention_backend: B12X
+      quantization_config:
+        targets: {model.layers.78.mlp.experts: nvfp4_a16}
+        strict_targets: true
 cache:
   gpu: implemented
   external: unsupported

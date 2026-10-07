@@ -124,35 +124,65 @@ prompt tokens from cache (90% of turns under 18 s), against 155 turns, 65% and
 - GLM-5.3 (744B) on eight GPUs: `PRESET=glm53-csf-tp8` (profile `glm53`)
   serves `local-inference-lab/GLM-5.3-NVFP4-CSF` with TP8 and MTP3 from the
   model's built-in layer, 64 request slots and an 8,192-token prefill budget.
-  The FP4-CSF checkpoint holds 535,808 KV tokens at 92% of GPU memory, which
-  is also the longest context (489,920 with `PROFILE=glm53
-  CHECKPOINT=original`). B12X runs the DSA sparse attention with IndexCache,
-  the W4A16 routed experts with two CTAs per SM for small batches
+  The checkpoint's BF16 attention and shared experts are quantized to MXFP8
+  while loading (`QUANTIZATION_CONFIG`), the MTP layer's routed experts run
+  W4A16 NVFP4 on B12X, and the MTP drafts with an NVFP4 copy of the
+  vocabulary head. B12X runs the DSA sparse attention with IndexCache, the
+  W4A16 routed experts with two CTAs per SM for small batches
   (`B12X_W4A16_SMALL_M_OCCUPANCY=2`) and the fused PCIe all-reduce +
   RMSNorm; attention weights are prefetched into L2 during decode. The
-  external cache is not available; the VRAM prefix cache is.
+  external cache is not available; the VRAM prefix cache is. `DCP=2` holds
+  the full 1M-token context:
+
+  | | `DCP=1` (default) | `DCP=2` |
+  | --- | --- | --- |
+  | KV cache tokens | 616,448 | 1,186,944 |
+  | Longest context | 616,384 | 1,048,576 |
+  | Decode steps/s C1 / C2 / C4 | 89.8 / 144.0 / 213.5 | 76.2 / 123.6 / 184.6 |
+  | Prefill tok/s 8K / 128K | 8,316 / 6,928 | 7,771 / 7,420 |
+
+  Measured on eight RTX PRO 6000 Workstation Edition GPUs with
+  MTP-normalized decode steps; a needle in the middle of a prompt near the
+  longest context is found at both sizes (578,836 tokens at DCP1 and
+  961,990 at DCP2). DCP1 sizes the KV cache at 92% of GPU memory. With DCP
+  the indexer and the DCP exchanges allocate context-sized buffers outside
+  that budget, and at 92% a 1M-token prompt runs DCP2 out of memory, so the
+  preset fixes the KV cache per GPU instead: 30.25 GiB at DCP2 and 27 GiB
+  at DCP4 and DCP8. A
+  1,048,448-token prompt, then 64 concurrent 8K prompts, then four minutes
+  of 1K-96K prompts leave at least 500 MiB free per GPU at those sizes.
+  `KV_CACHE_MEMORY_BYTES` overrides them. DCP8 holds 4.24M tokens, but
+  prefills only about 800 tokens/s while new prompts overlap running
+  requests, because mixed batches still exchange every head's queries over
+  PCIe.
 - GLM-5.3 (744B) on six GPUs: `PRESET=glm53-csf-tp6` serves the same FP4-CSF
-  checkpoint with TP6. The attention heads are padded to 66 and the expert
-  channels to 2112 (352 per GPU) with zero weights. It runs 16 request slots
-  and a 4,096-token prefill budget at 94% of GPU memory, with two NCCL
-  channels for the DCP groups' exchanges. Decode context parallelism trades
-  speed for context; `DCP=6` holds GLM-5.3's full 1M-token context:
+  checkpoint with TP6 and the same MXFP8 and NVFP4 drafting recipe as TP8.
+  The attention heads are padded to 66 and the expert channels to 2112 (352
+  per GPU) with zero weights. It runs 16 request slots and a 4,096-token
+  prefill budget, with two NCCL channels for the DCP groups' exchanges.
+  Decode context parallelism trades speed for context; `DCP=3` holds about
+  1M tokens and `DCP=6` GLM-5.3's full 1M-token context twice:
 
   | | `DCP=1` (default) | `DCP=2` | `DCP=3` | `DCP=6` |
   | --- | --- | --- | --- | --- |
-  | KV cache tokens | 227,520 | 452,223 | 678,336 | 1,362,649 |
-  | Decode steps/s C1 / C2 / C4 | 66.2 / 100.2 / 161.0 | 54.8 / 83.7 / 134.7 | 51.0 / 75.1 / 119.3 | 43.7 / 63.1 / 108.6 |
-  | Prefill tok/s 8K / 128K | 6,424 / 5,524 | 4,167 / 4,012 | 3,425 / 3,311 | 2,192 / 2,187 |
+  | KV cache tokens | 353,152 | 667,008 | 1,000,512 | 2,000,779 |
+  | Longest context | 353,088 | 666,880 | 1,000,320 | 1,048,576 |
+  | Decode steps/s C1 / C2 / C4 | 72.7 / 103.3 / 173.6 | 56.8 / 83.9 / 138.3 | 51.1 / 73.8 / 123.0 | 43.8 / 62.7 / 112.2 |
+  | Prefill tok/s 8K / 128K | 6,566 / 5,699 | 6,081 / 5,693 | 6,097 / 5,629 | 6,062 / 5,579 |
 
   Measured on six RTX PRO 6000 Workstation Edition GPUs with MTP-normalized
-  decode steps; a needle placed at 10%, 50% and 90% of a prompt filling 95%
-  of the KV cache is found in all three cases at every DCP size (at DCP6 in a
-  1.01M-token prompt, which takes about eight minutes to prefill). Of these
-  sizes the B12X PCIe all-to-all serves DCP2 only: DCP3 uses vLLM's generic
-  all-to-all, and DCP6 exchanges by all-gather plus reduce-scatter
-  (`DCP_COMM_BACKEND=ag_rs`, derived), which prefills it seven times faster.
-  `glm53-csf-tp8` decodes C1 83, C2 138, C4 196 on eight. TP5 does not fit:
-  its weights alone take about 86 GiB per GPU.
+  decode steps; a needle in the middle of a prompt near each size's longest
+  context is found at every DCP size (at DCP6 in a 1.03M-token prompt; a
+  1M-token prompt prefills in about 5.6 minutes there). The KV cache is
+  fixed per GPU (18 GiB at DCP1, 17 GiB with DCP): a prompt at the longest
+  context, then 64 concurrent 8K prompts, then four minutes of 1K-96K
+  prompts leave at least 677 MiB free per GPU at every DCP size.
+  `KV_CACHE_MEMORY_BYTES` overrides it. Of these sizes the B12X PCIe
+  all-to-all serves DCP2 only: DCP3 uses vLLM's generic all-to-all, and DCP6
+  exchanges by all-gather plus reduce-scatter (`DCP_COMM_BACKEND=ag_rs`,
+  derived). `glm53-csf-tp8` decodes C1 90, C2 144, C4 214 on eight. TP5 does
+  not fit a useful context: even with MXFP8 its weights take about 83 GiB per
+  GPU, which leaves room for well under 1M tokens at DCP5.
 - MiMo-V2.6-Flash on two GPUs: `PRESET=mimo26-flash-tp2` serves
   `XiaomiMiMo/MiMo-V2.6-Flash-RL` (FP8 weights, text, images and audio) on
   b12x with the checkpoint's own DFlash drafter: seven draft tokens, adaptive

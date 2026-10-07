@@ -173,7 +173,7 @@ def deployment_presets() -> dict:
             "linked_options",
         }
         kv_fields = {"kv_bytes_per_extra_slot", "kv_bytes_for_external_cache"}
-        optional = kv_fields | {"vllm_fallback"}
+        optional = kv_fields | {"vllm_fallback", "kv_bytes_by_dcp"}
         if not required <= set(item) <= required | optional:
             raise ConfigError(f"Invalid deployment preset fields: {name}")
         fallback = item.get("vllm_fallback")
@@ -192,6 +192,16 @@ def deployment_presets() -> dict:
             value = item.get(field, 0)
             if type(value) is not int or value < 0:
                 raise ConfigError(f"Invalid preset {field}: {name}")
+        by_dcp = item.get("kv_bytes_by_dcp", {})
+        if not isinstance(by_dcp, dict) or not all(
+            isinstance(size, str)
+            and re.fullmatch(r"[1-9][0-9]*", size)
+            and int(size) > 1
+            and type(amount) is int
+            and amount > 0
+            for size, amount in by_dcp.items()
+        ):
+            raise ConfigError(f"Invalid preset kv_bytes_by_dcp: {name}")
         for key in ("profile", "hardware"):
             if not isinstance(item[key], str) or not re.fullmatch(
                 r"[a-z][a-z0-9-]*", item[key]
@@ -891,6 +901,29 @@ def resolve(
                 values["kv-cache-memory-bytes"] - sum(size for size, _ in reductions),
                 "; ".join(reason for _, reason in reductions),
             )
+        # With DCP > 1, context-sized indexer and DCP exchange buffers grow
+        # outside vLLM's memory budget, so a preset can carry a KV size per
+        # DCP group, qualified at the longest prompt plus a full batch of
+        # concurrent prefills. An unlisted group size takes the next larger
+        # group's size, which leaves more room.
+        by_dcp = {
+            int(size): amount
+            for size, amount in deployment.get("kv_bytes_by_dcp", {}).items()
+        }
+        dcp = values.get("decode-context-parallel-size", 1)
+        qualified = [size for size in sorted(by_dcp) if size >= dcp]
+        if (
+            dcp > 1
+            and qualified
+            and origins.get("kv-cache-memory-bytes", "preset:").startswith(
+                ("preset:", "model:", "common:")
+            )
+        ):
+            derive(
+                "kv-cache-memory-bytes",
+                by_dcp[qualified[0]],
+                f"KV size qualified at DCP={qualified[0]}",
+            )
 
     # A repository-specific code revision must not leak to an operator's model.
     if (
@@ -923,6 +956,33 @@ def resolve(
             values["max-num-batched-tokens"] // 2,
             "MiMo target share of the step",
         )
+
+    if identifier == "glm53":
+        # DCP prefill gathers the full compressed KV cache and the indexer
+        # keys on every rank instead of exchanging partial attention: about
+        # 1.4x (DCP2) to 2.6x (DCP6) the prefill speed at the same decode.
+        gather = values["dcp-ckv-gather"]
+        enabled = (
+            str(int(values["decode-context-parallel-size"] > 1))
+            if gather == "auto"
+            else gather
+        )
+        derived = {
+            "VLLM_B12X_MLA_CKV_GATHER": enabled,
+            "VLLM_DCP_INDEXER_KEY_GATHER": enabled,
+        }
+        if enabled == "1" and values["decode-context-parallel-size"] == 6:
+            # DCP6 holds the full 1M context; past the default 524,288-token
+            # gather cap its all-gather/reduce-scatter fallback prefills at
+            # about 2,000 tokens/s (a 1M prompt: 360 s, 329 s with this cap,
+            # for 0.9% of the KV cache). At DCP2/3 the cap gains nothing.
+            derived["VLLM_B12X_MLA_CKV_GATHER_MAX_TOKENS"] = "1048576"
+        for name, value in derived.items():
+            if name in explicit_env or (
+                vllm_environment is not None and name not in vllm_environment
+            ):
+                continue
+            set_env(name, value, "derived:DCP CKV policy")
 
     if (
         identifier == "glm53"

@@ -497,6 +497,12 @@ options:
       parameters still take precedence.
     why: GLM, DS4, DS4.1 and MiMo use temperature 1.0 and top_p 0.95 from their source launchers; for
       MiMo top_p 1.0 makes the model ramble.
+  quantization-config:
+    group: model
+    summary: Native vLLM online quantization as JSON. Its targets map module-name patterns to schemes such
+      as mxfp8, quantized from the checkpoint's BF16 weights while loading.
+    why: The GLM-5.3 (744B) TP8 preset quantizes the BF16 attention and shared-expert weights to MXFP8,
+      which frees about 1.6 GiB per GPU for the KV cache and decodes faster.
   speculative-config:
     group: speculation
     summary: Native vLLM speculative decoding configuration as JSON. Normally derived by the launcher
@@ -547,11 +553,11 @@ options:
     why: GLM uses auto, which makes the recurrent page equal to the target page.
   dcp-ckv-gather:
     group: kernels
-    summary: Gathers DCP-sharded compressed KV records before B12X sparse-MLA prefill for GLM-5.3-Flash,
-      which avoids query replication and the per-rank LSE combine. auto turns it on when decode context
-      parallelism is above 1.
-    why: GLM uses auto, following the source cache recipe, so the gather runs only on DCP deployments
-      such as the GLM TP2/DCP2 presets.
+    summary: Gathers DCP-sharded compressed KV records before B12X sparse-MLA prefill for GLM-5.3-Flash
+      and GLM-5.3 (744B, together with its DSA indexer keys), which avoids query replication and the
+      per-rank LSE combine. auto turns it on when decode context parallelism is above 1.
+    why: Both GLM profiles use auto, so the gather runs only on DCP deployments such as the GLM TP2/DCP2
+      and GLM-5.3 TP6 DCP presets.
   draft-model:
     group: speculation
     summary: Overrides the checkpoint that provides the draft model for speculative decoding. By default
