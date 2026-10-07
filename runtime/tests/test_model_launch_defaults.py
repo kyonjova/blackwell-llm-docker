@@ -161,6 +161,18 @@ def test_glm53_tp8_dcp_takes_its_qualified_kv_size(dcp, qualified):
     assert plan.values["kv-cache-memory-bytes"] == by_dcp[str(qualified)]
 
 
+@pytest.mark.parametrize("dcp", ["1", "2", "3", "6"])
+def test_glm53_tp6_takes_its_qualified_kv_size(dcp):
+    preset = launcher.deployment_presets()["glm53-csf-tp6"]
+    expected = (
+        preset["options"]["kv-cache-memory-bytes"]
+        if dcp == "1"
+        else preset["kv_bytes_by_dcp"][dcp]
+    )
+    plan = resolve("glm53", env={"DCP": dcp}, preset="glm53-csf-tp6")
+    assert plan.values["kv-cache-memory-bytes"] == expected
+
+
 def test_glm53_tp8_dcp1_sizes_kv_from_memory_utilization():
     plan = resolve("glm53", env={}, preset="glm53-csf-tp8")
     assert "kv-cache-memory-bytes" not in plan.values
