@@ -14,7 +14,7 @@ from runtime.packaging import audit_image_metadata, owned_environment, payload_s
 
 TP2_KV = 7650410496
 QAD_CHECKPOINT = "local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD"
-QAD_REVISION = "fd660d51d1fc3caae26a4bf31b7451475bbb9bdc"
+QAD_REVISION = "dec48abd33efa73c3bb7c95b74eee10cad34f9be"
 
 
 def tp2(env=None, **kwargs):
