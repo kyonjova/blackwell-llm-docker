@@ -1532,14 +1532,42 @@ def csf_hf_layout(root: Path) -> bool:
     )
 
 
+def csf_hf_shards(root: Path) -> list[str]:
+    """The checkpoint-local shard paths a Hugging Face-layout index names."""
+    index = json.loads((root / "model.safetensors.index.json").read_text())
+    shards = sorted(set(index.get("weight_map", {}).values()))
+    for name in shards:
+        path = Path(name)
+        if path.is_absolute() or ".." in path.parts:
+            raise ConfigError(f"{root} indexes a shard outside the checkpoint: {name}")
+    return shards
+
+
 def csf_hf_missing_files(root: Path) -> list[str]:
     """Shards the index of a Hugging Face-layout checkpoint names that are absent."""
-    index = json.loads((root / "model.safetensors.index.json").read_text())
-    return sorted(
-        name
-        for name in set(index.get("weight_map", {}).values())
-        if not (root / name).is_file()
-    )
+    return [name for name in csf_hf_shards(root) if not (root / name).is_file()]
+
+
+def csf_hf_content_digest(root: Path) -> str:
+    """Identity of a Hugging Face-layout checkpoint's content.
+
+    Covers config.json, the index and every indexed shard. A shard in the Hub
+    cache is a link to a blob named by its LFS SHA-256; a shard elsewhere is
+    identified by its size.
+    """
+    digest = hashlib.sha256(b"lil-fp4-csf-hf-v1\0")
+    for name in ("config.json", "model.safetensors.index.json"):
+        digest.update((root / name).read_bytes() + b"\0")
+    for name in csf_hf_shards(root):
+        target = Path(os.path.realpath(root / name))
+        content = (
+            target.name
+            if target.parent.name == "blobs"
+            and re.fullmatch(r"[0-9a-f]{64}", target.name)
+            else str(target.stat().st_size)
+        )
+        digest.update(f"{name}\0{content}\0".encode())
+    return digest.hexdigest()
 
 
 def hub_cache() -> Path:
@@ -1555,9 +1583,9 @@ def pinned_csf_manifests() -> dict[str, dict[str, str]]:
     return read_yaml(ROOT / "checkpoints.yaml").get("manifests") or {}
 
 
-def pinned_csf_indexes() -> dict[str, dict[str, str]]:
-    """Safetensors index SHA-256 of pinned Hugging Face-layout FP4-CSF revisions."""
-    return read_yaml(ROOT / "checkpoints.yaml").get("indexes") or {}
+def pinned_csf_contents() -> dict[str, dict[str, str]]:
+    """Content digests of pinned Hugging Face-layout FP4-CSF revisions."""
+    return read_yaml(ROOT / "checkpoints.yaml").get("contents") or {}
 
 
 def cached_csf_twin(repository: str, revision: str | None) -> Path | None:
@@ -1579,17 +1607,15 @@ def cached_csf_twin(repository: str, revision: str | None) -> Path | None:
                 and not csf_missing_files(snapshot)
             ):
                 return snapshot
-    # A Hugging Face-layout revision is identified by its index, which names
-    # every shard; shards are content-addressed by their LFS hashes.
-    expected = (pinned_csf_indexes().get(repository) or {}).get(revision)
+    # A Hugging Face-layout revision is identified by its config, index and
+    # the LFS SHA-256 of every shard.
+    expected = (pinned_csf_contents().get(repository) or {}).get(revision)
     if expected is not None and snapshots.is_dir():
         for snapshot in sorted(snapshots.iterdir()):
-            index = snapshot / "model.safetensors.index.json"
             if (
-                index.is_file()
-                and hashlib.sha256(index.read_bytes()).hexdigest() == expected
-                and csf_hf_layout(snapshot)
+                csf_hf_layout(snapshot)
                 and not csf_hf_missing_files(snapshot)
+                and csf_hf_content_digest(snapshot) == expected
             ):
                 return snapshot
     return None
@@ -1734,15 +1760,8 @@ def prepare_hf_layout_csf(plan: LaunchPlan, source: str, root: Path) -> None:
         )
     plan.values["model"] = str(root)
     plan.origins["model"] = f"resolved:FP4-CSF snapshot of {source}"
-    # The index names every stored tensor's shard and the config every
-    # recipe, so together they identify the checkpoint wherever it lives.
     plan.target_identity = {
-        "identity": hashlib.sha256(
-            b"lil-fp4-csf-hf-v1\0"
-            + (root / "model.safetensors.index.json").read_bytes()
-            + b"\0"
-            + (root / "config.json").read_bytes()
-        ).hexdigest(),
+        "identity": csf_hf_content_digest(root),
         "revision": "",
     }
     plan.values.pop("revision", None)

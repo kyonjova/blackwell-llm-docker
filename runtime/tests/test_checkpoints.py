@@ -690,7 +690,7 @@ def test_every_pinned_csf_revision_records_its_manifest():
     records = {
         repository: {
             **launcher.pinned_csf_manifests().get(repository, {}),
-            **launcher.pinned_csf_indexes().get(repository, {}),
+            **launcher.pinned_csf_contents().get(repository, {}),
         }
         for repository, _ in _pinned_revisions()
     }
@@ -850,3 +850,29 @@ def test_hf_layout_csf_checkpoint_needs_every_indexed_shard(tmp_path, monkeypatc
 
     with pytest.raises(hub["missing"], match="HF_HUB_OFFLINE"):
         prepare_csf_checkpoint(plan)
+
+
+def test_hf_layout_index_cannot_name_a_shard_outside_the_checkpoint(tmp_path):
+    root = _hf_layout_checkpoint(tmp_path / "snapshot")
+    index = json.loads((root / "model.safetensors.index.json").read_text())
+    index["weight_map"]["escape"] = "../outside.safetensors"
+    (tmp_path / "outside.safetensors").write_bytes(b"0")
+    (root / "model.safetensors.index.json").write_text(json.dumps(index))
+
+    with pytest.raises(ConfigError, match="outside the checkpoint"):
+        launcher.csf_hf_missing_files(root)
+
+
+def test_hf_layout_identity_covers_the_shard_contents(tmp_path):
+    """Two snapshots with one index but different shard blobs differ."""
+    digests = set()
+    for blob in ("a" * 64, "b" * 64):
+        root = _hf_layout_checkpoint(tmp_path / blob[0] / "snapshot")
+        shard = root / "tensors" / "model-00001-of-00001.safetensors"
+        blobs = tmp_path / blob[0] / "blobs"
+        blobs.mkdir()
+        (blobs / blob).write_bytes(shard.read_bytes())
+        shard.unlink()
+        shard.symlink_to(blobs / blob)
+        digests.add(launcher.csf_hf_content_digest(root))
+    assert len(digests) == 2
