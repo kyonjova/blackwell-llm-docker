@@ -188,7 +188,9 @@ def test_glm53_explicit_kv_size_wins_over_the_dcp_table():
     assert plan.values["kv-cache-memory-bytes"] == 1073741824
 
 
-@pytest.mark.parametrize("table", [{"1": 1024}, {"2": 0}, {"two": 1024}, [1024]])
+@pytest.mark.parametrize(
+    "table", [{"1": 1024}, {"2": 0}, {"two": 1024}, {2: 1024}, [1024]]
+)
 def test_preset_kv_table_must_map_dcp_groups_to_bytes(monkeypatch, table):
     data = launcher.read_yaml(launcher.ROOT / "presets.yaml")
     data["presets"]["glm53-csf-tp8"]["kv_bytes_by_dcp"] = table

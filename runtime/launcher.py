@@ -194,7 +194,8 @@ def deployment_presets() -> dict:
                 raise ConfigError(f"Invalid preset {field}: {name}")
         by_dcp = item.get("kv_bytes_by_dcp", {})
         if not isinstance(by_dcp, dict) or not all(
-            re.fullmatch(r"[1-9][0-9]*", size)
+            isinstance(size, str)
+            and re.fullmatch(r"[1-9][0-9]*", size)
             and int(size) > 1
             and type(amount) is int
             and amount > 0
