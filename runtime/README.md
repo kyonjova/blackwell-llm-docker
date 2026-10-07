@@ -65,8 +65,8 @@ activations and FP32 router weights (W4A16) and prefill with NVFP4 activations
 generation keeps the precise path. It runs TP2/DCP2, MTP3 with B12X drafter
 experts, eight request slots, a 4,096-token prefill budget and a 7,296 MiB KV
 cache per GPU (about 1.84M tokens). The input embedding table lives in host
-RAM, the vision tower is quantized to MXFP8 while loading (the checkpoint keeps
-it in BF16) and the TP, DCP and EP groups share one NCCL communicator.
+RAM, the checkpoint stores the vision tower with MXFP8 attention and W4A16
+NVFP4 MLPs, and the TP, DCP and EP groups share one NCCL communicator.
 
 The prefix cache also lives in host RAM. LMCache keeps up to 64 GiB of
 conversation KV and recurrent checkpoints, so a conversation that left the GPU

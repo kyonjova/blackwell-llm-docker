@@ -384,8 +384,6 @@ def test_tp2_preset_serves_the_stored_qad_checkpoint():
         "VLLM_B12X_MLA_CKV_GATHER": "1",
         "VLLM_B12X_MLA_CKV_GATHER_MAX_TOKENS": "65536",
         "VLLM_GLM53_EMBED_HOST": "1",
-        # The checkpoint keeps the vision tower in BF16.
-        "VLLM_GLM53_VISION_MXFP8": "1",
         "VLLM_SHARE_PYNCCL_COMMS": "1",
         "VLLM_B12X_MOE_FP4_FORCE_A16": "1",
         "B12X_W4A16_FP32_TOPK_WEIGHTS": "1",
