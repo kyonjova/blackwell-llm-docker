@@ -961,6 +961,9 @@ def resolve(
         # DCP prefill gathers the full compressed KV cache and the indexer
         # keys on every rank instead of exchanging partial attention: about
         # 1.4x (DCP2) to 2.6x (DCP6) the prefill speed at the same decode.
+        # Mixed batches gather for their prefill rows too, so a prompt that
+        # arrives while others decode prefills 1.2x (DCP2) to 17x (DCP8)
+        # faster.
         gather = values["dcp-ckv-gather"]
         enabled = (
             str(int(values["decode-context-parallel-size"] > 1))
@@ -970,6 +973,7 @@ def resolve(
         derived = {
             "VLLM_B12X_MLA_CKV_GATHER": enabled,
             "VLLM_DCP_INDEXER_KEY_GATHER": enabled,
+            "VLLM_B12X_MLA_CKV_GATHER_MIXED": enabled,
         }
         if enabled == "1" and values["decode-context-parallel-size"] == 6:
             # DCP6 holds the full 1M context; past the default 524,288-token
