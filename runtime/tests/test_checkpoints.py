@@ -835,12 +835,18 @@ def test_hf_layout_csf_checkpoint_is_served_from_its_snapshot(tmp_path, monkeypa
 
 
 def test_hf_layout_csf_checkpoint_needs_every_indexed_shard(tmp_path, monkeypatch):
+    """An incomplete cached snapshot is not served; offline, the launch fails."""
     monkeypatch.setattr(launcher, "CSF_SERVING_ROOT", tmp_path / "serving")
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hub"))
     root = _hf_layout_checkpoint(tmp_path / "snapshot")
     (root / "tensors" / "model-00001-of-00001.safetensors").unlink()
-    _fake_hub(monkeypatch, lambda *a, **kw: str(root))
+    hub = {}
+
+    def offline(*args, **kwargs):
+        raise hub["missing"]("HF_HUB_OFFLINE")
+
+    hub["missing"] = _fake_hub(monkeypatch, lambda *a, **kw: str(root), offline)
     plan = resolve("glm53-flash", "rtx-pro-6000-pcie", env={})
 
-    with pytest.raises(Exception):
+    with pytest.raises(hub["missing"], match="HF_HUB_OFFLINE"):
         prepare_csf_checkpoint(plan)
-    assert plan.values["model"] != str(root)
