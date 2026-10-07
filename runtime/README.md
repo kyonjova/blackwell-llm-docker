@@ -151,10 +151,12 @@ prompt tokens from cache (90% of turns under 18 s), against 155 turns, 65% and
   at DCP4 and DCP8. A
   1,048,448-token prompt, then 64 concurrent 8K prompts, then four minutes
   of 1K-96K prompts leave at least 500 MiB free per GPU at those sizes.
-  `KV_CACHE_MEMORY_BYTES` overrides them. DCP8 holds 4.24M tokens, but
-  prefills only about 800 tokens/s while new prompts overlap running
-  requests, because mixed batches still exchange every head's queries over
-  PCIe.
+  `KV_CACHE_MEMORY_BYTES` overrides them. DCP8 holds 4.24M tokens. Batches
+  that mix a prefill chunk with decode rows gather the cache for their
+  prefill rows as well (`VLLM_B12X_MLA_CKV_GATHER_MIXED`, derived): a
+  128K-token prompt arriving while 16 requests decode starts after 18.7 s at
+  DCP2 and 22.9 s at DCP8 (385 s at DCP8 when such batches exchanged every
+  head's queries instead).
 - GLM-5.3 (744B) on six GPUs: `PRESET=glm53-csf-tp6` serves the same FP4-CSF
   checkpoint with TP6 and the same MXFP8 and NVFP4 drafting recipe as TP8.
   The attention heads are padded to 66 and the expert channels to 2112 (352

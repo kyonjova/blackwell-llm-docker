@@ -113,7 +113,11 @@ def test_glm53_explicit_dcp_backend_is_kept():
 def _gather_env(plan):
     return {
         name: plan.environment.get(name)
-        for name in ("VLLM_B12X_MLA_CKV_GATHER", "VLLM_DCP_INDEXER_KEY_GATHER")
+        for name in (
+            "VLLM_B12X_MLA_CKV_GATHER",
+            "VLLM_DCP_INDEXER_KEY_GATHER",
+            "VLLM_B12X_MLA_CKV_GATHER_MIXED",
+        )
     }
 
 
@@ -125,6 +129,7 @@ def test_glm53_dcp_prefill_gathers_the_full_ckv_cache(dcp, enabled):
     assert _gather_env(plan) == {
         "VLLM_B12X_MLA_CKV_GATHER": enabled,
         "VLLM_DCP_INDEXER_KEY_GATHER": enabled,
+        "VLLM_B12X_MLA_CKV_GATHER_MIXED": enabled,
     }
 
 
@@ -145,6 +150,7 @@ def test_glm53_dcp_key_gather_needs_a_vllm_that_defines_it():
     assert _gather_env(plan) == {
         "VLLM_B12X_MLA_CKV_GATHER": "1",
         "VLLM_DCP_INDEXER_KEY_GATHER": None,
+        "VLLM_B12X_MLA_CKV_GATHER_MIXED": None,
     }
 
 

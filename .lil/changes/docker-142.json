@@ -1,0 +1,15 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-142",
+  "category": "performance",
+  "summary": "GLM-5.3 (744B) with DCP prefills a prompt that arrives while other requests decode up to 17x faster",
+  "models": ["GLM-5.3"],
+  "compatibility": "No user action required. DCP_CKV_GATHER=0 turns the DCP gathers off, this one included.",
+  "details": [
+    "With DCP > 1 the launcher also sets VLLM_B12X_MLA_CKV_GATHER_MIXED (vLLM #1004): batches that mix a prefill chunk with decode rows gather the compressed KV cache for their prefill rows instead of exchanging every head's queries.",
+    "TTFT of a 128K-token prompt arriving while 16 requests decode: TP8 DCP8 385.5 -> 22.9 s, TP8 DCP2 22.2 -> 18.7 s, TP6 DCP3 42.6 -> 31.6 s, TP6 DCP6 71.7 -> 32.6 s. 64 concurrent 8K prompts finish in 102 s instead of 1,333 s at TP8 DCP8, so TP8 DCP4 and DCP8 no longer prefill at about 800 tokens/s under load."
+  ],
+  "authors": ["voipmonitor"],
+  "pull_requests": [142],
+  "requires": ["vllm-1004"]
+}

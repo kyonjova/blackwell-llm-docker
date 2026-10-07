@@ -1053,6 +1053,12 @@ environment:
       replication and the per-rank LSE combine. Off by default in vLLM.
     why: The launcher derives it for GLM from the dcp-ckv-gather option; with auto it is 1 when decode-context-parallel-size
       is above 1 and 0 otherwise.
+  VLLM_B12X_MLA_CKV_GATHER_MIXED:
+    group: communication
+    summary: In batches that mix prefill and decode rows, gathers the DCP-sharded compressed KV records for the
+      prefill rows only, while the decode rows keep the query exchange and LSE combine. Off by default in vLLM.
+    why: The launcher derives it for GLM together with VLLM_B12X_MLA_CKV_GATHER. Without it, a prompt that arrives
+      while other requests decode exchanges every head's queries and prefills up to 17 times slower (DCP8).
   VLLM_B12X_MLA_CKV_GATHER_MAX_TOKENS:
     group: communication
     summary: Upper token bound for the DCP compressed-KV gather path in b12x sparse-MLA prefill (vLLM
