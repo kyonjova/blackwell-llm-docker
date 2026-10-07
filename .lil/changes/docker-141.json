@@ -1,0 +1,14 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-141",
+  "category": "internal",
+  "summary": "The revision help and the runtime README name the GLM-5.3-Flash QAD revision glm53-tp2 now pins",
+  "models": ["GLM-5.3-Flash"],
+  "compatibility": "Documentation only.",
+  "details": [
+    "parameter-docs.yaml and runtime/README.md said glm53-tp2 pins fd660d51; since docker-140 it pins dec48abd."
+  ],
+  "authors": ["voipmonitor"],
+  "pull_requests": [141],
+  "requires": []
+}
