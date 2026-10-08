@@ -158,11 +158,13 @@ def test_one_pending_channel_does_not_block_the_other(monkeypatch, tmp_path, pen
         )
 
 
-def test_canonical_waits_for_a_vllm_that_requires_flashinfer_with_b12x(
-    monkeypatch, tmp_path
-):
-    """Canonical vLLM still pins FlashInfer 0.6.18 and the standalone B12X
-    wheel; its publication stays paused while the beta builds."""
+def test_a_paused_channel_is_skipped(monkeypatch, tmp_path):
+    """A paused channel is validated and logged but not resolved, while the
+    other channel keeps publishing."""
+    config = json.loads(CONFIG.read_text())
+    config["channels"]["karmic-kraken"]["paused"] = "waiting for a component"
+    path = tmp_path / "community-channel.json"
+    path.write_text(json.dumps(config))
     resolved = []
 
     def resolve(config, output, name):
@@ -171,10 +173,9 @@ def test_canonical_waits_for_a_vllm_that_requires_flashinfer_with_b12x(
 
     monkeypatch.setattr(channel, "resolve", resolve)
     monkeypatch.setattr(channel, "completed_publication", lambda repo, assembly: False)
-    matrix = channel.resolve_matrix(CONFIG, tmp_path, "repo")
+    matrix = channel.resolve_matrix(path, tmp_path / "assemblies", "repo")
     assert resolved == ["karmic-kraken-beta"]
     assert [row["channel"] for row in matrix["include"]] == ["karmic-kraken-beta"]
-    assert json.loads(CONFIG.read_text())["channels"]["karmic-kraken"]["paused"]
 
 
 @pytest.mark.parametrize("reason", ["", "  ", None, 1, ["reason"]])
