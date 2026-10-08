@@ -2,6 +2,7 @@
 
 import pytest
 
+from runtime import launcher
 from runtime.launcher import resolve
 
 
@@ -107,3 +108,119 @@ def test_glm53_explicit_dcp_backend_is_kept():
         "glm53", env={"DCP": "6", "DCP_COMM_BACKEND": "a2a"}, preset="glm53-csf-tp6"
     )
     assert _dcp_backend(plan) == "a2a"
+
+
+def _gather_env(plan):
+    return {
+        name: plan.environment.get(name)
+        for name in (
+            "VLLM_B12X_MLA_CKV_GATHER",
+            "VLLM_DCP_INDEXER_KEY_GATHER",
+            "VLLM_B12X_MLA_CKV_GATHER_MIXED",
+        )
+    }
+
+
+@pytest.mark.parametrize(
+    "dcp,enabled", [("1", "0"), ("2", "1"), ("3", "1"), ("6", "1")]
+)
+def test_glm53_dcp_prefill_gathers_the_full_ckv_cache(dcp, enabled):
+    plan = resolve("glm53", env={"DCP": dcp}, preset="glm53-csf-tp6")
+    assert _gather_env(plan) == {
+        "VLLM_B12X_MLA_CKV_GATHER": enabled,
+        "VLLM_DCP_INDEXER_KEY_GATHER": enabled,
+        "VLLM_B12X_MLA_CKV_GATHER_MIXED": enabled,
+    }
+
+
+def test_glm53_dcp_ckv_gather_can_be_turned_off():
+    plan = resolve(
+        "glm53", env={"DCP": "2", "DCP_CKV_GATHER": "0"}, preset="glm53-csf-tp6"
+    )
+    assert set(_gather_env(plan).values()) == {"0"}
+
+
+def test_glm53_dcp_key_gather_needs_a_vllm_that_defines_it():
+    plan = resolve(
+        "glm53",
+        env={"DCP": "2"},
+        preset="glm53-csf-tp6",
+        vllm_environment=frozenset({"VLLM_B12X_MLA_CKV_GATHER"}),
+    )
+    assert _gather_env(plan) == {
+        "VLLM_B12X_MLA_CKV_GATHER": "1",
+        "VLLM_DCP_INDEXER_KEY_GATHER": None,
+        "VLLM_B12X_MLA_CKV_GATHER_MIXED": None,
+    }
+
+
+@pytest.mark.parametrize("dcp,cap", [("2", None), ("3", None), ("6", "1048576")])
+def test_glm53_dcp6_gathers_up_to_the_full_context(dcp, cap):
+    plan = resolve("glm53", env={"DCP": dcp}, preset="glm53-csf-tp6")
+    assert plan.environment.get("VLLM_B12X_MLA_CKV_GATHER_MAX_TOKENS") == cap
+
+
+@pytest.mark.parametrize("dcp,qualified", [("2", 2), ("4", 8), ("8", 8)])
+def test_glm53_tp8_dcp_takes_its_qualified_kv_size(dcp, qualified):
+    by_dcp = launcher.deployment_presets()["glm53-csf-tp8"]["kv_bytes_by_dcp"]
+    plan = resolve("glm53", env={"DCP": dcp}, preset="glm53-csf-tp8")
+    assert plan.values["kv-cache-memory-bytes"] == by_dcp[str(qualified)]
+
+
+@pytest.mark.parametrize("dcp", ["1", "2", "3", "6"])
+def test_glm53_tp6_takes_its_qualified_kv_size(dcp):
+    preset = launcher.deployment_presets()["glm53-csf-tp6"]
+    expected = (
+        preset["options"]["kv-cache-memory-bytes"]
+        if dcp == "1"
+        else preset["kv_bytes_by_dcp"][dcp]
+    )
+    plan = resolve("glm53", env={"DCP": dcp}, preset="glm53-csf-tp6")
+    assert plan.values["kv-cache-memory-bytes"] == expected
+
+
+def test_glm53_tp8_dcp1_sizes_kv_from_memory_utilization():
+    plan = resolve("glm53", env={}, preset="glm53-csf-tp8")
+    assert "kv-cache-memory-bytes" not in plan.values
+    assert plan.values["gpu-memory-utilization"] == 0.92
+
+
+def test_glm53_explicit_kv_size_wins_over_the_dcp_table():
+    plan = resolve(
+        "glm53",
+        env={"DCP": "2", "KV_CACHE_MEMORY_BYTES": "1073741824"},
+        preset="glm53-csf-tp8",
+    )
+    assert plan.values["kv-cache-memory-bytes"] == 1073741824
+
+
+@pytest.mark.parametrize(
+    "table", [{"1": 1024}, {"2": 0}, {"two": 1024}, {2: 1024}, [1024]]
+)
+def test_preset_kv_table_must_map_dcp_groups_to_bytes(monkeypatch, table):
+    data = launcher.read_yaml(launcher.ROOT / "presets.yaml")
+    data["presets"]["glm53-csf-tp8"]["kv_bytes_by_dcp"] = table
+    monkeypatch.setattr(launcher, "read_yaml", lambda path: data)
+    with pytest.raises(launcher.ConfigError, match="kv_bytes_by_dcp"):
+        launcher.deployment_presets()
+
+
+@pytest.mark.parametrize("preset", [None, "glm53-csf-tp8", "glm53-csf-tp6"])
+def test_glm53_strict_draft_targets_are_exact_names(preset):
+    # vLLM rejects strict_targets together with wildcard target patterns.
+    kwargs = {"preset": preset} if preset else {}
+    config = resolve("glm53", env={}, **kwargs).values["speculative-config"]
+    quantization = config["quantization_config"]
+    if quantization.get("strict_targets"):
+        assert not any(
+            char in target for target in quantization["targets"] for char in "*?["
+        )
+
+
+def test_glm53_mtp_experts_run_nvfp4_on_b12x():
+    config = resolve("glm53", env={}).values["speculative-config"]
+    assert config["moe_backend"] == "b12x"
+    assert config["quantization_config"] == {
+        "targets": {"model.layers.78.mlp.experts": "nvfp4_a16"},
+        "strict_targets": True,
+    }

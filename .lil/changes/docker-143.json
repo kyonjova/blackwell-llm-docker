@@ -1,0 +1,15 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-143",
+  "category": "feature",
+  "summary": "The bundled llm-inference-bench v0.7.9 measures the TTFT of a long prompt that arrives while other requests decode",
+  "models": ["all"],
+  "compatibility": "No change to serving. lil-bench's standard run is unchanged; the new phase runs only with --mixed-prefill-contexts.",
+  "details": [
+    "llm_decode_bench.py --mixed-only --mixed-prefill-contexts 32k,128k measures, per context, the TTFT of a prompt on an idle server and of the same-size prompt arriving into --mixed-decode-streams (8) decoding streams, and the streams' decode tok/s before, during and after that prefill.",
+    "Contexts that exceed the model length, the KV budget or the server's running-request limit are skipped with the reason."
+  ],
+  "authors": ["voipmonitor"],
+  "pull_requests": [143],
+  "requires": []
+}

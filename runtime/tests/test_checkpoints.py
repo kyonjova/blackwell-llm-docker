@@ -215,6 +215,9 @@ def _fake_hub(monkeypatch, snapshot_download, hf_hub_download=None):
     class OfflineModeIsEnabled(ConnectionError):
         pass
 
+    class EntryNotFoundError(Exception):
+        pass
+
     def no_manifest_download(*args, **kwargs):
         raise AssertionError("unexpected manifest download")
 
@@ -222,6 +225,7 @@ def _fake_hub(monkeypatch, snapshot_download, hf_hub_download=None):
     errors = types.ModuleType("huggingface_hub.errors")
     errors.LocalEntryNotFoundError = LocalEntryNotFoundError
     errors.OfflineModeIsEnabled = OfflineModeIsEnabled
+    errors.EntryNotFoundError = EntryNotFoundError
     hub.errors = errors
     hub.snapshot_download = snapshot_download
     hub.hf_hub_download = hf_hub_download or no_manifest_download
@@ -683,12 +687,18 @@ def _pinned_revisions():
 
 
 def test_every_pinned_csf_revision_records_its_manifest():
-    manifests = launcher.pinned_csf_manifests()
+    records = {
+        repository: {
+            **launcher.pinned_csf_manifests().get(repository, {}),
+            **launcher.pinned_csf_contents().get(repository, {}),
+        }
+        for repository, _ in _pinned_revisions()
+    }
     pinned = _pinned_revisions()
 
     assert pinned
     for repository, revision in pinned:
-        assert re.fullmatch(r"[0-9a-f]{64}", manifests[repository][revision])
+        assert re.fullmatch(r"[0-9a-f]{64}", records[repository][revision])
 
 
 def _offline_hub(monkeypatch, tmp_path, repository, revision, snapshots, error=None):
@@ -769,3 +779,100 @@ def test_hub_errors_are_not_masked_by_a_cached_revision(tmp_path, monkeypatch):
 
     with pytest.raises(OSError, match="Revision Not Found"):
         prepare_csf_checkpoint(plan)
+
+
+def _hf_layout_checkpoint(root):
+    """A Hugging Face-layout FP4-CSF checkpoint: recipes mark CSF expert scales."""
+    (root / "tensors").mkdir(parents=True)
+    (root / "tensors" / "model-00001-of-00001.safetensors").write_bytes(b"0")
+    expert = "model.language_model.layers.3.mlp.experts"
+    (root / "config.json").write_text(
+        json.dumps(
+            {
+                "quantization_config": {
+                    "quant_method": "modelopt",
+                    "quant_algo": "MIXED_PRECISION",
+                    "quantized_layers": {
+                        expert: {
+                            "quant_algo": "NVFP4",
+                            "group_size": 16,
+                            "weight_scale_encoding": "csf",
+                        }
+                    },
+                }
+            }
+        )
+    )
+    shard = "tensors/model-00001-of-00001.safetensors"
+    (root / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "weight_map": {
+                    f"{expert}.0.up_proj.weight_scale.nvfp4_csf_fixed": shard,
+                    f"{expert}.0.up_proj.weight": shard,
+                }
+            }
+        )
+    )
+    return root
+
+
+def test_hf_layout_csf_checkpoint_is_served_from_its_snapshot(tmp_path, monkeypatch):
+    monkeypatch.setattr(launcher, "CSF_SERVING_ROOT", tmp_path / "serving")
+    repository = CSF["glm53-flash"].csf
+    root = _hf_layout_checkpoint(tmp_path / "snapshot")
+    _fake_hub(monkeypatch, lambda *a, **kw: str(root))
+    plan = resolve("glm53-flash", "rtx-pro-6000-pcie", env={})
+
+    prepare_csf_checkpoint(plan)
+
+    assert plan.values["model"] == str(root)
+    assert repository in plan.origins["model"]
+    assert not (tmp_path / "serving").exists()
+    assert plan.argv[plan.argv.index("--load-format") + 1] == "nvfp4_csf"
+    assert "--revision" not in plan.argv
+    assert len(plan.target_identity["identity"]) == 64
+
+
+def test_hf_layout_csf_checkpoint_needs_every_indexed_shard(tmp_path, monkeypatch):
+    """An incomplete cached snapshot is not served; offline, the launch fails."""
+    monkeypatch.setattr(launcher, "CSF_SERVING_ROOT", tmp_path / "serving")
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hub"))
+    root = _hf_layout_checkpoint(tmp_path / "snapshot")
+    (root / "tensors" / "model-00001-of-00001.safetensors").unlink()
+    hub = {}
+
+    def offline(*args, **kwargs):
+        raise hub["missing"]("HF_HUB_OFFLINE")
+
+    hub["missing"] = _fake_hub(monkeypatch, lambda *a, **kw: str(root), offline)
+    plan = resolve("glm53-flash", "rtx-pro-6000-pcie", env={})
+
+    with pytest.raises(hub["missing"], match="HF_HUB_OFFLINE"):
+        prepare_csf_checkpoint(plan)
+
+
+def test_hf_layout_index_cannot_name_a_shard_outside_the_checkpoint(tmp_path):
+    root = _hf_layout_checkpoint(tmp_path / "snapshot")
+    index = json.loads((root / "model.safetensors.index.json").read_text())
+    index["weight_map"]["escape"] = "../outside.safetensors"
+    (tmp_path / "outside.safetensors").write_bytes(b"0")
+    (root / "model.safetensors.index.json").write_text(json.dumps(index))
+
+    with pytest.raises(ConfigError, match="outside the checkpoint"):
+        launcher.csf_hf_missing_files(root)
+
+
+def test_hf_layout_identity_covers_the_shard_contents(tmp_path):
+    """Two snapshots with one index but different shard blobs differ."""
+    digests = set()
+    for blob in ("a" * 64, "b" * 64):
+        root = _hf_layout_checkpoint(tmp_path / blob[0] / "snapshot")
+        shard = root / "tensors" / "model-00001-of-00001.safetensors"
+        blobs = tmp_path / blob[0] / "blobs"
+        blobs.mkdir()
+        (blobs / blob).write_bytes(shard.read_bytes())
+        shard.unlink()
+        shard.symlink_to(blobs / blob)
+        digests.add(launcher.csf_hf_content_digest(root))
+    assert len(digests) == 2
