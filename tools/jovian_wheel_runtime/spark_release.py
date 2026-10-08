@@ -33,7 +33,6 @@ PLATFORM = "linux/arm64"
 RECEIPT = "container-release-linux-arm64.json"
 BUNDLE_SCRIPTS = {
     "vllm": "tools/jovian_wheel_release/build_bundle.sh",
-    "b12x": "ci/lil_wheels/build_bundle.sh",
     "flashinfer": "ci/lil_wheels/build_bundle.sh",
     "lmcache": "ci/lil_wheels/build_bundle.sh",
     "instanttensor": "ci/lil_wheels/build_bundle.sh",

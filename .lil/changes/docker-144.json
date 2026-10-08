@@ -1,0 +1,17 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-144",
+  "category": "compatibility",
+  "summary": "The images take B12X from FlashInfer 0.7.1, which ships it as flashinfer/experimental/b12x; there is no separate b12x wheel any more",
+  "models": ["all"],
+  "compatibility": "Code that imports b12x keeps working: the FlashInfer wheel installs the same b12x package. Do not install a standalone b12x wheel into the image; it would replace FlashInfer's.",
+  "details": [
+    "The beta is rebuilt on canonical: vLLM integration/karmic-kraken-beta is dev/karmic-kraken plus the GLM-5.3 (744B) work still in review and the hybrid A4 prefill; FlashInfer integration/karmic-kraken-beta is LIL main plus the hybrid A4 prefill.",
+    "The canonical image waits until canonical vLLM requires FlashInfer 0.7.1; its publication is paused until then.",
+    "FlashInfer 0.7.1 brings nccl4py 0.4.1, nccl-extensions 0.1.0 and nvidia-cudnn-frontend 1.30.0, and splits the JIT cache into the flashinfer-jit-cache shim and the flashinfer-jit-cache-sm120f provider.",
+    "NVFP4-CSF checkpoints load through ModelOpt recipes (--quantization modelopt_mixed --load-format instanttensor), including the GLM-5.3 (744B) container checkpoint, without a Hub change."
+  ],
+  "authors": ["voipmonitor"],
+  "pull_requests": [144],
+  "requires": []
+}

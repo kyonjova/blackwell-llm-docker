@@ -53,3 +53,49 @@ def test_rejects_overwritten_installed_code(installed_b12x):
     installed_b12x.write_bytes(b"snapshot shim")
     with pytest.raises(RuntimeError, match="payload mismatch"):
         VERIFIER.verify_b12x_package()
+
+
+@pytest.fixture
+def flashinfer_b12x(tmp_path, monkeypatch):
+    site = tmp_path / "lib/python3.12/site-packages"
+    shim = site / "b12x/__init__.py"
+    implementation = site / "flashinfer/experimental/b12x/_api.py"
+    for path, payload in ((shim, b"import package"), (implementation, b"implementation")):
+        path.parent.mkdir(parents=True)
+        path.write_bytes(payload)
+    manifest = tmp_path / "share/lil-runtime/manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(json.dumps({"b12x_package": {
+        "owner": "flashinfer",
+        "source": {"commit": "2" * 40},
+        "files": {
+            "b12x/__init__.py": hashlib.sha256(b"import package").hexdigest(),
+            "flashinfer/experimental/b12x/_api.py": hashlib.sha256(
+                b"implementation"
+            ).hexdigest(),
+        },
+    }}))
+    monkeypatch.setattr(VERIFIER.sys, "prefix", str(tmp_path))
+    # The import package replaces itself with the module loaded from _api.py.
+    monkeypatch.setitem(
+        VERIFIER.sys.modules, "b12x", SimpleNamespace(__file__=str(implementation))
+    )
+    return implementation
+
+
+def test_accepts_b12x_shipped_by_flashinfer(flashinfer_b12x):
+    VERIFIER.verify_b12x_package()
+
+
+def test_rejects_flashinfer_b12x_import_outside_flashinfer(flashinfer_b12x, monkeypatch):
+    monkeypatch.setitem(VERIFIER.sys.modules, "b12x", SimpleNamespace(
+        __file__=str(flashinfer_b12x.parents[3] / "b12x/__init__.py")
+    ))
+    with pytest.raises(RuntimeError, match="redirected"):
+        VERIFIER.verify_b12x_package()
+
+
+def test_rejects_changed_flashinfer_b12x_implementation(flashinfer_b12x):
+    flashinfer_b12x.write_bytes(b"patched")
+    with pytest.raises(RuntimeError, match="payload mismatch"):
+        VERIFIER.verify_b12x_package()

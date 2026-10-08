@@ -257,6 +257,9 @@ def channel_config(config: dict, name: str) -> dict:
             raise ValueError("invalid release family")
         if set(entry["branches"]) - set(config["components"]):
             raise ValueError("branch override names an unknown component")
+        paused = entry.get("paused", "unpaused")
+        if not isinstance(paused, str) or not paused.strip():
+            raise ValueError("a paused release channel must state why")
         changelog = entry.get("changelog", {})
         if set(changelog) - {"required_components"}:
             raise ValueError("release channel contains an unknown changelog policy")
@@ -331,7 +334,11 @@ def resolve_matrix(config_path: Path, directory: Path, repository: str) -> dict:
     config = json.loads(config_path.read_text())
     directory.mkdir(parents=True, exist_ok=True)
     matrix = {"include": []}
-    for name in config["channels"]:
+    for name, entry in config["channels"].items():
+        if "paused" in entry:
+            channel_config(config, name)
+            print(f"{name}: publication paused: {entry['paused']}")
+            continue
         try:
             assembly = resolve(config_path, directory / f"{name}.json", name)
         except PendingBuild as error:
