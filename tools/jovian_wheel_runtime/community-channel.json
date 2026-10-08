@@ -9,6 +9,7 @@
       "branches": {
         "vllm": "dev/karmic-kraken"
       },
+      "paused": "dev/karmic-kraken still requires FlashInfer 0.6.18 and the archived standalone B12X wheel; resume once it requires the FlashInfer 0.7.1 that ships B12X.",
       "changelog": {"required_components": []}
     },
     "karmic-kraken-beta": {

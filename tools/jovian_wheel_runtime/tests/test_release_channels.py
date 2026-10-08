@@ -126,6 +126,15 @@ def test_resolved_image_uses_selected_channel(monkeypatch, tmp_path, name, prefi
     assert assembly["release_tag"] == prefix + "-" + assembly["assembly_sha256"]
 
 
+def _unpaused_config(tmp_path):
+    config = json.loads(CONFIG.read_text())
+    for entry in config["channels"].values():
+        entry.pop("paused", None)
+    path = tmp_path / "community-channel.json"
+    path.write_text(json.dumps(config))
+    return path
+
+
 @pytest.mark.parametrize("pending", ["karmic-kraken", "karmic-kraken-beta", None])
 def test_one_pending_channel_does_not_block_the_other(monkeypatch, tmp_path, pending):
     def resolve(config, output, name):
@@ -136,7 +145,9 @@ def test_one_pending_channel_does_not_block_the_other(monkeypatch, tmp_path, pen
     monkeypatch.setattr(channel, "resolve", resolve)
     monkeypatch.setattr(channel, "completed_publication", lambda repo, assembly: False)
     matrix = channel.resolve_matrix(
-        CONFIG, tmp_path, "local-inference-lab/blackwell-llm-docker"
+        _unpaused_config(tmp_path),
+        tmp_path / "assemblies",
+        "local-inference-lab/blackwell-llm-docker",
     )
     expected = {"karmic-kraken", "karmic-kraken-beta"} - {pending}
     assert {row["channel"] for row in matrix["include"]} == expected
@@ -145,6 +156,33 @@ def test_one_pending_channel_does_not_block_the_other(monkeypatch, tmp_path, pen
             json.loads(base64.b64decode(row["assembly"]))["release_channel"]
             == row["channel"]
         )
+
+
+def test_canonical_waits_for_a_vllm_that_requires_flashinfer_with_b12x(
+    monkeypatch, tmp_path
+):
+    """Canonical vLLM still pins FlashInfer 0.6.18 and the standalone B12X
+    wheel; its publication stays paused while the beta builds."""
+    resolved = []
+
+    def resolve(config, output, name):
+        resolved.append(name)
+        return {"release_channel": name, "image": name}
+
+    monkeypatch.setattr(channel, "resolve", resolve)
+    monkeypatch.setattr(channel, "completed_publication", lambda repo, assembly: False)
+    matrix = channel.resolve_matrix(CONFIG, tmp_path, "repo")
+    assert resolved == ["karmic-kraken-beta"]
+    assert [row["channel"] for row in matrix["include"]] == ["karmic-kraken-beta"]
+    assert json.loads(CONFIG.read_text())["channels"]["karmic-kraken"]["paused"]
+
+
+@pytest.mark.parametrize("reason", ["", "  ", None, 1, ["reason"]])
+def test_a_paused_channel_must_state_why(reason):
+    config = json.loads(CONFIG.read_text())
+    config["channels"]["karmic-kraken-beta"]["paused"] = reason
+    with pytest.raises(ValueError, match="paused"):
+        channel.channel_config(config, "karmic-kraken")
 
 
 def test_completed_channels_do_not_rebuild(monkeypatch, tmp_path):
