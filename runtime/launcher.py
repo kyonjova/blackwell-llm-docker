@@ -1889,7 +1889,7 @@ def prepare_recipe_csf_container(plan: LaunchPlan, source: str, root: Path) -> N
     plan.origins["model"] = f"resolved:NVFP4-CSF recipe serving files for {source}"
     for key, value in (
         ("quantization", "modelopt_mixed"),
-        ("load-format", "safetensors"),
+        ("load-format", "instanttensor"),
     ):
         plan.values[key] = value
         plan.origins[key] = "resolved:NVFP4-CSF through ModelOpt recipes"
@@ -1926,7 +1926,7 @@ def prepare_hf_layout_csf(plan: LaunchPlan, source: str, root: Path) -> None:
         # scales; the standard loader reads them as ordinary tensors.
         for key, value in (
             ("quantization", "modelopt_mixed"),
-            ("load-format", "safetensors"),
+            ("load-format", "instanttensor"),
         ):
             plan.values[key] = value
             plan.origins[key] = "resolved:NVFP4-CSF through ModelOpt recipes"

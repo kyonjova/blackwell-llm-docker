@@ -442,7 +442,7 @@ def test_recipe_csf_reader_loads_hf_layout_through_modelopt(tmp_path, monkeypatc
     prepare_csf_checkpoint(plan)
 
     assert plan.values["model"] == str(root)
-    assert plan.argv[plan.argv.index("--load-format") + 1] == "safetensors"
+    assert plan.argv[plan.argv.index("--load-format") + 1] == "instanttensor"
     assert plan.argv[plan.argv.index("--quantization") + 1] == "modelopt_mixed"
 
 
@@ -513,7 +513,7 @@ def test_recipe_csf_reader_serves_a_container_through_recipes(tmp_path, monkeypa
     serving = Path(plan.values["model"])
     assert serving.parent == tmp_path / "serving"
     assert plan.argv[plan.argv.index("--quantization") + 1] == "modelopt_mixed"
-    assert plan.argv[plan.argv.index("--load-format") + 1] == "safetensors"
+    assert plan.argv[plan.argv.index("--load-format") + 1] == "instanttensor"
     assert "--revision" not in plan.argv
     recipes = json.loads((serving / "config.json").read_text())["quantization_config"]
     assert recipes["quant_algo"] == "MIXED_PRECISION"
