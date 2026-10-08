@@ -244,11 +244,33 @@ def installed_vllm_environment() -> frozenset[str] | None:
 
 
 def installed_csf_formats() -> frozenset[str] | None:
-    """FP4-CSF load formats the installed vLLM reads, or None without vLLM."""
+    """FP4-CSF load formats the installed vLLM reads, or None without vLLM.
+
+    A vLLM that reads NVFP4-CSF scales from ModelOpt recipes has no dedicated
+    load format but serves Hugging Face-layout NVFP4-CSF checkpoints.
+    """
     source = installed_source("vllm", "model_executor/model_loader/__init__.py")
     if source is None:
         return None
-    return frozenset(fmt for fmt in CSF_FORMATS if f'"{fmt}"' in source)
+    formats = {fmt for fmt in CSF_FORMATS if f'"{fmt}"' in source}
+    if installed_nvfp4_csf_recipes():
+        formats.add("nvfp4_csf")
+    return frozenset(formats)
+
+
+def installed_nvfp4_csf_recipes() -> bool:
+    """Whether the installed vLLM reads NVFP4-CSF expert scales declared by
+    ModelOpt recipes (weight_scale_encoding) instead of a dedicated format."""
+    loaders = installed_source("vllm", "model_executor/model_loader/__init__.py")
+    modelopt = installed_source(
+        "vllm", "model_executor/layers/quantization/modelopt.py"
+    )
+    return (
+        loaders is not None
+        and '"nvfp4_csf"' not in loaders
+        and modelopt is not None
+        and "weight_scale_encoding" in modelopt
+    )
 
 
 def installed_csf_families() -> frozenset[str] | None:
@@ -1707,6 +1729,12 @@ def prepare_csf_checkpoint(plan: LaunchPlan) -> None:
     if method == "nvfp4_csf" and csf_hf_layout(root):
         prepare_hf_layout_csf(plan, source, root)
         return
+    if method == "nvfp4_csf" and installed_nvfp4_csf_recipes():
+        raise ConfigError(
+            f"{source} stores NVFP4-CSF in the FP4-CSF container layout, which "
+            "this image's vLLM no longer reads; it reads Hugging Face-layout "
+            "NVFP4-CSF checkpoints. Use CHECKPOINT=original"
+        )
     csf_format(root / "manifest.json", source, method)
     missing = csf_missing_files(root)
     if missing:
@@ -1764,6 +1792,15 @@ def prepare_hf_layout_csf(plan: LaunchPlan, source: str, root: Path) -> None:
         )
     plan.values["model"] = str(root)
     plan.origins["model"] = f"resolved:FP4-CSF snapshot of {source}"
+    if installed_nvfp4_csf_recipes():
+        # The ModelOpt recipes in config.json mark the compressed expert
+        # scales; the standard loader reads them as ordinary tensors.
+        for key, value in (
+            ("quantization", "modelopt_mixed"),
+            ("load-format", "safetensors"),
+        ):
+            plan.values[key] = value
+            plan.origins[key] = "resolved:NVFP4-CSF through ModelOpt recipes"
     plan.target_identity = {
         "identity": csf_hf_content_digest(root),
         "revision": "",

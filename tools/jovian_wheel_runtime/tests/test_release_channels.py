@@ -17,20 +17,26 @@ ROOT = Path(__file__).resolve().parents[3]
 CONFIG = ROOT / "tools/jovian_wheel_runtime/community-channel.json"
 
 
-def test_config_separates_only_vllm_and_b12x_branches():
+def test_config_separates_only_vllm_and_flashinfer_branches():
+    """B12X ships inside FlashInfer; the beta channel overrides vLLM and the
+    FlashInfer branch that carries the beta-only B12X changes."""
     config = json.loads(CONFIG.read_text())
     main = channel.channel_config(config, "karmic-kraken")
     beta = channel.channel_config(config, "karmic-kraken-beta")
     assert main["image_tag"] == "karmic-kraken"
     assert beta["image_tag"] == "karmic-kraken-beta"
+    assert "b12x" not in main["components"] and "b12x" not in beta["components"]
     assert main["components"]["vllm"]["branch"] == "dev/karmic-kraken"
-    assert main["components"]["b12x"]["branch"] == "master"
-    for role in ("vllm", "b12x"):
+    assert (
+        main["components"]["flashinfer"]["branch"]
+        == "community/karmic-kraken-cu134-sm120"
+    )
+    for role in ("vllm", "flashinfer"):
         assert beta["components"][role]["branch"] == "integration/karmic-kraken-beta"
         without_branch = copy.deepcopy(beta["components"][role])
         without_branch["branch"] = main["components"][role]["branch"]
         assert without_branch == main["components"][role]
-    for role in ("flashinfer", "lmcache", "instanttensor", "nccl"):
+    for role in ("lmcache", "instanttensor", "nccl"):
         assert main["components"][role] == beta["components"][role]
     assert config == json.loads(CONFIG.read_text())
 
@@ -42,15 +48,10 @@ def test_only_karmic_containers_are_published_with_shared_foundation():
     beta = channel.channel_config(config, "karmic-kraken-beta")
     assert kk["channel"] == beta["channel"] == "karmic-kraken"
     assert kk["components"]["vllm"]["branch"] == "dev/karmic-kraken"
-    assert kk["components"]["b12x"]["branch"] == "master"
-    for role in ("vllm", "b12x"):
+    for role in ("vllm", "flashinfer"):
         assert beta["components"][role]["branch"] == "integration/karmic-kraken-beta"
-    for role in ("flashinfer", "lmcache", "instanttensor", "nccl"):
+    for role in ("lmcache", "instanttensor", "nccl"):
         assert kk["components"][role] == beta["components"][role]
-    assert (
-        kk["components"]["flashinfer"]["branch"]
-        == "community/jovian-judgement-cu134-sm120"
-    )
     assert (ROOT / ".github/workflows/jovian-wheel-runtime-release.yml").exists()
     assert not (
         ROOT / ".github/workflows/jovian-qwen38-ngc-runtime-release.yml"

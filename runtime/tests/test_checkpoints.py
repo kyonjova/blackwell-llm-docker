@@ -409,6 +409,60 @@ def test_installed_csf_formats_reads_the_loader_registry(tmp_path, monkeypatch):
     assert launcher.installed_csf_formats() == frozenset({"nvfp4_csf"})
 
 
+def _canonical_vllm(tmp_path, monkeypatch):
+    """A vLLM whose ModelOpt recipes declare NVFP4-CSF scales, without the
+    dedicated NVFP4-CSF load format."""
+    loaders = tmp_path / "vllm" / "model_executor" / "model_loader"
+    quantization = tmp_path / "vllm" / "model_executor" / "layers" / "quantization"
+    loaders.mkdir(parents=True)
+    quantization.mkdir(parents=True)
+    (tmp_path / "vllm" / "__init__.py").write_text("raise RuntimeError('no import')\n")
+    (loaders / "__init__.py").write_text('_LOADERS = {"mxfp4_csf": 1, "auto": 2}\n')
+    (quantization / "modelopt.py").write_text('ENCODING = "weight_scale_encoding"\n')
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+
+def test_recipe_csf_reader_serves_hf_layout_nvfp4_csf(tmp_path, monkeypatch):
+    _canonical_vllm(tmp_path / "site", monkeypatch)
+
+    assert launcher.installed_nvfp4_csf_recipes()
+    assert launcher.installed_csf_formats() == frozenset({"mxfp4_csf", "nvfp4_csf"})
+
+
+def test_recipe_csf_reader_loads_hf_layout_through_modelopt(tmp_path, monkeypatch):
+    """Without the dedicated load format, the ModelOpt recipes in config.json
+    mark the compressed scales and the standard loader reads the snapshot."""
+    _canonical_vllm(tmp_path / "site", monkeypatch)
+    monkeypatch.setattr(launcher, "CSF_SERVING_ROOT", tmp_path / "serving")
+    root = _hf_layout_checkpoint(tmp_path / "snapshot")
+    _fake_hub(monkeypatch, lambda *a, **kw: str(root))
+    plan = resolve("glm53-flash", "rtx-pro-6000-pcie", env={})
+
+    prepare_csf_checkpoint(plan)
+
+    assert plan.values["model"] == str(root)
+    assert plan.argv[plan.argv.index("--load-format") + 1] == "safetensors"
+    assert plan.argv[plan.argv.index("--quantization") + 1] == "modelopt_mixed"
+
+
+def test_recipe_csf_reader_rejects_container_layout_nvfp4_csf(tmp_path, monkeypatch):
+    _canonical_vllm(tmp_path / "site", monkeypatch)
+    monkeypatch.setattr(launcher, "CSF_SERVING_ROOT", tmp_path / "serving")
+    root = tmp_path / "snapshot"
+    (root / "metadata").mkdir(parents=True)
+    (root / "build-contract.json").write_text("{}")
+    (root / "manifest.json").write_text(
+        json.dumps(
+            {"schema": "lil-nvfp4-csf-checkpoint/1", "metadata_sha256": {}, "shards": []}
+        )
+    )
+    _fake_hub(monkeypatch, lambda *a, **kw: str(root))
+    plan = resolve("glm53-flash", "rtx-pro-6000-pcie", env={})
+
+    with pytest.raises(ConfigError, match="CHECKPOINT=original"):
+        prepare_csf_checkpoint(plan)
+
+
 def test_csf_identity_follows_the_manifest_not_the_location(tmp_path, monkeypatch):
     """LMCache namespaces and the shared PLE table key on the checkpoint
     content; the serving files are generated, so the manifest names it."""

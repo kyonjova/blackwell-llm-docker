@@ -149,3 +149,38 @@ def test_flashinfer_cannot_register_a_b12x_plugin(tmp_path: Path) -> None:
     })
     with pytest.raises(ValueError, match="B12X entry point"):
         ASSEMBLER.register_wheel_payload(wheel, "flashinfer", {}, {})
+
+
+def test_flashinfer_owned_b12x_payload_covers_shim_and_implementation(
+    tmp_path: Path,
+) -> None:
+    """FlashInfer 0.7 ships B12X: its import package and implementation tree."""
+    wheel = make_wheel(tmp_path / "flashinfer.whl", {
+        "b12x/__init__.py": b"import package",
+        "flashinfer/experimental/b12x/_api.py": b"implementation",
+        "flashinfer/__init__.py": b"flashinfer",
+    })
+    hashes = ASSEMBLER.register_wheel_payload(
+        wheel, "flashinfer", {}, {}, b12x_owner="flashinfer"
+    )
+    assert hashes == {
+        "b12x/__init__.py": hashlib.sha256(b"import package").hexdigest(),
+        "flashinfer/experimental/b12x/_api.py": hashlib.sha256(
+            b"implementation"
+        ).hexdigest(),
+    }
+
+
+def test_flashinfer_owned_b12x_rejects_other_owners(tmp_path: Path) -> None:
+    standalone = make_wheel(tmp_path / "b12x.whl", {"b12x/__init__.py": b"standalone"})
+    with pytest.raises(ValueError, match="B12X import namespace"):
+        ASSEMBLER.register_wheel_payload(
+            standalone, "b12x", {}, {}, b12x_owner="flashinfer"
+        )
+    snapshot = make_wheel(
+        tmp_path / "flashinfer.whl", {"flashinfer/b12x/__init__.py": b"snapshot"}
+    )
+    with pytest.raises(ValueError, match="migration snapshot"):
+        ASSEMBLER.register_wheel_payload(
+            snapshot, "flashinfer", {}, {}, b12x_owner="flashinfer"
+        )

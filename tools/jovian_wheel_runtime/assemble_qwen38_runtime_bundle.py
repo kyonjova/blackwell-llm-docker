@@ -25,6 +25,8 @@ EXPECTED_SCHEMAS = {
     "instanttensor": "local-inference-instanttensor-wheel-release/v1",
 }
 
+OPTIONAL_ROLES = frozenset({"b12x"})
+
 NGC_FOUNDATION_PACKAGES = {
     "torch": "pytorch.version",
     "torchvision": "torchvision.version",
@@ -102,13 +104,27 @@ def register_package(name: str, seen: set[str]) -> None:
     seen.add(key)
 
 
+# FlashInfer 0.7 carries B12X as flashinfer/experimental/b12x and installs the
+# top-level b12x import package that loads it.
+FLASHINFER_B12X_PREFIXES = ("b12x/", "flashinfer/experimental/b12x/")
+
+
 def register_wheel_payload(
     wheel: Path,
     role: str,
     files: dict[str, str],
     entry_points: dict[tuple[str, str], str],
+    b12x_owner: str = "b12x",
 ) -> dict[str, str]:
-    """Reject competing package owners and retain B12X's exact runtime bytes."""
+    """Reject competing package owners and retain B12X's exact runtime bytes.
+
+    ``b12x_owner`` is the component that ships B12X: the standalone ``b12x``
+    wheel, or ``flashinfer`` once B12X lives inside FlashInfer.
+    """
+    b12x_prefixes = (
+        FLASHINFER_B12X_PREFIXES if b12x_owner == "flashinfer" else ("b12x/",)
+    )
+    b12x_targets = tuple(prefix.replace("/", ".") for prefix in b12x_prefixes)
     b12x_hashes: dict[str, str] = {}
     with zipfile.ZipFile(wheel) as archive:
         for name in archive.namelist():
@@ -130,9 +146,9 @@ def register_wheel_payload(
                 )
             files[installed] = wheel.name
             if installed.startswith("flashinfer/b12x/"):
-                raise ValueError("runtime requires standalone B12X; FlashInfer embeds B12X")
-            if installed.startswith("b12x/"):
-                if role != "b12x":
+                raise ValueError("FlashInfer wheel embeds a B12X migration snapshot")
+            if installed.startswith(FLASHINFER_B12X_PREFIXES):
+                if role != b12x_owner:
                     raise ValueError(f"{role} wheel claims the B12X import namespace")
                 b12x_hashes[installed] = hashlib.sha256(archive.read(name)).hexdigest()
             if name.endswith(".dist-info/entry_points.txt"):
@@ -144,7 +160,10 @@ def register_wheel_payload(
                         key = (group, command)
                         if key in entry_points:
                             raise ValueError(f"wheel entry point ownership collision: {key}")
-                        if target.startswith(("b12x.", "flashinfer.b12x.")) and role != "b12x":
+                        if (
+                            target.startswith((*b12x_targets, "flashinfer.b12x."))
+                            and role != b12x_owner
+                        ):
                             raise ValueError(f"{role} wheel claims a B12X entry point: {key}")
                         entry_points[key] = wheel.name
     return b12x_hashes
@@ -260,7 +279,10 @@ def parse_args() -> argparse.Namespace:
     for role in EXPECTED_SCHEMAS:
         if role == "foundation":
             continue
-        parser.add_argument(f"--{role}-bundle", required=True, type=Path)
+        # B12X ships inside FlashInfer 0.7; the standalone bundle is optional.
+        parser.add_argument(
+            f"--{role}-bundle", required=role not in OPTIONAL_ROLES, type=Path
+        )
     return parser.parse_args()
 
 
@@ -276,7 +298,7 @@ def main() -> int:
     bundles = {
         role: getattr(args, f"{role}_bundle").resolve()
         for role in EXPECTED_SCHEMAS
-        if role != "foundation"
+        if role != "foundation" and getattr(args, f"{role}_bundle") is not None
     }
     manifests: dict[str, dict[str, object]] = {}
     foundation_lock: Path | None = None
@@ -328,13 +350,16 @@ def main() -> int:
     installed_files: dict[str, str] = {}
     entry_point_owners: dict[tuple[str, str], str] = {}
     b12x_files: dict[str, str] = {}
+    b12x_owner = "b12x" if "b12x" in bundles else "flashinfer"
     for role, bundle in bundles.items():
         wheels = sorted((bundle / "wheels").glob("*.whl"))
         if not wheels:
             raise ValueError(f"component bundle contains no wheels: {bundle}")
         for wheel in wheels:
             b12x_files.update(
-                register_wheel_payload(wheel, role, installed_files, entry_point_owners)
+                register_wheel_payload(
+                    wheel, role, installed_files, entry_point_owners, b12x_owner
+                )
             )
             name, version = wheel_metadata(wheel)
             register_package(name, seen_packages)
@@ -354,7 +379,11 @@ def main() -> int:
             )
 
     if "b12x/__init__.py" not in b12x_files:
-        raise ValueError("B12X component does not provide its import package")
+        raise ValueError(f"{b12x_owner} component does not provide the B12X import package")
+    if b12x_owner == "flashinfer" and (
+        "flashinfer/experimental/b12x/_api.py" not in b12x_files
+    ):
+        raise ValueError("FlashInfer component does not provide the B12X implementation")
     packages.sort(key=lambda item: normalized_name(item["name"]))
     requirements = output / "requirements-local.txt"
     requirements.write_text(application_requirements(packages))
@@ -400,7 +429,8 @@ def main() -> int:
         "components": component_records,
         "packages": packages,
         "b12x_package": {
-            "source": manifests["b12x"]["source"],
+            "owner": b12x_owner,
+            "source": manifests[b12x_owner]["source"],
             "files": b12x_files,
         },
     }
