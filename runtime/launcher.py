@@ -1826,13 +1826,19 @@ def csf_recipe_serving_files(config: dict, root: Path) -> tuple[dict, dict]:
     groups = list((source.get("config_groups") or {}).values())
     group = groups[0] if len(groups) == 1 else {}
     weights = group.get("weights") or {
-        "dynamic": False, "group_size": 16, "num_bits": 4, "type": "float"
+        "dynamic": False,
+        "group_size": 16,
+        "num_bits": 4,
+        "type": "float",
     }
     holder["quantization_config"] = {
         "config_groups": {
             "group_nvfp4_routed_experts": {
-                **({"input_activations": group["input_activations"]}
-                   if group.get("input_activations") else {}),
+                **(
+                    {"input_activations": group["input_activations"]}
+                    if group.get("input_activations")
+                    else {}
+                ),
                 "weights": weights,
                 "targets": modules,
             }

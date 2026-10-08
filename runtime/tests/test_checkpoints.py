@@ -2,10 +2,10 @@
 and the serving files that let vLLM read an FP4-CSF repository."""
 
 import json
-from pathlib import Path
 import re
 import sys
 import types
+from pathlib import Path
 from typing import NamedTuple
 
 import pytest
@@ -453,7 +453,11 @@ def _csf_container(root):
     (root / "build-contract.json").write_text("{}")
     (root / "manifest.json").write_text(
         json.dumps(
-            {"schema": "lil-nvfp4-csf-checkpoint/1", "metadata_sha256": {}, "shards": []}
+            {
+                "schema": "lil-nvfp4-csf-checkpoint/1",
+                "metadata_sha256": {},
+                "shards": [],
+            }
         )
     )
     group = {"num_bits": 4, "type": "float", "group_size": 16, "dynamic": False}
@@ -482,13 +486,19 @@ def _csf_container(root):
     header = {
         f"{expert}.weight": {"dtype": "U8", "shape": [2], "data_offsets": [0, 2]},
         f"{expert}.weight_scale.nvfp4_csf_fixed": {
-            "dtype": "U8", "shape": [2], "data_offsets": [2, 4]
+            "dtype": "U8",
+            "shape": [2],
+            "data_offsets": [2, 4],
         },
         f"{expert}.weight_scale.nvfp4_csf_exceptions": {
-            "dtype": "U32", "shape": [1], "data_offsets": [4, 8]
+            "dtype": "U32",
+            "shape": [1],
+            "data_offsets": [4, 8],
         },
         "model.layers.3.self_attn.o_proj.weight": {
-            "dtype": "BF16", "shape": [2], "data_offsets": [8, 12]
+            "dtype": "BF16",
+            "shape": [2],
+            "data_offsets": [8, 12],
         },
     }
     raw = json.dumps(header).encode()
@@ -519,14 +529,19 @@ def test_recipe_csf_reader_serves_a_container_through_recipes(tmp_path, monkeypa
     assert recipes["quant_algo"] == "MIXED_PRECISION"
     assert recipes["quantized_layers"] == {
         "model.layers.3.mlp.experts": {
-            "group_size": 16, "quant_algo": "NVFP4", "weight_scale_encoding": "csf"
+            "group_size": 16,
+            "quant_algo": "NVFP4",
+            "weight_scale_encoding": "csf",
         }
     }
     shard = "tensors/model-00001-of-00001.safetensors"
     index = json.loads((serving / "model.safetensors.index.json").read_text())
-    assert index["weight_map"][
-        "model.layers.3.mlp.experts.0.up_proj.weight_scale.nvfp4_csf_fixed"
-    ] == shard
+    assert (
+        index["weight_map"][
+            "model.layers.3.mlp.experts.0.up_proj.weight_scale.nvfp4_csf_fixed"
+        ]
+        == shard
+    )
     assert (serving / shard).is_file()
     assert (serving / "tokenizer.json").is_file()
     assert not (serving / "hf_quant_config.json").exists()
