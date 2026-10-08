@@ -264,3 +264,56 @@ def test_the_qad_checkpoints_keep_a4_prefill(preset):
     )
     assert plan.values["prefill-activations"] == "a4"
     assert plan.environment[MIN_TOKENS] == str(GLM_A4_PREFILL_MIN_TOKENS)
+
+
+SWITCH = "B12X_W4A16_A4_PREFILL"
+
+
+@pytest.fixture
+def semantic(monkeypatch):
+    """An image whose vLLM picks the prefill rows itself."""
+    monkeypatch.setattr(launcher, "installed_semantic_a4_prefill", lambda: True)
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [({}, "1"), ({"PREFILL_ACTIVATIONS": "a16"}, "0"), ({SWITCH: "0"}, "0")],
+)
+def test_newer_images_turn_a4_prefill_on_with_one_switch(semantic, env, expected):
+    plan = glm(env)
+    assert plan.environment[SWITCH] == expected
+    assert MIN_TOKENS not in plan.environment
+    assert plan.values["prefill-activations"] == ("a4" if expected == "1" else "a16")
+
+
+def test_newer_images_refuse_the_retired_threshold(semantic):
+    with pytest.raises(ConfigError, match=f"{MIN_TOKENS} is no longer read"):
+        glm({MIN_TOKENS: "1536"})
+
+
+def test_newer_images_refuse_a_contradicting_switch(semantic):
+    with pytest.raises(ConfigError, match=f"{SWITCH}=1 conflicts"):
+        glm(
+            {"PREFILL_ACTIVATIONS": "a16", SWITCH: "1"},
+            argv=["--prefill-activations", "a16"],
+        )
+
+
+def test_the_switch_is_detected_from_the_installed_vllm(tmp_path, monkeypatch):
+    utils = tmp_path / "vllm" / "utils"
+    utils.mkdir(parents=True)
+    (utils / "b12x.py").write_text(
+        'value = os.environ.get("B12X_W4A16_A4_PREFILL", "0")'
+    )
+    monkeypatch.setattr(
+        launcher,
+        "installed_source",
+        lambda package, relative: (
+            (tmp_path / package / relative).read_text()
+            if (tmp_path / package / relative).is_file()
+            else None
+        ),
+    )
+    assert launcher.installed_semantic_a4_prefill()
+    (utils / "b12x.py").write_text('os.environ.get("B12X_W4A16_A4_PREFILL_MIN_TOKENS")')
+    assert not launcher.installed_semantic_a4_prefill()

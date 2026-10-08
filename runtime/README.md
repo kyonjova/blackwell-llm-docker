@@ -326,7 +326,7 @@ decides its option:
 | --- | --- | --- |
 | `EXPERT_ACTIVATIONS` | `bf16` (W4A16), `fp4` (W4A4, faster, less exact) | `VLLM_B12X_MOE_FP4_FORCE_A16` 1/0 |
 | `ROUTER_WEIGHTS` | `fp32`, `bf16` (only with `bf16` activations) | `B12X_W4A16_FP32_TOPK_WEIGHTS` 1/0 |
-| `PREFILL_ACTIVATIONS` | `a4` (only with `bf16` activations and a QAD checkpoint), `a16` | `B12X_W4A16_A4_PREFILL_MIN_TOKENS` 1536/0 |
+| `PREFILL_ACTIVATIONS` | `a4` (only with `bf16` activations and a QAD checkpoint), `a16` | `B12X_W4A16_A4_PREFILL` 1/0 (older images: `B12X_W4A16_A4_PREFILL_MIN_TOKENS` 1536/0) |
 
 `a4` runs the prefill rows of every step with NVFP4 activations over the same
 packed FP4 weights (images before vLLM #977 only did so for expert calls of

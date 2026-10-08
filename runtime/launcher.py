@@ -52,10 +52,11 @@ SECRET = re.compile(
 )
 # Precision of GLM-5.3-Flash's routed FP4 experts on B12X.
 GLM_PRECISION_OPTIONS = ("expert-activations", "router-weights", "prefill-activations")
-# prefill-activations a4 sets B12X_W4A16_A4_PREFILL_MIN_TOKENS to this value.
-# vLLM then runs the prefill rows of every step with NVFP4 activations and the
-# decode rows with W4A16, whatever the step size (images before vllm #977
-# used the value as a call-size threshold instead).
+# On images whose vLLM reads B12X_W4A16_A4_PREFILL_MIN_TOKENS, prefill-activations
+# a4 sets it to this value. vLLM then runs the prefill rows of every step with
+# NVFP4 activations and the decode rows with W4A16, whatever the step size
+# (images before vllm #977 used the value as a call-size threshold instead).
+# Newer images take B12X_W4A16_A4_PREFILL=1 instead.
 GLM_A4_PREFILL_MIN_TOKENS = 1536
 # Checkpoints whose routed experts lose accuracy with a4 prefill: the Spark
 # checkpoint's pre-QAD experts answered 456 of 500 needle-checksum requests
@@ -233,6 +234,14 @@ def installed_source(package: str, relative: str) -> str | None:
         if path.is_file():
             return path.read_text()
     return None
+
+
+def installed_semantic_a4_prefill() -> bool:
+    """Whether the installed vLLM turns hybrid A4 prefill on with
+    B12X_W4A16_A4_PREFILL and picks the prefill rows itself. Images before it
+    took a token threshold, B12X_W4A16_A4_PREFILL_MIN_TOKENS."""
+    source = installed_source("vllm", "utils/b12x.py")
+    return source is not None and '"B12X_W4A16_A4_PREFILL"' in source
 
 
 def installed_vllm_environment() -> frozenset[str] | None:
@@ -1355,10 +1364,11 @@ def configure_expert_precision(
 
     expert-activations bf16 runs the FP4 experts as W4A16 (FP4 weights, BF16
     activations) and fp4 as W4A4. router-weights fp32 combines W4A16 expert
-    outputs with FP32 router weights. prefill-activations a4 runs W4A16 calls
-    of at least GLM_A4_PREFILL_MIN_TOKENS tokens with NVFP4 activations. A
-    variable the operator sets itself is kept and decides the option it belongs
-    to.
+    outputs with FP32 router weights. prefill-activations a4 runs the prefill
+    rows of W4A16 calls with NVFP4 activations: B12X_W4A16_A4_PREFILL=1 where
+    vLLM picks the rows itself, else B12X_W4A16_A4_PREFILL_MIN_TOKENS (calls of
+    at least GLM_A4_PREFILL_MIN_TOKENS tokens). A variable the operator sets
+    itself is kept and decides the option it belongs to.
     """
     present = [option for option in GLM_PRECISION_OPTIONS if option in values]
     if not present:
@@ -1422,17 +1432,25 @@ def configure_expert_precision(
                 option, decode[explicit_env[name]], f"{name}={explicit_env[name]}"
             )
     threshold_name = "B12X_W4A16_A4_PREFILL_MIN_TOKENS"
-    threshold = explicit_env.get(threshold_name)
-    if threshold is not None and "prefill-activations" in values:
+    semantic = installed_semantic_a4_prefill()
+    if semantic and threshold_name in explicit_env:
+        raise ConfigError(
+            f"{threshold_name} is no longer read: this image picks the prefill "
+            "rows itself. Use prefill-activations (or B12X_W4A16_A4_PREFILL=1)"
+        )
+    # The variable that turns A4 prefill on in the installed image.
+    switch_name = "B12X_W4A16_A4_PREFILL" if semantic else threshold_name
+    switch = explicit_env.get(switch_name)
+    if switch is not None and "prefill-activations" in values:
         try:
-            enabled = int(threshold) > 0
+            enabled = int(switch) > 0
         except ValueError:
             enabled = None  # B12X refuses the value at startup
         if enabled is not None:
             effective(
                 "prefill-activations",
                 "a4" if enabled else "a16",
-                f"{threshold_name}={threshold}",
+                f"{switch_name}={switch}",
             )
 
     bf16 = values.get("expert-activations") == "bf16"
@@ -1459,7 +1477,7 @@ def configure_expert_precision(
     if (
         prefill == "a4"
         and model in GLM_A4_PREFILL_UNQUALIFIED
-        and threshold_name not in explicit_env
+        and switch_name not in explicit_env
     ):
         if explicit("prefill-activations"):
             raise ConfigError(
@@ -1470,11 +1488,8 @@ def configure_expert_precision(
         derive("prefill-activations", "a16", f"{model} (pre-QAD experts)")
         prefill = "a16"
     if prefill is not None:
-        option_env(
-            "prefill-activations",
-            threshold_name,
-            "0" if prefill == "a16" else str(GLM_A4_PREFILL_MIN_TOKENS),
-        )
+        on = "1" if semantic else str(GLM_A4_PREFILL_MIN_TOKENS)
+        option_env("prefill-activations", switch_name, "0" if prefill == "a16" else on)
 
 
 CSF_FORMATS = ("nvfp4_csf", "mxfp4_csf")
