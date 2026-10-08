@@ -1,0 +1,14 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-145",
+  "category": "compatibility",
+  "summary": "The canonical karmic-kraken image is published again, now built from FlashInfer 0.7.1 with B12X inside",
+  "models": ["all"],
+  "compatibility": "Like the beta, the canonical image has no separate b12x wheel; the b12x package comes from FlashInfer.",
+  "details": [
+    "Canonical publication was paused while dev/karmic-kraken still required FlashInfer 0.6.18 and the standalone B12X wheel."
+  ],
+  "authors": ["voipmonitor"],
+  "pull_requests": [145],
+  "requires": []
+}
