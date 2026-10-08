@@ -137,7 +137,7 @@ def _unpaused_config(tmp_path):
 
 @pytest.mark.parametrize("pending", ["karmic-kraken", "karmic-kraken-beta", None])
 def test_one_pending_channel_does_not_block_the_other(monkeypatch, tmp_path, pending):
-    def resolve(config, output, name):
+    def resolve(config, output, name, repository=None):
         if name == pending:
             raise channel.PendingBuild("wheel upload is incomplete")
         return {"release_channel": name, "image": name}
@@ -167,7 +167,7 @@ def test_a_paused_channel_is_skipped(monkeypatch, tmp_path):
     path.write_text(json.dumps(config))
     resolved = []
 
-    def resolve(config, output, name):
+    def resolve(config, output, name, repository=None):
         resolved.append(name)
         return {"release_channel": name, "image": name}
 
@@ -238,3 +238,59 @@ def test_workflow_uses_one_channel_matrix_and_shared_publisher():
         assert step["env"]["ASSEMBLY_BASE64"] == "${{ matrix.assembly }}"
         assert "publish_container_channel.py" in step["run"]
         assert "matrix.channel" in step["run"]
+
+
+def _releases(*rows):
+    return [{"tag_name": tag, "name": name, "draft": False} for tag, name in rows]
+
+
+@pytest.mark.parametrize(
+    "rows,expected",
+    [
+        ([], "karmic-kraken-20261008"),
+        (
+            [
+                ("karmic-kraken-" + "c" * 64, "karmic-kraken-20261008"),
+                ("karmic-kraken-beta-" + "d" * 64, "karmic-kraken-beta-20261008"),
+                ("karmic-kraken-" + "e" * 64, "karmic-kraken-20261007"),
+                (
+                    "karmic-kraken-" + "f" * 64,
+                    "karmic-kraken-20261008-b39e92531b7f1692",
+                ),
+            ],
+            "karmic-kraken-20261008.2",
+        ),
+        (
+            [
+                ("karmic-kraken-" + "c" * 64, "karmic-kraken-20261008"),
+                ("karmic-kraken-" + "d" * 64, "karmic-kraken-20261008.2"),
+            ],
+            "karmic-kraken-20261008.3",
+        ),
+        (
+            [
+                ("karmic-kraken-" + "c" * 64, "karmic-kraken-20261008"),
+                ("karmic-kraken-" + "a" * 64, "karmic-kraken-20261008.2"),
+                ("karmic-kraken-" + "d" * 64, "karmic-kraken-20261008.3"),
+            ],
+            "karmic-kraken-20261008.2",
+        ),
+    ],
+)
+def test_daily_image_tags_number_the_days_releases(monkeypatch, rows, expected):
+    """The first release of a day is named by the date, later ones get .N, and
+    a retried assembly keeps its release's name."""
+    monkeypatch.setattr(channel, "api", lambda endpoint: _releases(*rows))
+    assert (
+        channel.daily_image_tag(
+            "repo", "karmic-kraken", "20261008", "karmic-kraken-" + "a" * 64
+        )
+        == expected
+    )
+
+
+def test_local_resolution_uses_the_plain_date():
+    assert (
+        channel.daily_image_tag(None, "karmic-kraken-beta", "20261008", "x")
+        == "karmic-kraken-beta-20261008"
+    )
