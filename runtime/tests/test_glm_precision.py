@@ -11,6 +11,15 @@ FP32_TOPK = "B12X_W4A16_FP32_TOPK_WEIGHTS"
 MIN_TOKENS = "B12X_W4A16_A4_PREFILL_MIN_TOKENS"
 TERMS = "B12X_W4A16_A4_PREFILL_TERMS"
 OPTIONS = ("expert-activations", "router-weights", "prefill-activations")
+# The detection itself, before any test replaces it.
+INSTALLED_SEMANTIC_A4_PREFILL = launcher.installed_semantic_a4_prefill
+
+
+@pytest.fixture(autouse=True)
+def threshold_image(monkeypatch):
+    """Expectations default to an image whose vLLM takes the token threshold,
+    whatever vLLM the tests run next to; the newer switch has its own tests."""
+    monkeypatch.setattr(launcher, "installed_semantic_a4_prefill", lambda: False)
 
 
 def glm(env=None, **kwargs):
@@ -314,6 +323,6 @@ def test_the_switch_is_detected_from_the_installed_vllm(tmp_path, monkeypatch):
             else None
         ),
     )
-    assert launcher.installed_semantic_a4_prefill()
+    assert INSTALLED_SEMANTIC_A4_PREFILL()
     (utils / "b12x.py").write_text('os.environ.get("B12X_W4A16_A4_PREFILL_MIN_TOKENS")')
-    assert not launcher.installed_semantic_a4_prefill()
+    assert not INSTALLED_SEMANTIC_A4_PREFILL()

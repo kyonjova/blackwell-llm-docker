@@ -17,6 +17,13 @@ QAD_CHECKPOINT = "local-inference-lab/GLM-5.3-Flash-NVFP4-MXFP8-CSF-QAD"
 QAD_REVISION = "dec48abd33efa73c3bb7c95b74eee10cad34f9be"
 
 
+@pytest.fixture(autouse=True)
+def threshold_image(monkeypatch):
+    """The glm53-tp2 expectations name the token threshold of images whose vLLM
+    still reads it, whatever vLLM the tests run next to."""
+    monkeypatch.setattr(launcher, "installed_semantic_a4_prefill", lambda: False)
+
+
 def tp2(env=None, **kwargs):
     return resolve(
         "glm53-flash",
