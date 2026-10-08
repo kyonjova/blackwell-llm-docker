@@ -30,7 +30,7 @@ def test_unexpected_tags_are_refused():
 def test_every_assembled_role_has_a_bundle_script():
     import assemble_qwen38_runtime_bundle as assemble
 
-    roles = set(assemble.EXPECTED_SCHEMAS) - {"foundation"}
+    roles = set(assemble.EXPECTED_SCHEMAS) - {"foundation"} - assemble.OPTIONAL_ROLES
     assert roles == set(spark_release.BUNDLE_SCRIPTS)
 
 

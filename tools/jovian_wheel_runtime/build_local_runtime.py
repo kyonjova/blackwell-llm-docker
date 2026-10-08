@@ -19,7 +19,8 @@ import runtime_platform
 from container_channel import digest
 from prepare_runtime_auxiliary import prepare as prepare_auxiliary
 
-ROLES = ("nccl", "flashinfer", "b12x", "vllm", "lmcache", "instanttensor")
+# B12X ships inside the FlashInfer wheel.
+ROLES = ("nccl", "flashinfer", "vllm", "lmcache", "instanttensor")
 
 
 def main() -> None:

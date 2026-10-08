@@ -9,6 +9,7 @@
       "branches": {
         "vllm": "dev/karmic-kraken"
       },
+      "paused": "dev/karmic-kraken still requires FlashInfer 0.6.18 and the archived standalone B12X wheel; resume once it requires the FlashInfer 0.7.1 that ships B12X.",
       "changelog": {"required_components": []}
     },
     "karmic-kraken-beta": {
@@ -16,9 +17,9 @@
       "image_tag": "karmic-kraken-beta",
       "branches": {
         "vllm": "integration/karmic-kraken-beta",
-        "b12x": "integration/karmic-kraken-beta"
+        "flashinfer": "integration/karmic-kraken-beta"
       },
-      "changelog": {"required_components": ["vllm", "b12x"]}
+      "changelog": {"required_components": ["vllm"]}
     }
   },
   "components": {
@@ -29,16 +30,9 @@
       "source_paths": ["vllm/", "csrc/", "cmake/", "rust/", "requirements/", "setup.py", "pyproject.toml", "CMakeLists.txt", "tools/jovian_wheel_release/"],
       "bootstrap": {"branch_commit": "fa6ae9212e72edff781cf8ec083a0a9dfc3c58b6", "release_commit": "103bd90ea49e6f93171c980938cae169d2514538"}
     },
-    "b12x": {
-      "repository": "local-inference-lab/b12x",
-      "branch": "master",
-      "release_prefix": "b12x-cu134-beta-",
-      "source_paths": ["b12x/", "setup.py", "pyproject.toml", "ci/lil_wheels/"],
-      "bootstrap": {"branch_commit": "135c9715d20d8534638b57be8dcd634ab333e87a", "release_commit": "6a4661ffe2dfc51b8f28bee0ac7b9db55e2823d6"}
-    },
     "flashinfer": {
       "repository": "local-inference-lab/flashinfer",
-      "branch": "community/jovian-judgement-cu134-sm120",
+      "branch": "community/karmic-kraken-cu134-sm120",
       "release_prefix": "flashinfer-cu134-sm120-beta-",
       "source_paths": ["flashinfer/", "flashinfer-jit-cache/", "csrc/", "include/", "aot_build_utils/", "3rdparty/", "setup.py", "pyproject.toml", "ci/lil_wheels/"]
     },

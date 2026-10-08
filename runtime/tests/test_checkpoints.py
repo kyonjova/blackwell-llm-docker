@@ -5,6 +5,7 @@ import json
 import re
 import sys
 import types
+from pathlib import Path
 from typing import NamedTuple
 
 import pytest
@@ -407,6 +408,143 @@ def test_installed_csf_formats_reads_the_loader_registry(tmp_path, monkeypatch):
     monkeypatch.syspath_prepend(str(tmp_path))
 
     assert launcher.installed_csf_formats() == frozenset({"nvfp4_csf"})
+
+
+def _canonical_vllm(tmp_path, monkeypatch):
+    """A vLLM whose ModelOpt recipes declare NVFP4-CSF scales, without the
+    dedicated NVFP4-CSF load format."""
+    loaders = tmp_path / "vllm" / "model_executor" / "model_loader"
+    quantization = tmp_path / "vllm" / "model_executor" / "layers" / "quantization"
+    loaders.mkdir(parents=True)
+    quantization.mkdir(parents=True)
+    (tmp_path / "vllm" / "__init__.py").write_text("raise RuntimeError('no import')\n")
+    (loaders / "__init__.py").write_text('_LOADERS = {"mxfp4_csf": 1, "auto": 2}\n')
+    (quantization / "modelopt.py").write_text('ENCODING = "weight_scale_encoding"\n')
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+
+def test_recipe_csf_reader_serves_hf_layout_nvfp4_csf(tmp_path, monkeypatch):
+    _canonical_vllm(tmp_path / "site", monkeypatch)
+
+    assert launcher.installed_nvfp4_csf_recipes()
+    assert launcher.installed_csf_formats() == frozenset({"mxfp4_csf", "nvfp4_csf"})
+
+
+def test_recipe_csf_reader_loads_hf_layout_through_modelopt(tmp_path, monkeypatch):
+    """Without the dedicated load format, the ModelOpt recipes in config.json
+    mark the compressed scales and the standard loader reads the snapshot."""
+    _canonical_vllm(tmp_path / "site", monkeypatch)
+    monkeypatch.setattr(launcher, "CSF_SERVING_ROOT", tmp_path / "serving")
+    root = _hf_layout_checkpoint(tmp_path / "snapshot")
+    _fake_hub(monkeypatch, lambda *a, **kw: str(root))
+    plan = resolve("glm53-flash", "rtx-pro-6000-pcie", env={})
+
+    prepare_csf_checkpoint(plan)
+
+    assert plan.values["model"] == str(root)
+    assert plan.argv[plan.argv.index("--load-format") + 1] == "instanttensor"
+    assert plan.argv[plan.argv.index("--quantization") + 1] == "modelopt_mixed"
+
+
+def _csf_container(root):
+    """An NVFP4-CSF container: metadata/, tensors/ and a manifest."""
+    (root / "metadata").mkdir(parents=True)
+    (root / "tensors").mkdir()
+    (root / "build-contract.json").write_text("{}")
+    (root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "lil-nvfp4-csf-checkpoint/1",
+                "metadata_sha256": {},
+                "shards": [],
+            }
+        )
+    )
+    group = {"num_bits": 4, "type": "float", "group_size": 16, "dynamic": False}
+    (root / "metadata" / "config.json").write_text(
+        json.dumps(
+            {
+                "architectures": ["GlmMoeDsaForCausalLM"],
+                "quantization_config": {
+                    "quant_method": "modelopt",
+                    "quant_algo": "NVFP4",
+                    "config_groups": {
+                        "group_0": {
+                            "weights": group,
+                            "input_activations": group,
+                            "targets": ["Linear"],
+                        }
+                    },
+                    "ignore": ["lm_head", "model.layers.3.self_attn*"],
+                },
+            }
+        )
+    )
+    (root / "metadata" / "hf_quant_config.json").write_text("{}")
+    (root / "metadata" / "tokenizer.json").write_text("{}")
+    expert = "model.layers.3.mlp.experts.0.up_proj"
+    header = {
+        f"{expert}.weight": {"dtype": "U8", "shape": [2], "data_offsets": [0, 2]},
+        f"{expert}.weight_scale.nvfp4_csf_fixed": {
+            "dtype": "U8",
+            "shape": [2],
+            "data_offsets": [2, 4],
+        },
+        f"{expert}.weight_scale.nvfp4_csf_exceptions": {
+            "dtype": "U32",
+            "shape": [1],
+            "data_offsets": [4, 8],
+        },
+        "model.layers.3.self_attn.o_proj.weight": {
+            "dtype": "BF16",
+            "shape": [2],
+            "data_offsets": [8, 12],
+        },
+    }
+    raw = json.dumps(header).encode()
+    (root / "tensors" / "model-00001-of-00001.safetensors").write_bytes(
+        len(raw).to_bytes(8, "little") + raw + bytes(12)
+    )
+    return root
+
+
+def test_recipe_csf_reader_serves_a_container_through_recipes(tmp_path, monkeypatch):
+    """An NVFP4-CSF container already stores the compressed scale tensors; the
+    launcher adds the recipes and the stored-name index the standard loader
+    needs and links the shards."""
+    _canonical_vllm(tmp_path / "site", monkeypatch)
+    monkeypatch.setattr(launcher, "CSF_SERVING_ROOT", tmp_path / "serving")
+    root = _csf_container(tmp_path / "snapshot")
+    _fake_hub(monkeypatch, lambda *a, **kw: str(root))
+    plan = resolve("glm53-flash", "rtx-pro-6000-pcie", env={})
+
+    prepare_csf_checkpoint(plan)
+
+    serving = Path(plan.values["model"])
+    assert serving.parent == tmp_path / "serving"
+    assert plan.argv[plan.argv.index("--quantization") + 1] == "modelopt_mixed"
+    assert plan.argv[plan.argv.index("--load-format") + 1] == "instanttensor"
+    assert "--revision" not in plan.argv
+    recipes = json.loads((serving / "config.json").read_text())["quantization_config"]
+    assert recipes["quant_algo"] == "MIXED_PRECISION"
+    assert recipes["quantized_layers"] == {
+        "model.layers.3.mlp.experts": {
+            "group_size": 16,
+            "quant_algo": "NVFP4",
+            "weight_scale_encoding": "csf",
+        }
+    }
+    shard = "tensors/model-00001-of-00001.safetensors"
+    index = json.loads((serving / "model.safetensors.index.json").read_text())
+    assert (
+        index["weight_map"][
+            "model.layers.3.mlp.experts.0.up_proj.weight_scale.nvfp4_csf_fixed"
+        ]
+        == shard
+    )
+    assert (serving / shard).is_file()
+    assert (serving / "tokenizer.json").is_file()
+    assert not (serving / "hf_quant_config.json").exists()
 
 
 def test_csf_identity_follows_the_manifest_not_the_location(tmp_path, monkeypatch):

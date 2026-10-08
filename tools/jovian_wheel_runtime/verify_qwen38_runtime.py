@@ -180,35 +180,47 @@ def verify_fastokens() -> None:
 
 
 def verify_b12x_package() -> None:
-    """Verify the imported package against bytes from the selected B12X wheel."""
+    """Verify the imported package against bytes from the wheel that ships B12X.
+
+    The standalone B12X wheel owns ``b12x/``. Once B12X lives in FlashInfer, the
+    FlashInfer wheel owns ``b12x/`` (an import package that loads the
+    implementation) and ``flashinfer/experimental/b12x/``.
+    """
     manifest = json.loads(
         (Path(sys.prefix) / "share/lil-runtime/manifest.json").read_text()
     )
     contract = manifest["b12x_package"]
+    owner = contract.get("owner", "b12x")
     runtime_site = Path(sys.prefix) / "lib/python3.12/site-packages"
     import b12x
 
-    expected_init = (runtime_site / "b12x/__init__.py").resolve()
-    if Path(b12x.__file__).resolve() != expected_init:
+    if owner == "flashinfer":
+        roots = (runtime_site / "b12x", runtime_site / "flashinfer/experimental/b12x")
+        expected_module = runtime_site / "flashinfer/experimental/b12x/_api.py"
+    else:
+        roots = (runtime_site / "b12x",)
+        expected_module = runtime_site / "b12x/__init__.py"
+    if Path(b12x.__file__).resolve() != expected_module.resolve():
         raise RuntimeError(f"B12X import was redirected to {b12x.__file__}")
     if "b12x/__init__.py" not in contract["files"]:
         raise RuntimeError("B12X payload contract is incomplete")
     for relative, expected in contract["files"].items():
         target = (runtime_site / relative).resolve()
-        if not target.is_relative_to(runtime_site / "b12x"):
+        if not any(target.is_relative_to(root.resolve()) for root in roots):
             raise RuntimeError(f"B12X payload escapes its package: {relative}")
         if not target.is_file() or sha256(target) != expected:
             raise RuntimeError(f"B12X wheel payload mismatch: {relative}")
-    flashinfer = importlib.metadata.distribution("flashinfer-python")
-    for path in flashinfer.files or ():
-        if str(path).startswith(("b12x/", "flashinfer/b12x/")):
-            raise RuntimeError("FlashInfer distribution claims B12X package files")
-    for entry in flashinfer.entry_points:
-        if entry.value.startswith(("b12x.", "flashinfer.b12x.")):
-            raise RuntimeError(
-                f"FlashInfer distribution claims B12X plugin {entry.name}"
-            )
-    print(f"b12x_source={contract['source']['commit']} payload=PASS")
+    if owner != "flashinfer":
+        flashinfer = importlib.metadata.distribution("flashinfer-python")
+        for path in flashinfer.files or ():
+            if str(path).startswith(("b12x/", "flashinfer/b12x/")):
+                raise RuntimeError("FlashInfer distribution claims B12X package files")
+        for entry in flashinfer.entry_points:
+            if entry.value.startswith(("b12x.", "flashinfer.b12x.")):
+                raise RuntimeError(
+                    f"FlashInfer distribution claims B12X plugin {entry.name}"
+                )
+    print(f"b12x_owner={owner} b12x_source={contract['source']['commit']} payload=PASS")
 
 
 def verify_b12x_tuning_exchange() -> None:

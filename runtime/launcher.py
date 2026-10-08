@@ -52,10 +52,11 @@ SECRET = re.compile(
 )
 # Precision of GLM-5.3-Flash's routed FP4 experts on B12X.
 GLM_PRECISION_OPTIONS = ("expert-activations", "router-weights", "prefill-activations")
-# prefill-activations a4 sets B12X_W4A16_A4_PREFILL_MIN_TOKENS to this value.
-# vLLM then runs the prefill rows of every step with NVFP4 activations and the
-# decode rows with W4A16, whatever the step size (images before vllm #977
-# used the value as a call-size threshold instead).
+# On images whose vLLM reads B12X_W4A16_A4_PREFILL_MIN_TOKENS, prefill-activations
+# a4 sets it to this value. vLLM then runs the prefill rows of every step with
+# NVFP4 activations and the decode rows with W4A16, whatever the step size
+# (images before vllm #977 used the value as a call-size threshold instead).
+# Newer images take B12X_W4A16_A4_PREFILL=1 instead.
 GLM_A4_PREFILL_MIN_TOKENS = 1536
 # Checkpoints whose routed experts lose accuracy with a4 prefill: the Spark
 # checkpoint's pre-QAD experts answered 456 of 500 needle-checksum requests
@@ -235,6 +236,14 @@ def installed_source(package: str, relative: str) -> str | None:
     return None
 
 
+def installed_semantic_a4_prefill() -> bool:
+    """Whether the installed vLLM turns hybrid A4 prefill on with
+    B12X_W4A16_A4_PREFILL and picks the prefill rows itself. Images before it
+    took a token threshold, B12X_W4A16_A4_PREFILL_MIN_TOKENS."""
+    source = installed_source("vllm", "utils/b12x.py")
+    return source is not None and '"B12X_W4A16_A4_PREFILL"' in source
+
+
 def installed_vllm_environment() -> frozenset[str] | None:
     """Environment names the installed vLLM declares, or None without vLLM."""
     source = installed_source("vllm", "envs.py")
@@ -244,11 +253,33 @@ def installed_vllm_environment() -> frozenset[str] | None:
 
 
 def installed_csf_formats() -> frozenset[str] | None:
-    """FP4-CSF load formats the installed vLLM reads, or None without vLLM."""
+    """FP4-CSF load formats the installed vLLM reads, or None without vLLM.
+
+    A vLLM that reads NVFP4-CSF scales from ModelOpt recipes has no dedicated
+    load format but serves Hugging Face-layout NVFP4-CSF checkpoints.
+    """
     source = installed_source("vllm", "model_executor/model_loader/__init__.py")
     if source is None:
         return None
-    return frozenset(fmt for fmt in CSF_FORMATS if f'"{fmt}"' in source)
+    formats = {fmt for fmt in CSF_FORMATS if f'"{fmt}"' in source}
+    if installed_nvfp4_csf_recipes():
+        formats.add("nvfp4_csf")
+    return frozenset(formats)
+
+
+def installed_nvfp4_csf_recipes() -> bool:
+    """Whether the installed vLLM reads NVFP4-CSF expert scales declared by
+    ModelOpt recipes (weight_scale_encoding) instead of a dedicated format."""
+    loaders = installed_source("vllm", "model_executor/model_loader/__init__.py")
+    modelopt = installed_source(
+        "vllm", "model_executor/layers/quantization/modelopt.py"
+    )
+    return (
+        loaders is not None
+        and '"nvfp4_csf"' not in loaders
+        and modelopt is not None
+        and "weight_scale_encoding" in modelopt
+    )
 
 
 def installed_csf_families() -> frozenset[str] | None:
@@ -1333,10 +1364,11 @@ def configure_expert_precision(
 
     expert-activations bf16 runs the FP4 experts as W4A16 (FP4 weights, BF16
     activations) and fp4 as W4A4. router-weights fp32 combines W4A16 expert
-    outputs with FP32 router weights. prefill-activations a4 runs W4A16 calls
-    of at least GLM_A4_PREFILL_MIN_TOKENS tokens with NVFP4 activations. A
-    variable the operator sets itself is kept and decides the option it belongs
-    to.
+    outputs with FP32 router weights. prefill-activations a4 runs the prefill
+    rows of W4A16 calls with NVFP4 activations: B12X_W4A16_A4_PREFILL=1 where
+    vLLM picks the rows itself, else B12X_W4A16_A4_PREFILL_MIN_TOKENS (calls of
+    at least GLM_A4_PREFILL_MIN_TOKENS tokens). A variable the operator sets
+    itself is kept and decides the option it belongs to.
     """
     present = [option for option in GLM_PRECISION_OPTIONS if option in values]
     if not present:
@@ -1400,17 +1432,25 @@ def configure_expert_precision(
                 option, decode[explicit_env[name]], f"{name}={explicit_env[name]}"
             )
     threshold_name = "B12X_W4A16_A4_PREFILL_MIN_TOKENS"
-    threshold = explicit_env.get(threshold_name)
-    if threshold is not None and "prefill-activations" in values:
+    semantic = installed_semantic_a4_prefill()
+    if semantic and threshold_name in explicit_env:
+        raise ConfigError(
+            f"{threshold_name} is no longer read: this image picks the prefill "
+            "rows itself. Use prefill-activations (or B12X_W4A16_A4_PREFILL=1)"
+        )
+    # The variable that turns A4 prefill on in the installed image.
+    switch_name = "B12X_W4A16_A4_PREFILL" if semantic else threshold_name
+    switch = explicit_env.get(switch_name)
+    if switch is not None and "prefill-activations" in values:
         try:
-            enabled = int(threshold) > 0
+            enabled = int(switch) > 0
         except ValueError:
             enabled = None  # B12X refuses the value at startup
         if enabled is not None:
             effective(
                 "prefill-activations",
                 "a4" if enabled else "a16",
-                f"{threshold_name}={threshold}",
+                f"{switch_name}={switch}",
             )
 
     bf16 = values.get("expert-activations") == "bf16"
@@ -1437,7 +1477,7 @@ def configure_expert_precision(
     if (
         prefill == "a4"
         and model in GLM_A4_PREFILL_UNQUALIFIED
-        and threshold_name not in explicit_env
+        and switch_name not in explicit_env
     ):
         if explicit("prefill-activations"):
             raise ConfigError(
@@ -1448,11 +1488,8 @@ def configure_expert_precision(
         derive("prefill-activations", "a16", f"{model} (pre-QAD experts)")
         prefill = "a16"
     if prefill is not None:
-        option_env(
-            "prefill-activations",
-            threshold_name,
-            "0" if prefill == "a16" else str(GLM_A4_PREFILL_MIN_TOKENS),
-        )
+        on = "1" if semantic else str(GLM_A4_PREFILL_MIN_TOKENS)
+        option_env("prefill-activations", switch_name, "0" if prefill == "a16" else on)
 
 
 CSF_FORMATS = ("nvfp4_csf", "mxfp4_csf")
@@ -1708,6 +1745,9 @@ def prepare_csf_checkpoint(plan: LaunchPlan) -> None:
         prepare_hf_layout_csf(plan, source, root)
         return
     csf_format(root / "manifest.json", source, method)
+    if method == "nvfp4_csf" and installed_nvfp4_csf_recipes():
+        prepare_recipe_csf_container(plan, source, root)
+        return
     missing = csf_missing_files(root)
     if missing:
         raise ConfigError(
@@ -1750,6 +1790,144 @@ def prepare_csf_checkpoint(plan: LaunchPlan) -> None:
     print(f"Serving FP4-CSF checkpoint {root} through {serving}", file=sys.stderr)
 
 
+def safetensors_header(path: Path) -> dict:
+    """The JSON header of a safetensors file (tensor names, dtypes, offsets)."""
+    with path.open("rb") as stream:
+        size = int.from_bytes(stream.read(8), "little")
+        if not 0 < size < 1 << 30:
+            raise ConfigError(f"{path} is not a safetensors file")
+        return json.loads(stream.read(size))
+
+
+CSF_SCALE_SUFFIX = ".weight_scale.nvfp4_csf_fixed"
+
+
+def csf_recipe_serving_files(config: dict, root: Path) -> tuple[dict, dict]:
+    """config.json and safetensors index that open an NVFP4-CSF container
+    through ModelOpt recipes.
+
+    The container's shards already store each compressed expert scale as
+    weight_scale.nvfp4_csf_fixed and _exceptions tensors; only the recipes that
+    declare them and an index of the stored tensor names are missing.
+    """
+    weight_map: dict[str, str] = {}
+    total = 0
+    for shard in sorted((root / "tensors").glob("*.safetensors")):
+        for name, info in safetensors_header(shard).items():
+            if name == "__metadata__":
+                continue
+            weight_map[name] = f"tensors/{shard.name}"
+            total += int(info["data_offsets"][1]) - int(info["data_offsets"][0])
+    modules = sorted(
+        {
+            name[: -len(CSF_SCALE_SUFFIX)].split(".experts.")[0] + ".experts"
+            if ".experts." in name
+            else name[: -len(CSF_SCALE_SUFFIX)]
+            for name in weight_map
+            if name.endswith(CSF_SCALE_SUFFIX)
+        },
+        key=lambda module: [
+            int(part) if part.isdigit() else part for part in module.split(".")
+        ],
+    )
+    if not modules:
+        raise ConfigError(f"{root} stores no NVFP4-CSF expert scales")
+    holder = config if "quantization_config" in config else config.get("text_config")
+    if not isinstance(holder, dict) or not isinstance(
+        holder.get("quantization_config"), dict
+    ):
+        raise ConfigError("FP4-CSF metadata/config.json has no quantization_config")
+    source = holder["quantization_config"]
+    groups = list((source.get("config_groups") or {}).values())
+    group = groups[0] if len(groups) == 1 else {}
+    weights = group.get("weights") or {
+        "dynamic": False,
+        "group_size": 16,
+        "num_bits": 4,
+        "type": "float",
+    }
+    holder["quantization_config"] = {
+        "config_groups": {
+            "group_nvfp4_routed_experts": {
+                **(
+                    {"input_activations": group["input_activations"]}
+                    if group.get("input_activations")
+                    else {}
+                ),
+                "weights": weights,
+                "targets": modules,
+            }
+        },
+        "ignore": [],
+        "producer": source.get("producer"),
+        "quant_algo": "MIXED_PRECISION",
+        "quant_method": "modelopt",
+        "quantized_layers": {
+            module: {
+                "group_size": int(weights.get("group_size", 16)),
+                "quant_algo": "NVFP4",
+                "weight_scale_encoding": "csf",
+            }
+            for module in modules
+        },
+    }
+    index = {"metadata": {"total_size": total}, "weight_map": weight_map}
+    return config, index
+
+
+def prepare_recipe_csf_container(plan: LaunchPlan, source: str, root: Path) -> None:
+    """Serve an NVFP4-CSF container to a vLLM that reads ModelOpt CSF recipes.
+
+    The serving directory holds the generated config.json and safetensors
+    index, the container's other metadata files and a link to its tensors; the
+    standard loader then reads the shards where they are.
+    """
+    missing = csf_missing_files(root)
+    if missing:
+        raise ConfigError(
+            f"{source} is incomplete; missing or partial: {', '.join(missing[:5])}"
+            + (f" and {len(missing) - 5} more" if len(missing) > 5 else "")
+        )
+    try:
+        config = json.loads((root / "metadata" / "config.json").read_text())
+    except (OSError, ValueError) as error:
+        raise ConfigError(f"{source} has no readable metadata/config.json") from error
+    config, index = csf_recipe_serving_files(config, root)
+    name = re.sub(r"[^A-Za-z0-9._-]", "-", Path(source).name) or "checkpoint"
+    digest = hashlib.sha256(str(root).encode()).hexdigest()[:12]
+    serving = CSF_SERVING_ROOT / f"{name}-{digest}-recipes"
+    if serving.exists():
+        shutil.rmtree(serving)
+    serving.mkdir(parents=True)
+    generated = {"config.json", "model.safetensors.index.json", "hf_quant_config.json"}
+    for item in sorted((root / "metadata").iterdir()):
+        if item.is_file() and item.name not in generated:
+            shutil.copyfile(item, serving / item.name)
+    (serving / "config.json").write_text(json.dumps(config, indent=2) + "\n")
+    (serving / "model.safetensors.index.json").write_text(json.dumps(index) + "\n")
+    (serving / "tensors").symlink_to(root / "tensors", target_is_directory=True)
+    plan.values["model"] = str(serving)
+    plan.origins["model"] = f"resolved:NVFP4-CSF recipe serving files for {source}"
+    for key, value in (
+        ("quantization", "modelopt_mixed"),
+        ("load-format", "instanttensor"),
+    ):
+        plan.values[key] = value
+        plan.origins[key] = "resolved:NVFP4-CSF through ModelOpt recipes"
+    manifest_digest = hashlib.sha256(
+        b"lil-fp4-csf-v1\0" + (root / "manifest.json").read_bytes()
+    ).hexdigest()
+    plan.target_identity = {"identity": manifest_digest, "revision": ""}
+    plan.values.pop("revision", None)
+    spec = plan.values.get("speculative-config")
+    if spec and spec.get("model", source) == source:
+        spec.pop("revision", None)
+        if "model" in spec:
+            spec["model"] = str(serving)
+    plan.argv = make_argv(plan.values, plan.passthrough)
+    print(f"Serving NVFP4-CSF checkpoint {root} through {serving}", file=sys.stderr)
+
+
 def prepare_hf_layout_csf(plan: LaunchPlan, source: str, root: Path) -> None:
     """Serve a Hugging Face-layout FP4-CSF checkpoint from its snapshot.
 
@@ -1764,6 +1942,15 @@ def prepare_hf_layout_csf(plan: LaunchPlan, source: str, root: Path) -> None:
         )
     plan.values["model"] = str(root)
     plan.origins["model"] = f"resolved:FP4-CSF snapshot of {source}"
+    if installed_nvfp4_csf_recipes():
+        # The ModelOpt recipes in config.json mark the compressed expert
+        # scales; the standard loader reads them as ordinary tensors.
+        for key, value in (
+            ("quantization", "modelopt_mixed"),
+            ("load-format", "instanttensor"),
+        ):
+            plan.values[key] = value
+            plan.origins[key] = "resolved:NVFP4-CSF through ModelOpt recipes"
     plan.target_identity = {
         "identity": csf_hf_content_digest(root),
         "revision": "",
