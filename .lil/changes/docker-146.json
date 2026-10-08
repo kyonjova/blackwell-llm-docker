@@ -1,0 +1,15 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-146",
+  "category": "compatibility",
+  "summary": "prefill-activations a4 switches the hybrid A4 prefill with B12X_W4A16_A4_PREFILL on images whose vLLM picks the prefill rows itself",
+  "models": ["GLM-5.3-Flash"],
+  "compatibility": "On those images B12X_W4A16_A4_PREFILL_MIN_TOKENS is no longer read; the launcher refuses it and names B12X_W4A16_A4_PREFILL. Older images keep the threshold.",
+  "details": [
+    "a4 sets B12X_W4A16_A4_PREFILL=1 and a16 sets 0; an explicit B12X_W4A16_A4_PREFILL decides the option.",
+    "vLLM runs every prefill row with NVFP4 activations, short and chunked prefills included; decode and verification rows, CUDA graph replays, draft and profiling forwards keep W4A16."
+  ],
+  "authors": ["voipmonitor"],
+  "pull_requests": [146],
+  "requires": []
+}
