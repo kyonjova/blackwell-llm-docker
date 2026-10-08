@@ -1,0 +1,14 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-147",
+  "category": "compatibility",
+  "summary": "Image tags are the channel and the date, without the identity hash",
+  "models": ["all"],
+  "compatibility": "New images are tagged like karmic-kraken-20261008; a second image the same day is karmic-kraken-20261008.2. Images published earlier keep their names, and the karmic-kraken and karmic-kraken-beta aliases are unchanged.",
+  "details": [
+    "The assembly identity stays in the GitHub release and in the image metadata. Spark images follow the same names, for example karmic-kraken-beta-spark-20261008."
+  ],
+  "authors": ["voipmonitor"],
+  "pull_requests": [147],
+  "requires": []
+}
