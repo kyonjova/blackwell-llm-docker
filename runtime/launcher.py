@@ -1729,13 +1729,10 @@ def prepare_csf_checkpoint(plan: LaunchPlan) -> None:
     if method == "nvfp4_csf" and csf_hf_layout(root):
         prepare_hf_layout_csf(plan, source, root)
         return
-    if method == "nvfp4_csf" and installed_nvfp4_csf_recipes():
-        raise ConfigError(
-            f"{source} stores NVFP4-CSF in the FP4-CSF container layout, which "
-            "this image's vLLM no longer reads; it reads Hugging Face-layout "
-            "NVFP4-CSF checkpoints. Use CHECKPOINT=original"
-        )
     csf_format(root / "manifest.json", source, method)
+    if method == "nvfp4_csf" and installed_nvfp4_csf_recipes():
+        prepare_recipe_csf_container(plan, source, root)
+        return
     missing = csf_missing_files(root)
     if missing:
         raise ConfigError(
@@ -1776,6 +1773,138 @@ def prepare_csf_checkpoint(plan: LaunchPlan) -> None:
             spec["model"] = str(serving)
     plan.argv = make_argv(plan.values, plan.passthrough)
     print(f"Serving FP4-CSF checkpoint {root} through {serving}", file=sys.stderr)
+
+
+def safetensors_header(path: Path) -> dict:
+    """The JSON header of a safetensors file (tensor names, dtypes, offsets)."""
+    with path.open("rb") as stream:
+        size = int.from_bytes(stream.read(8), "little")
+        if not 0 < size < 1 << 30:
+            raise ConfigError(f"{path} is not a safetensors file")
+        return json.loads(stream.read(size))
+
+
+CSF_SCALE_SUFFIX = ".weight_scale.nvfp4_csf_fixed"
+
+
+def csf_recipe_serving_files(config: dict, root: Path) -> tuple[dict, dict]:
+    """config.json and safetensors index that open an NVFP4-CSF container
+    through ModelOpt recipes.
+
+    The container's shards already store each compressed expert scale as
+    weight_scale.nvfp4_csf_fixed and _exceptions tensors; only the recipes that
+    declare them and an index of the stored tensor names are missing.
+    """
+    weight_map: dict[str, str] = {}
+    total = 0
+    for shard in sorted((root / "tensors").glob("*.safetensors")):
+        for name, info in safetensors_header(shard).items():
+            if name == "__metadata__":
+                continue
+            weight_map[name] = f"tensors/{shard.name}"
+            total += int(info["data_offsets"][1]) - int(info["data_offsets"][0])
+    modules = sorted(
+        {
+            name[: -len(CSF_SCALE_SUFFIX)].split(".experts.")[0] + ".experts"
+            if ".experts." in name
+            else name[: -len(CSF_SCALE_SUFFIX)]
+            for name in weight_map
+            if name.endswith(CSF_SCALE_SUFFIX)
+        },
+        key=lambda module: [
+            int(part) if part.isdigit() else part for part in module.split(".")
+        ],
+    )
+    if not modules:
+        raise ConfigError(f"{root} stores no NVFP4-CSF expert scales")
+    holder = config if "quantization_config" in config else config.get("text_config")
+    if not isinstance(holder, dict) or not isinstance(
+        holder.get("quantization_config"), dict
+    ):
+        raise ConfigError("FP4-CSF metadata/config.json has no quantization_config")
+    source = holder["quantization_config"]
+    groups = list((source.get("config_groups") or {}).values())
+    group = groups[0] if len(groups) == 1 else {}
+    weights = group.get("weights") or {
+        "dynamic": False, "group_size": 16, "num_bits": 4, "type": "float"
+    }
+    holder["quantization_config"] = {
+        "config_groups": {
+            "group_nvfp4_routed_experts": {
+                **({"input_activations": group["input_activations"]}
+                   if group.get("input_activations") else {}),
+                "weights": weights,
+                "targets": modules,
+            }
+        },
+        "ignore": [],
+        "producer": source.get("producer"),
+        "quant_algo": "MIXED_PRECISION",
+        "quant_method": "modelopt",
+        "quantized_layers": {
+            module: {
+                "group_size": int(weights.get("group_size", 16)),
+                "quant_algo": "NVFP4",
+                "weight_scale_encoding": "csf",
+            }
+            for module in modules
+        },
+    }
+    index = {"metadata": {"total_size": total}, "weight_map": weight_map}
+    return config, index
+
+
+def prepare_recipe_csf_container(plan: LaunchPlan, source: str, root: Path) -> None:
+    """Serve an NVFP4-CSF container to a vLLM that reads ModelOpt CSF recipes.
+
+    The serving directory holds the generated config.json and safetensors
+    index, the container's other metadata files and a link to its tensors; the
+    standard loader then reads the shards where they are.
+    """
+    missing = csf_missing_files(root)
+    if missing:
+        raise ConfigError(
+            f"{source} is incomplete; missing or partial: {', '.join(missing[:5])}"
+            + (f" and {len(missing) - 5} more" if len(missing) > 5 else "")
+        )
+    try:
+        config = json.loads((root / "metadata" / "config.json").read_text())
+    except (OSError, ValueError) as error:
+        raise ConfigError(f"{source} has no readable metadata/config.json") from error
+    config, index = csf_recipe_serving_files(config, root)
+    name = re.sub(r"[^A-Za-z0-9._-]", "-", Path(source).name) or "checkpoint"
+    digest = hashlib.sha256(str(root).encode()).hexdigest()[:12]
+    serving = CSF_SERVING_ROOT / f"{name}-{digest}-recipes"
+    if serving.exists():
+        shutil.rmtree(serving)
+    serving.mkdir(parents=True)
+    generated = {"config.json", "model.safetensors.index.json", "hf_quant_config.json"}
+    for item in sorted((root / "metadata").iterdir()):
+        if item.is_file() and item.name not in generated:
+            shutil.copyfile(item, serving / item.name)
+    (serving / "config.json").write_text(json.dumps(config, indent=2) + "\n")
+    (serving / "model.safetensors.index.json").write_text(json.dumps(index) + "\n")
+    (serving / "tensors").symlink_to(root / "tensors", target_is_directory=True)
+    plan.values["model"] = str(serving)
+    plan.origins["model"] = f"resolved:NVFP4-CSF recipe serving files for {source}"
+    for key, value in (
+        ("quantization", "modelopt_mixed"),
+        ("load-format", "safetensors"),
+    ):
+        plan.values[key] = value
+        plan.origins[key] = "resolved:NVFP4-CSF through ModelOpt recipes"
+    manifest_digest = hashlib.sha256(
+        b"lil-fp4-csf-v1\0" + (root / "manifest.json").read_bytes()
+    ).hexdigest()
+    plan.target_identity = {"identity": manifest_digest, "revision": ""}
+    plan.values.pop("revision", None)
+    spec = plan.values.get("speculative-config")
+    if spec and spec.get("model", source) == source:
+        spec.pop("revision", None)
+        if "model" in spec:
+            spec["model"] = str(serving)
+    plan.argv = make_argv(plan.values, plan.passthrough)
+    print(f"Serving NVFP4-CSF checkpoint {root} through {serving}", file=sys.stderr)
 
 
 def prepare_hf_layout_csf(plan: LaunchPlan, source: str, root: Path) -> None:
