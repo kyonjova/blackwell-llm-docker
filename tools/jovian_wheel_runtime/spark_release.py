@@ -23,6 +23,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -55,7 +56,9 @@ VLLM_NATIVE_INPUTS = (
 
 
 def run(argv: list[str], **kwargs) -> str:
-    return subprocess.run(argv, check=True, capture_output=True, text=True, **kwargs).stdout
+    return subprocess.run(
+        argv, check=True, capture_output=True, text=True, **kwargs
+    ).stdout
 
 
 def execute(argv: list[str], **kwargs) -> None:
@@ -64,12 +67,17 @@ def execute(argv: list[str], **kwargs) -> None:
 
 
 def spark_image(image: str) -> str:
-    """ghcr.io/x/vllm:karmic-kraken-beta-20261006-c8c8 -> ...:karmic-kraken-beta-spark-20261006-c8c8."""
+    """ghcr.io/x/vllm:karmic-kraken-beta-20261006.2 -> ...:karmic-kraken-beta-spark-20261006.2.
+
+    Tags published before the daily names end in -<16 hex identity>.
+    """
     repository, tag = image.rsplit(":", 1)
-    channel, date, identity = tag.rsplit("-", 2)
-    if not (date.isdigit() and len(date) == 8 and len(identity) == 16):
+    match = re.fullmatch(
+        r"(?P<channel>[a-z0-9-]+?)-(?P<day>\d{8}(?:\.\d+|-[0-9a-f]{16})?)", tag
+    )
+    if not match:
         raise ValueError(f"Unexpected release image tag: {tag}")
-    return f"{repository}:{channel}-spark-{date}-{identity}"
+    return f"{repository}:{match['channel']}-spark-{match['day']}"
 
 
 def spark_alias(alias: str) -> str:
@@ -79,19 +87,54 @@ def spark_alias(alias: str) -> str:
 
 def release_asset(repository: str, tag: str, name: str, directory: Path) -> Path:
     execute(
-        ["gh", "release", "download", tag, "--repo", repository, "--pattern", name,
-         "--dir", str(directory), "--clobber"]
+        [
+            "gh",
+            "release",
+            "download",
+            tag,
+            "--repo",
+            repository,
+            "--pattern",
+            name,
+            "--dir",
+            str(directory),
+            "--clobber",
+        ]
     )
     return directory / name
 
 
 def checkout(repository: str, commit: str, destination: Path) -> None:
     execute(["git", "init", "--quiet", str(destination)])
-    execute(["git", "-C", str(destination), "fetch", "--quiet", "--filter=blob:none",
-             f"https://github.com/{repository}.git", commit])
-    execute(["git", "-C", str(destination), "checkout", "--quiet", "--detach", "FETCH_HEAD"])
-    execute(["git", "-C", str(destination), "submodule", "update", "--quiet", "--init",
-             "--recursive", "--depth", "1"])
+    execute(
+        [
+            "git",
+            "-C",
+            str(destination),
+            "fetch",
+            "--quiet",
+            "--filter=blob:none",
+            f"https://github.com/{repository}.git",
+            commit,
+        ]
+    )
+    execute(
+        ["git", "-C", str(destination), "checkout", "--quiet", "--detach", "FETCH_HEAD"]
+    )
+    execute(
+        [
+            "git",
+            "-C",
+            str(destination),
+            "submodule",
+            "update",
+            "--quiet",
+            "--init",
+            "--recursive",
+            "--depth",
+            "1",
+        ]
+    )
 
 
 def supports_arm64(role: str, source: Path) -> bool:
@@ -101,17 +144,51 @@ def supports_arm64(role: str, source: Path) -> bool:
 
 def reusable_vllm_bundle(source: Path, cache: Path) -> Path | None:
     """The newest cached arm64 vLLM bundle whose native inputs match this commit."""
-    for candidate in sorted(cache.glob("*/bundle"), key=lambda p: p.stat().st_mtime, reverse=True):
-        native_commit = json.loads((candidate / "manifest.json").read_text())["source"]["commit"]
-        if native_commit and subprocess.run(
-            ["git", "-C", str(source), "cat-file", "-e", f"{native_commit}^{{commit}}"],
-            capture_output=True,
-        ).returncode:
-            subprocess.run(["git", "-C", str(source), "fetch", "--quiet", "--filter=blob:none",
-                            "origin", native_commit], capture_output=True)
+    for candidate in sorted(
+        cache.glob("*/bundle"), key=lambda p: p.stat().st_mtime, reverse=True
+    ):
+        native_commit = json.loads((candidate / "manifest.json").read_text())["source"][
+            "commit"
+        ]
+        if (
+            native_commit
+            and subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(source),
+                    "cat-file",
+                    "-e",
+                    f"{native_commit}^{{commit}}",
+                ],
+                capture_output=True,
+            ).returncode
+        ):
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(source),
+                    "fetch",
+                    "--quiet",
+                    "--filter=blob:none",
+                    "origin",
+                    native_commit,
+                ],
+                capture_output=True,
+            )
         same = subprocess.run(
-            ["git", "-C", str(source), "diff", "--quiet", native_commit, "HEAD", "--",
-             *VLLM_NATIVE_INPUTS],
+            [
+                "git",
+                "-C",
+                str(source),
+                "diff",
+                "--quiet",
+                native_commit,
+                "HEAD",
+                "--",
+                *VLLM_NATIVE_INPUTS,
+            ],
             capture_output=True,
         )
         if same.returncode == 0:
@@ -125,7 +202,15 @@ KEPT_BUNDLES = 4
 
 def source_tree(repository: str, commit: str) -> str:
     """Git tree of a commit: commits with the same tree build the same bundle."""
-    return run(["gh", "api", f"repos/{repository}/commits/{commit}", "--jq", ".commit.tree.sha"]).strip()
+    return run(
+        [
+            "gh",
+            "api",
+            f"repos/{repository}/commits/{commit}",
+            "--jq",
+            ".commit.tree.sha",
+        ]
+    ).strip()
 
 
 def cached_bundle(cache: Path, role: str, tree: str) -> Path | None:
@@ -133,8 +218,11 @@ def cached_bundle(cache: Path, role: str, tree: str) -> Path | None:
     bundle = cache / "bundles" / role / tree / "bundle"
     if not (bundle / "SHA256SUMS").is_file():
         return None
-    check = subprocess.run(["sha256sum", "--check", "--quiet", "SHA256SUMS"], cwd=bundle,
-                           capture_output=True)
+    check = subprocess.run(
+        ["sha256sum", "--check", "--quiet", "SHA256SUMS"],
+        cwd=bundle,
+        capture_output=True,
+    )
     return bundle if check.returncode == 0 else None
 
 
@@ -175,10 +263,21 @@ def build_component(role: str, component: dict, work: Path, cache: Path) -> Path
     environment = dict(os.environ, LIL_WHEEL_PLATFORM=PLATFORM)
     environment["GITHUB_REPOSITORY"] = component["repository"]
     if role == "vllm":
-        if subprocess.run(["git", "-C", str(source), "remote", "get-url", "origin"],
-                          capture_output=True).returncode:
-            execute(["git", "-C", str(source), "remote", "add", "origin",
-                     f"https://github.com/{component['repository']}.git"])
+        if subprocess.run(
+            ["git", "-C", str(source), "remote", "get-url", "origin"],
+            capture_output=True,
+        ).returncode:
+            execute(
+                [
+                    "git",
+                    "-C",
+                    str(source),
+                    "remote",
+                    "add",
+                    "origin",
+                    f"https://github.com/{component['repository']}.git",
+                ]
+            )
         native = reusable_vllm_bundle(source, cache / "vllm-native")
         if native is not None:
             print(f"Reusing arm64 vLLM native objects from {native}", flush=True)
@@ -214,12 +313,17 @@ def select_release(repository: str) -> str:
     components or its recipe predates linux/arm64 support, so that the
     five-minute publisher schedule does not start a doomed build each time.
     """
-    releases = json.loads(run(["gh", "api", f"repos/{repository}/releases?per_page=30"]))
+    releases = json.loads(
+        run(["gh", "api", f"repos/{repository}/releases?per_page=30"])
+    )
     candidates = [
-        release for release in releases
+        release
+        for release in releases
         if not release["draft"]
         and release["tag_name"].startswith("karmic-kraken-beta-")
-        and any(asset["name"] == "container-release.json" for asset in release["assets"])
+        and any(
+            asset["name"] == "container-release.json" for asset in release["assets"]
+        )
     ]
     if not candidates:
         return ""
@@ -228,16 +332,43 @@ def select_release(repository: str) -> str:
     if RECEIPT in names or FAILED in names:
         return ""
     tag = release["tag_name"]
-    assembly = json.loads(run(["gh", "release", "download", tag, "--repo", repository,
-                               "--pattern", "community-assembly.json", "--output", "-"]))
-    required = [(repository, assembly["recipe_commit"],
-                 "tools/jovian_wheel_runtime/linux-arm64/foundation.lock")]
+    assembly = json.loads(
+        run(
+            [
+                "gh",
+                "release",
+                "download",
+                tag,
+                "--repo",
+                repository,
+                "--pattern",
+                "community-assembly.json",
+                "--output",
+                "-",
+            ]
+        )
+    )
+    required = [
+        (
+            repository,
+            assembly["recipe_commit"],
+            "tools/jovian_wheel_runtime/linux-arm64/foundation.lock",
+        )
+    ]
     for role, component in sorted(assembly["components"].items()):
         script = Path(BUNDLE_SCRIPTS[role])
-        required.append((component["repository"], component["source_commit"],
-                         str(script.parent / "linux-arm64" / "runtime.lock")))
-    missing = [f"{repo}@{commit[:12]}" for repo, commit, path in required
-               if not has_arm64_support(repo, commit, path)]
+        required.append(
+            (
+                component["repository"],
+                component["source_commit"],
+                str(script.parent / "linux-arm64" / "runtime.lock"),
+            )
+        )
+    missing = [
+        f"{repo}@{commit[:12]}"
+        for repo, commit, path in required
+        if not has_arm64_support(repo, commit, path)
+    ]
     if missing:
         print(f"{tag}: no linux/arm64 support in {', '.join(missing)}", file=sys.stderr)
         return ""
@@ -246,14 +377,22 @@ def select_release(repository: str) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--select", action="store_true",
-                        help="print the release tag to build (empty when none) and exit")
+    parser.add_argument(
+        "--select",
+        action="store_true",
+        help="print the release tag to build (empty when none) and exit",
+    )
     parser.add_argument("--release-tag")
-    parser.add_argument("--repository", default="local-inference-lab/blackwell-llm-docker")
+    parser.add_argument(
+        "--repository", default="local-inference-lab/blackwell-llm-docker"
+    )
     parser.add_argument("--work", type=Path)
     parser.add_argument(
-        "--cache", type=Path,
-        default=Path(os.environ.get("LIL_SPARK_CACHE", Path.home() / ".cache/lil-spark")),
+        "--cache",
+        type=Path,
+        default=Path(
+            os.environ.get("LIL_SPARK_CACHE", Path.home() / ".cache/lil-spark")
+        ),
     )
     parser.add_argument("--build-only", action="store_true")
     args = parser.parse_args()
@@ -264,10 +403,14 @@ def main() -> None:
         parser.error("--release-tag and --work are required to build")
     args.work.mkdir(parents=True, exist_ok=False)
     assembly = json.loads(
-        release_asset(args.repository, args.release_tag, "community-assembly.json", args.work).read_text()
+        release_asset(
+            args.repository, args.release_tag, "community-assembly.json", args.work
+        ).read_text()
     )
     amd64 = json.loads(
-        release_asset(args.repository, args.release_tag, "container-release.json", args.work).read_text()
+        release_asset(
+            args.repository, args.release_tag, "container-release.json", args.work
+        ).read_text()
     )
     image = spark_image(amd64["image"])
     bundles = {
@@ -278,9 +421,17 @@ def main() -> None:
     checkout(args.repository, assembly["recipe_commit"], recipe)
     tools = recipe / "tools/jovian_wheel_runtime"
     if not (tools / "linux-arm64" / "foundation.lock").is_file():
-        raise SystemExit(f"recipe {assembly['recipe_commit']} has no linux/arm64 runtime locks")
-    command = ["python3", str(tools / "build_local_runtime.py"),
-               "--output", str(args.work / "runtime-build"), "--image", image]
+        raise SystemExit(
+            f"recipe {assembly['recipe_commit']} has no linux/arm64 runtime locks"
+        )
+    command = [
+        "python3",
+        str(tools / "build_local_runtime.py"),
+        "--output",
+        str(args.work / "runtime-build"),
+        "--image",
+        image,
+    ]
     for role, bundle in bundles.items():
         command += [f"--{role}-bundle", str(bundle)]
     execute(command, env=dict(os.environ, LIL_RUNTIME_PLATFORM=PLATFORM))
@@ -303,7 +454,9 @@ def main() -> None:
             role: {
                 "repository": assembly["components"][role]["repository"],
                 "source_commit": assembly["components"][role]["source_commit"],
-                "manifest_sha256": run(["sha256sum", str(bundle / "manifest.json")]).split()[0],
+                "manifest_sha256": run(
+                    ["sha256sum", str(bundle / "manifest.json")]
+                ).split()[0],
                 "built_from_commit": json.loads((bundle / "manifest.json").read_text())
                 .get("source", {})
                 .get("commit"),
@@ -318,19 +471,40 @@ def main() -> None:
         return
     with tempfile.TemporaryDirectory(prefix="ghcr-spark-") as registry_config:
         registry = ["docker", "--config", registry_config]
-        execute(registry + ["login", "ghcr.io", "--username", os.environ["GITHUB_ACTOR"],
-                            "--password-stdin"], input=os.environ["GH_TOKEN"].encode(),
-                stdout=subprocess.DEVNULL)
+        execute(
+            registry
+            + [
+                "login",
+                "ghcr.io",
+                "--username",
+                os.environ["GITHUB_ACTOR"],
+                "--password-stdin",
+            ],
+            input=os.environ["GH_TOKEN"].encode(),
+            stdout=subprocess.DEVNULL,
+        )
         execute(registry + ["push", image])
         inspect = json.loads(run(["docker", "image", "inspect", image]))[0]
         receipt["digest"] = next(
-            item for item in inspect["RepoDigests"] if item.startswith(image.split(":")[0] + "@")
+            item
+            for item in inspect["RepoDigests"]
+            if item.startswith(image.split(":")[0] + "@")
         )
         execute(["docker", "tag", image, receipt["alias"]])
         execute(registry + ["push", receipt["alias"]])
     receipt_path.write_text(json.dumps(receipt, sort_keys=True, indent=2) + "\n")
-    execute(["gh", "release", "upload", args.release_tag, "--repo", args.repository,
-             "--clobber", str(receipt_path)])
+    execute(
+        [
+            "gh",
+            "release",
+            "upload",
+            args.release_tag,
+            "--repo",
+            args.repository,
+            "--clobber",
+            str(receipt_path),
+        ]
+    )
 
 
 if __name__ == "__main__":

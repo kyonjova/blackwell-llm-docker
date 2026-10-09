@@ -286,7 +286,40 @@ def channel_config(config: dict, name: str) -> dict:
     return selected
 
 
-def resolve(config_path: Path, output: Path, name: str = "karmic-kraken") -> dict:
+def daily_image_tag(
+    repository: str | None, image_tag: str, date: str, release_tag: str
+) -> str:
+    """The channel and date, with .N from the day's second release on.
+
+    A retried assembly keeps the name its release already has.
+    """
+    plain = f"{image_tag}-{date}"
+    if repository is None:
+        return plain
+    pattern = re.compile(re.escape(plain) + r"(?:\.(\d+))?")
+    taken = []
+    page = 1
+    while True:
+        releases = api(f"repos/{repository}/releases?per_page=100&page={page}")
+        for release in releases:
+            name = release.get("name") or ""
+            if release["tag_name"] == release_tag and name.startswith(f"{image_tag}-"):
+                return name
+            match = pattern.fullmatch(name)
+            if match:
+                taken.append(int(match[1] or 1))
+        if len(releases) < 100:
+            break
+        page += 1
+    return plain if not taken else f"{plain}.{max(taken) + 1}"
+
+
+def resolve(
+    config_path: Path,
+    output: Path,
+    name: str = "karmic-kraken",
+    repository: str | None = None,
+) -> dict:
     config = channel_config(json.loads(config_path.read_text()), name)
     if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", config["channel"]):
         raise ValueError("invalid channel name")
@@ -320,7 +353,10 @@ def resolve(config_path: Path, output: Path, name: str = "karmic-kraken") -> dic
         "assembly_sha256": identity,
         "components": components,
         "changelog": config.get("changelog", {}),
-        "image": f"{config['image_repository']}:{config['image_tag']}-{date}-{identity[:16]}",
+        "image": f"{config['image_repository']}:"
+        + daily_image_tag(
+            repository, config["image_tag"], date, f"{config['image_tag']}-{identity}"
+        ),
         "alias": f"{config['image_repository']}:{config['image_tag']}",
         "release_tag": f"{config['image_tag']}-{identity}",
         "status": "research-only",
@@ -340,7 +376,9 @@ def resolve_matrix(config_path: Path, directory: Path, repository: str) -> dict:
             print(f"{name}: publication paused: {entry['paused']}")
             continue
         try:
-            assembly = resolve(config_path, directory / f"{name}.json", name)
+            assembly = resolve(
+                config_path, directory / f"{name}.json", name, repository
+            )
         except PendingBuild as error:
             print(f"{name}: waiting for component build: {error}")
             continue

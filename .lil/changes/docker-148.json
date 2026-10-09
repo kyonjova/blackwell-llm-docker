@@ -1,0 +1,14 @@
+{
+  "schema": "local-inference-release-change/v1",
+  "id": "docker-148",
+  "category": "internal",
+  "summary": "Configurator help texts describe only the selected model",
+  "models": ["all"],
+  "compatibility": "No user action required.",
+  "details": [
+    "Each option's reason is split into a generic part and notes per profile and preset, written from the values each profile and preset resolves to. The configurator shows the generic part and the selected model's note."
+  ],
+  "authors": ["voipmonitor"],
+  "pull_requests": [148],
+  "requires": []
+}
