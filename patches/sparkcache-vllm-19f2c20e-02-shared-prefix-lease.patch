@@ -1,21 +1,25 @@
 SparkCache vLLM patch 2/2 -- shared-prefix GPU leases (upstream 040 + 041, one feature).
-SparkCache-vLLM-Pin: 1794dcf18454900263e0c66711af8ea4a1283ac1
-Source: FujitsuPolycom/sparkcache patches/vllm-da4d7be/040 + 041, rebased onto KK e77be225.
-Requires patch 1/2. See patches/README-sparkcache.md.
+SparkCache-vLLM-Pin: 19f2c20ed4d64ae22bd009ceacadd85e2a81e354
+Source: FujitsuPolycom/sparkcache patches/vllm-da4d7be/040 + 041, as rebased
+onto KK integration f1c2508f, regenerated against integration/karmic-kraken-beta
+19f2c20e (2026-10-08). Changed lines are identical to the f1c2508f rebase;
+only offsets moved (the 2026-10-08 beta, rebuilt on dev/karmic-kraken,
+dropped the deferred boundary-restore path: kv_cache_manager -106 lines,
+scheduler -32). Both hand fixes re-checked
+against 19f2c20e and still required:
+  * allocate_slots: lease eviction and the free-block checks include
+    import_reserve (the beta still holds blocks back for external
+    checkpoint imports in both allocate_slots branches).
+  * schedule(): the lease attach runs after the external-boundary admission
+    gate (can_admit_external_boundary_request still precedes it), so a
+    leased prefix cannot take a slot reserved for a restore.
+Requires patch 1/2. Still NOT runtime-tested.
 
 diff --git a/vllm/v1/core/kv_cache_manager.py b/vllm/v1/core/kv_cache_manager.py
-index 84812b6..2f2a7f0 100644
+index 4877682..098b624 100644
 --- a/vllm/v1/core/kv_cache_manager.py
 +++ b/vllm/v1/core/kv_cache_manager.py
-@@ -2,6 +2,7 @@
- # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
- 
- import itertools
-+import time
- from collections.abc import Iterable, Sequence
- from dataclasses import dataclass
- from typing import Literal, overload
-@@ -142,6 +143,16 @@ class KVCacheBlocks:
+@@ -165,6 +165,16 @@ class KVCacheBlocks:
          return KVCacheBlocks(tuple(() for _ in range(len(self.blocks))))
  
  
@@ -32,7 +36,7 @@ index 84812b6..2f2a7f0 100644
  class KVCacheManager:
      def __init__(
          self,
-@@ -230,6 +241,11 @@ class KVCacheManager:
+@@ -253,6 +263,11 @@ class KVCacheManager:
              )
              for group in kv_cache_config.kv_cache_groups
          )
@@ -44,26 +48,30 @@ index 84812b6..2f2a7f0 100644
  
          # Pre-constructed KVCacheBlocks with no blocks, callers should use this
          # via create_kv_cache_blocks instead of creating new ones to avoid GC
-@@ -644,6 +660,7 @@ class KVCacheManager:
+@@ -650,6 +665,9 @@ class KVCacheManager:
              required_blocks = (
                  num_blocks_to_allocate + watermark_blocks + boundary_blocks
              )
-+            self.evict_shared_prefix_leases_until_free(required_blocks)
-             if required_blocks > self.block_pool.get_num_free_blocks():
++            self.evict_shared_prefix_leases_until_free(
++                required_blocks + import_reserve
++            )
+             if required_blocks > self.block_pool.get_num_free_blocks() - import_reserve:
                  return None
  
-@@ -682,6 +699,10 @@ class KVCacheManager:
-         # additional watermark of headroom for waiting/preempted admissions.
-         available_blocks = self.block_pool.get_num_free_blocks() - reserved_blocks
+@@ -690,6 +708,12 @@ class KVCacheManager:
+             self.block_pool.get_num_free_blocks() - reserved_blocks - import_reserve
+         )
          required_blocks = num_blocks_to_allocate + watermark_blocks + boundary_blocks
 +        self.evict_shared_prefix_leases_until_free(
-+            required_blocks + reserved_blocks
++            required_blocks + reserved_blocks + import_reserve
 +        )
-+        available_blocks = self.block_pool.get_num_free_blocks() - reserved_blocks
++        available_blocks = (
++            self.block_pool.get_num_free_blocks() - reserved_blocks - import_reserve
++        )
          if required_blocks > available_blocks:
              # Cannot allocate new blocks
              return None
-@@ -1166,6 +1187,265 @@ class KVCacheManager:
+@@ -1413,6 +1437,265 @@ class KVCacheManager:
          """Get the blocks of a request."""
          return self.create_kv_cache_blocks(self.coordinator.get_blocks(request_id))
  
@@ -330,10 +338,10 @@ index 84812b6..2f2a7f0 100644
          """Get the block ids of a request."""
          return self.get_blocks(request_id).get_block_ids()
 diff --git a/vllm/v1/core/sched/scheduler.py b/vllm/v1/core/sched/scheduler.py
-index 785212c..6ec2d55 100644
+index f37fb43..2dd4514 100644
 --- a/vllm/v1/core/sched/scheduler.py
 +++ b/vllm/v1/core/sched/scheduler.py
-@@ -262,6 +262,9 @@ class Scheduler(SchedulerInterface):
+@@ -265,6 +265,9 @@ class Scheduler(SchedulerInterface):
          # KV Connector: requests in process of async KV loading or recving
          self.finished_recving_kv_req_ids: set[str] = set()
          self.failed_recving_kv_req_ids: set[str] = set()
@@ -343,7 +351,7 @@ index 785212c..6ec2d55 100644
  
          # Grammar compilation failures to finish as per-request errors in
          # update_from_output.
-@@ -836,6 +839,10 @@ class Scheduler(SchedulerInterface):
+@@ -887,6 +890,10 @@ class Scheduler(SchedulerInterface):
          scheduled_timestamp = time.monotonic()
  
          self.kv_cache_manager.new_step_starts()
@@ -354,15 +362,18 @@ index 785212c..6ec2d55 100644
  
          # On a throttled cadence step, defer prefill compute only when this
          # decision can schedule decode work. Pipeline-parallel async requests
-@@ -1339,6 +1346,47 @@ class Scheduler(SchedulerInterface):
-                 boundary_logits_only = False
-                 external_boundary_hit_tokens = 0
- 
+@@ -1467,6 +1474,50 @@ class Scheduler(SchedulerInterface):
+                                 considered_ids, prefill_interleave_step
+                             )
+                         continue
 +                # A connector may offer an exact block-table lease after a
 +                # prior async restore completed on every worker.  Attach it
 +                # before hash lookup: hybrid Mamba/EAGLE tables are not always
 +                # rediscoverable as an ordinary local prefix hit even though
-+                # the verified blocks are still resident.
++                # the verified blocks are still resident.  The attach follows
++                # the external-boundary admission gate above, so a leased
++                # prefix never takes a running slot reserved for a restored
++                # import.
 +                if request.num_computed_tokens == 0 and self.connector is not None:
 +                    get_lease = getattr(
 +                        self.connector, "get_shared_prefix_lease_candidate", None
@@ -399,10 +410,10 @@ index 785212c..6ec2d55 100644
 +                            if rejected is not None:
 +                                rejected(request_id, lease_key)
 +
-                 # Get already-cached tokens.
                  if request.num_computed_tokens == 0:
                      if (
-@@ -2080,7 +2128,7 @@ class Scheduler(SchedulerInterface):
+                         self.connector is not None
+@@ -2214,7 +2265,7 @@ class Scheduler(SchedulerInterface):
  
          # Advance the fence only for non-empty steps (those that actually
          # write KV and have their output processed later in update_from_output).
@@ -411,7 +422,7 @@ index 785212c..6ec2d55 100644
              self.sched_step_seq += 1
  
          with record_function_or_nullcontext("schedule: update_after_schedule"):
-@@ -2689,9 +2737,11 @@ class Scheduler(SchedulerInterface):
+@@ -2864,9 +2915,11 @@ class Scheduler(SchedulerInterface):
  
          # Every GPU write enqueued by this and earlier steps has completed, so it is
          # safe to return deferred-free blocks to the pool.
@@ -425,7 +436,7 @@ index 785212c..6ec2d55 100644
  
          perf_stats: PerfStats | None = None
          if self.perf_metrics and self.perf_metrics.is_enabled():
-@@ -3859,6 +3909,35 @@ class Scheduler(SchedulerInterface):
+@@ -4049,6 +4102,35 @@ class Scheduler(SchedulerInterface):
              # This will cache the blocks iff caching is enabled.
              self.kv_cache_manager.cache_blocks(request, request.num_computed_tokens)
  
@@ -461,7 +472,7 @@ index 785212c..6ec2d55 100644
              # on a full prompt hit, we need to re-compute the last token
              # in order to be able to sample the next token
              if request.num_computed_tokens == request.num_tokens:
-@@ -3866,6 +3945,32 @@ class Scheduler(SchedulerInterface):
+@@ -4056,6 +4138,32 @@ class Scheduler(SchedulerInterface):
  
          self.finished_recving_kv_req_ids.remove(request.request_id)
  

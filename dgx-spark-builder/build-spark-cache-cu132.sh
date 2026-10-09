@@ -95,7 +95,7 @@ fi
 [[ -n "${ENV_FILE}" ]] \
   || warn "no profile found beside this script: building from IN-SCRIPT FALLBACK PINS, which are not the source of truth and are probably stale"
 
-ALLOWED_KEYS=" ALLOW_FOREIGN_ARCH B12X_COMMIT B12X_PATCH_FILE B12X_PATCH_SHA256 B12X_PIN B12X_REF B12X_REPO BUILD_BASE_IMAGE_TAG CUTLASS_COMMIT CUTLASS_DSL_VERSION CUTLASS_REF DEEPGEMM_COMMIT DEEPGEMM_REPO DEEPGEMM_REF EXLLAMAV3_COMMIT EXLLAMAV3_REPO FASTOKENS_SHA256 FASTOKENS_VERSION FASTSAFETENSORS_SPEC FLASHINFER_BUILD_CUBIN FLASHINFER_COMMIT FLASHINFER_REF FLASHINFER_REPO FROZEN_ACK HUMMING_KERNELS_SPEC IMAGE IMAGE_REPO IMAGE_TAG INSTANTTENSOR_COMMIT INSTANTTENSOR_REF INSTANTTENSOR_REPO LAUNCHER_COMMIT LAUNCHER_REF LAUNCHER_REPO LMCACHE_BUILD_VERSION LMCACHE_COMMIT LMCACHE_REF LMCACHE_REPO LOGGING MAX_JOBS NCCL_COMMIT NCCL_REF NCCL_REPO NVCC_THREADS PATCH_DEEPGEMM_LIBDW PATCH_EXLLAMAV3_AVX PATCH_FASTOKENS PATCH_GPU_ARCH PATCH_IO_URING PATCH_LMCACHE_INTEGRATION PATCH_SPARKCACHE PATCH_HOST_ARCH PATCH_PCIE_ENV PATCH_PIPCHECK_WHEELTAG PATCH_VLLM_REQ_MARKERS PATCH_VLLM_WHEEL_TAGS PIN_PREFLIGHT PIN_SOURCE_COMMITS PROFILE_NAME QUACK_KERNELS_SPEC SECCOMP_PROFILE_SRC SPARKCACHE_COMMIT SPARKCACHE_REPO SPARKCACHE_VLLM_PATCHES SPARKINFER_COMMIT SPARKINFER_REF SPARKINFER_REPO SYSTEM_BASE_IMAGE TILELANG_VERSION TOKENSPEED_MLA_VERSION TORCHVISION_VERSION TORCH_BUNDLED_NCCL_VERSION TORCH_VERSION TVM_FFI_VERSION VLLM_BUILD_VERSION VLLM_COMMIT VLLM_MAX_JOBS VLLM_NVCC_THREADS VLLM_PATCH_FILE VLLM_PATCH_SHA256 VLLM_PATCH_URL VLLM_PIN VLLM_REF VLLM_REPO VLLM_REQUIRED_LAUNCHERS VLLM_RUNTIME_EXTRA_PACKAGES XGRAMMAR_COMMIT XGRAMMAR_REF XGRAMMAR_TRANSFORMERS5_COMPAT XGRAMMAR_VERSION "
+ALLOWED_KEYS=" ALLOW_FOREIGN_ARCH B12X_COMMIT B12X_PATCH_FILE B12X_PATCH_SHA256 B12X_PIN B12X_REF B12X_REPO B12X_SOURCE BUILD_BASE_IMAGE_TAG CUTLASS_COMMIT CUTLASS_DSL_VERSION CUTLASS_REF DEEPGEMM_COMMIT DEEPGEMM_REPO DEEPGEMM_REF EXLLAMAV3_COMMIT EXLLAMAV3_REPO FASTOKENS_SHA256 FASTOKENS_VERSION FASTSAFETENSORS_SPEC FLASHINFER_BUILD_CUBIN FLASHINFER_COMMIT FLASHINFER_REF FLASHINFER_REPO FLASHINFER_RUNTIME_PACKAGES FROZEN_ACK HUMMING_KERNELS_SPEC IMAGE IMAGE_REPO IMAGE_TAG INSTANTTENSOR_COMMIT INSTANTTENSOR_REF INSTANTTENSOR_REPO LAUNCHER_COMMIT LAUNCHER_REF LAUNCHER_REPO LMCACHE_BUILD_VERSION LMCACHE_COMMIT LMCACHE_REF LMCACHE_REPO LOGGING MAX_JOBS NCCL_COMMIT NCCL_REF NCCL_REPO NVCC_THREADS PATCH_DEEPGEMM_LIBDW PATCH_EXLLAMAV3_AVX PATCH_FASTOKENS PATCH_GPU_ARCH PATCH_IO_URING PATCH_LMCACHE_INTEGRATION PATCH_SPARKCACHE PATCH_HOST_ARCH PATCH_PCIE_ENV PATCH_PIPCHECK_WHEELTAG PATCH_VLLM_REQ_MARKERS PATCH_VLLM_WHEEL_TAGS PIN_PREFLIGHT PIN_SOURCE_COMMITS PROFILE_NAME QUACK_KERNELS_SPEC SECCOMP_PROFILE_SRC SPARKCACHE_COMMIT SPARKCACHE_REPO SPARKCACHE_VLLM_PATCHES SPARKINFER_COMMIT SPARKINFER_REF SPARKINFER_REPO SYSTEM_BASE_IMAGE TILELANG_VERSION TOKENSPEED_MLA_VERSION TORCHVISION_VERSION TORCH_BUNDLED_NCCL_VERSION TORCH_VERSION TVM_FFI_VERSION VLLM_BUILD_VERSION VLLM_COMMIT VLLM_MAX_JOBS VLLM_NVCC_THREADS VLLM_PATCH_FILE VLLM_PATCH_SHA256 VLLM_PATCH_URL VLLM_PIN VLLM_REF VLLM_REPO VLLM_REQUIRED_LAUNCHERS VLLM_RUNTIME_EXTRA_PACKAGES XGRAMMAR_COMMIT XGRAMMAR_REF XGRAMMAR_TRANSFORMERS5_COMPAT XGRAMMAR_VERSION "
 if [[ -n "${ENV_FILE}" ]]; then
   [[ -f "${ENV_FILE}" ]] || die "env file not found: ${ENV_FILE}"
   # Canonicalize now: the repo-root cd below would break a relative path for
@@ -219,6 +219,22 @@ export LAUNCHER_COMMIT="${LAUNCHER_COMMIT:-${VLLM_COMMIT}}"
 # this the right branch for my model" guard). Set per profile.
 export VLLM_REQUIRED_LAUNCHERS="${VLLM_REQUIRED_LAUNCHERS:-}"
 
+# B12X source.
+#   standalone  the local-inference-lab/b12x repository (formerly sparkinfer),
+#               built in its own stage: every profile up to the 2026-10-07 beta.
+#   flashinfer  B12X ships inside FlashInfer >= 0.7.1 (flashinfer/experimental/
+#               b12x plus a top-level `b12x` alias package). The b12x repository
+#               is archived (2026-10-08) and a standalone b12x wheel installed
+#               over the alias would replace FlashInfer's copy (LIL docker-144).
+#               The b12x stage then only verifies the alias, the B12X_* pins must
+#               be empty, and B12X_REPO/REF/COMMIT are set to the FlashInfer
+#               source below so the image labels say where b12x came from.
+export B12X_SOURCE="${B12X_SOURCE:-standalone}"
+case "${B12X_SOURCE}" in
+  standalone|flashinfer) ;;
+  *) die "B12X_SOURCE must be standalone or flashinfer: ${B12X_SOURCE}" ;;
+esac
+if [[ "${B12X_SOURCE}" == standalone ]]; then
 # B12X repo: local-inference-lab/b12x (formerly named sparkinfer; that URL
 # 301-redirects here). Only the B12X_* build-arg names are legacy.
 # Pinned the same way as vLLM (the b12x stage also checks out the ref before
@@ -237,6 +253,7 @@ export B12X_COMMIT="${SPARKINFER_COMMIT:-${B12X_COMMIT:-${B12X_PIN}}}"
   && warn "vLLM pin is the in-script fallback (stale by construction): set VLLM_PIN in the profile (current assessed pins: PIN_ASSESSMENT.md)"
 [[ "${B12X_COMMIT}" == "2fcf23a0ce269be27b2e03fece73d46e90e6aeea" ]] \
   && warn "B12X pin is the in-script fallback (stale by construction): set B12X_PIN in the profile (current assessed pins: PIN_ASSESSMENT.md)"
+fi
 
 export NCCL_REPO="${NCCL_REPO:-https://github.com/local-inference-lab/nccl-canonical.git}"
 export NCCL_REF="${NCCL_REF:-canonical/cu132-nccl2304-amd-noxml}"
@@ -246,6 +263,29 @@ export FLASHINFER_REPO="${FLASHINFER_REPO:-https://github.com/voipmonitor/flashi
 export FLASHINFER_REF="${FLASHINFER_REF:-integration/main-pr4393-pcie-ipc-qualified-20260807}"
 export FLASHINFER_COMMIT="${FLASHINFER_COMMIT:-1ac6942776b383c6b03c7a5805a22e72a3e3349f}"
 export FLASHINFER_BUILD_CUBIN="${FLASHINFER_BUILD_CUBIN:-0}"
+
+# B12X_SOURCE=flashinfer: FlashInfer is the B12X source, so its pin is pinned
+# like vLLM's (ref == sha), and its requirements.txt runtime dependencies are
+# installed --no-deps in the FlashInfer stage, before that stage imports
+# flashinfer (FLASHINFER_RUNTIME_PACKAGES, exact name==version pins; the final
+# stage installs the same pins again through VLLM_RUNTIME_EXTRA_PACKAGES).
+if [[ "${B12X_SOURCE}" == flashinfer ]]; then
+  for _k in B12X_PIN B12X_REF B12X_COMMIT B12X_PATCH_FILE B12X_PATCH_SHA256 SPARKINFER_REF SPARKINFER_COMMIT; do
+    [[ -z "${!_k:-}" ]] || die "B12X_SOURCE=flashinfer: ${_k} must be empty (B12X comes from FLASHINFER_COMMIT)"
+  done
+  [[ "${FLASHINFER_COMMIT}" =~ ^[0-9a-f]{40}$ ]] \
+    || die "B12X_SOURCE=flashinfer needs FLASHINFER_COMMIT as a full 40-hex sha: ${FLASHINFER_COMMIT}"
+  [[ "${FLASHINFER_REF}" == "${FLASHINFER_COMMIT}" ]] \
+    || warn "FLASHINFER_REF (${FLASHINFER_REF}) != FLASHINFER_COMMIT (${FLASHINFER_COMMIT}); the FlashInfer stage checks out the ref then verifies the commit -- this races unless the ref is the sha"
+  export B12X_REPO="${FLASHINFER_REPO}" B12X_REF="${FLASHINFER_COMMIT}" B12X_COMMIT="${FLASHINFER_COMMIT}"
+  [[ -n "${FLASHINFER_RUNTIME_PACKAGES:-}" ]] \
+    || die "B12X_SOURCE=flashinfer needs FLASHINFER_RUNTIME_PACKAGES (FlashInfer's requirements.txt runtime pins, installed before its import check)"
+  [[ "${FLASHINFER_RUNTIME_PACKAGES}" =~ ^[A-Za-z0-9._-]+==[0-9A-Za-z.+-]+(\ [A-Za-z0-9._-]+==[0-9A-Za-z.+-]+)*$ ]] \
+    || die "FLASHINFER_RUNTIME_PACKAGES must be space-separated name==version pins: ${FLASHINFER_RUNTIME_PACKAGES}"
+  export FLASHINFER_RUNTIME_PACKAGES
+elif [[ -n "${FLASHINFER_RUNTIME_PACKAGES:-}" ]]; then
+  die "FLASHINFER_RUNTIME_PACKAGES applies to B12X_SOURCE=flashinfer only"
+fi
 
 # ---------------------------------------------------------------- toolchain
 # The vLLM branch pins torch==2.13.0 in requirements/cuda.txt.
@@ -376,12 +416,16 @@ check_pin() {  # repo-url sha label
 if [[ "${PIN_PREFLIGHT:-1}" == 1 ]] && command -v curl >/dev/null 2>&1; then
   _pins_ok=1
   check_pin "${VLLM_REPO}" "${VLLM_COMMIT}" vLLM || _pins_ok=0
-  check_pin "${B12X_REPO}" "${B12X_COMMIT}" B12X || _pins_ok=0
+  if [[ "${B12X_SOURCE}" == flashinfer ]]; then
+    check_pin "${FLASHINFER_REPO}" "${FLASHINFER_COMMIT}" "FlashInfer (B12X inside)" || _pins_ok=0
+  else
+    check_pin "${B12X_REPO}" "${B12X_COMMIT}" B12X || _pins_ok=0
+  fi
   if [[ -n "${LMCACHE_COMMIT:-}" ]]; then
     check_pin "${LMCACHE_REPO:-https://github.com/local-inference-lab/LMCache.git}" "${LMCACHE_COMMIT}" LMCache || _pins_ok=0
   fi
   if [[ "${_pins_ok}" == 1 ]]; then
-    note "pin pre-flight OK: vllm=${VLLM_COMMIT:0:9} b12x=${B12X_COMMIT:0:9}${LMCACHE_COMMIT:+ lmcache=${LMCACHE_COMMIT:0:9}} reachable"
+    note "pin pre-flight OK: vllm=${VLLM_COMMIT:0:9} b12x=${B12X_SOURCE}:${B12X_COMMIT:0:9}${LMCACHE_COMMIT:+ lmcache=${LMCACHE_COMMIT:0:9}} reachable"
   else
     warn "pin pre-flight INCOMPLETE -- at least one pin is unverified; a bad sha will not surface until the clone (~40 min in). Set GH_TOKEN to make this check reliable."
   fi
@@ -408,6 +452,12 @@ dsl_preflight() {
   b12x_nwo="${b12x_nwo%.git}"; vllm_nwo="${vllm_nwo%.git}"
   local raw="https://raw.githubusercontent.com" b12x_py vllm_lock quack_json="" quack_ver=""
   b12x_py="$(curl -fsS --max-time 20 "${raw}/${b12x_nwo}/${B12X_COMMIT}/pyproject.toml" 2>/dev/null || true)"
+  if [[ "${B12X_SOURCE}" == flashinfer && -n "${b12x_py}" ]]; then
+    # FlashInfer's pyproject names several DSL floors (cu12/cu13/sm107 extras);
+    # B12X's exact pins are the `b12x = [...]` optional-dependency line only.
+    b12x_py="$(printf '%s\n' "${b12x_py}" | grep -E '^b12x[[:space:]]*=' || true)"
+    [[ -n "${b12x_py}" ]] || warn "FlashInfer pyproject at ${B12X_COMMIT:0:9} has no b12x extra: B12X DSL pin unverified"
+  fi
   vllm_lock="$(curl -fsS --max-time 20 "${raw}/${vllm_nwo}/${VLLM_COMMIT}/tools/jovian_wheel_release/runtime.lock" 2>/dev/null || true)"
   if [[ "${QUACK_KERNELS_SPEC}" =~ ^quack-kernels==([0-9][0-9A-Za-z.+-]*)$ ]]; then
     quack_ver="${BASH_REMATCH[1]}"
@@ -496,7 +546,7 @@ PYEOF
 if [[ "${PIN_PREFLIGHT:-1}" == 1 ]] && command -v curl >/dev/null 2>&1; then
   _dsl_rc=0; dsl_preflight || _dsl_rc=$?
   case "${_dsl_rc}" in
-    0) note "CuTe DSL pre-flight OK: CUTLASS_DSL_VERSION=${CUTLASS_DSL_VERSION} consistent with b12x ${B12X_COMMIT:0:9} and ${QUACK_KERNELS_SPEC}" ;;
+    0) note "CuTe DSL pre-flight OK: CUTLASS_DSL_VERSION=${CUTLASS_DSL_VERSION} consistent with b12x (${B12X_SOURCE}) ${B12X_COMMIT:0:9} and ${QUACK_KERNELS_SPEC}" ;;
     3) warn "CuTe DSL pre-flight INCOMPLETE (see above): a DSL mismatch would surface only at the final-stage pip check" ;;
     *) die "CuTe DSL pre-flight failed (see above); CUTLASS_DSL_VERSION=${CUTLASS_DSL_VERSION} ${QUACK_KERNELS_SPEC}" ;;
   esac
@@ -944,6 +994,120 @@ else:
           "+ libdw1t64 runtime install at the top of the final stage",
           file=sys.stderr)
 PYEOF
+
+# ------------------------------------------------------- B12X_SOURCE=flashinfer
+# FlashInfer >= 0.7.1 carries B12X and splits its AOT JIT cache into a shim
+# (flashinfer-jit-cache) and one provider wheel per arch
+# (flashinfer-jit-cache-sm<arch>), built exactly as LIL's ci/lil_wheels does:
+#   1. FlashInfer stage: FLASHINFER_RUNTIME_PACKAGES installed --no-deps in a
+#      RUN of its own before the FlashInfer build RUN (whose last command
+#      imports flashinfer); the jit-cache wheel build becomes provider
+#      (FLASHINFER_JIT_CACHE_PROVIDER_ARCH) + shim
+#      (FLASHINFER_JIT_CACHE_PROVIDER_ARCHS); the prebuilt-wheel branch also
+#      installs a provider wheel.
+#   2. b12x stage: the standalone clone/install is replaced by a check that
+#      `b12x` resolves into flashinfer/experimental/b12x and that no b12x
+#      distribution is installed; the pcie include check reads FlashInfer's
+#      copy.
+#   3. vllm-build verify script: b12x has no distribution of its own, so its
+#      version line reports flashinfer-python's.
+# Every rewrite is in the FlashInfer stage or later: the frozen block and the
+# system-base/build-base/base layers are untouched.
+if [[ "${B12X_SOURCE}" == flashinfer ]]; then
+python3 - "${dockerfile}" "${FLASHINFER_RUNTIME_PACKAGES}" <<'PYEOF'
+import pathlib, re, sys
+path, pins = pathlib.Path(sys.argv[1]), sys.argv[2]
+text = path.read_text()
+BS_NL = chr(92) + chr(10)
+
+def once(old, new, what):
+    global text
+    n = text.count(old)
+    assert n == 1, f"B12X_SOURCE=flashinfer: {what} anchor found {n} times -- upstream changed shape"
+    text = text.replace(old, new, 1)
+
+# 1a. runtime dependencies before the FlashInfer build RUN
+fi_run = "RUN --mount=type=cache,target=/root/.ccache " + BS_NL + "    nccl_version_before="
+deps = ("# B12X_SOURCE=flashinfer: FlashInfer 0.7.1 requirements.txt runtime pins\n"
+        "# (--no-deps: no extra may pull an nvidia-nccl or cuda-bindings wheel).\n"
+        "RUN --mount=type=cache,target=/root/.cache/pip " + BS_NL +
+        "    python -m pip install --no-deps " + pins + " " + BS_NL +
+        " && python -m pip show " + " ".join(p.split("==")[0] for p in pins.split()) + " | grep -E '^(Name|Version):'\n\n")
+once(fi_run, deps + fi_run, "FlashInfer build RUN")
+
+# 1b. jit-cache: provider + shim instead of the single jit-cache wheel
+old_jit = ('      FLASHINFER_CUDA_ARCH_LIST="${FLASHINFER_CUDA_ARCH_LIST}" ' + BS_NL +
+           '        MAX_JOBS="${MAX_JOBS}" ' + BS_NL +
+           '        python -m pip wheel --no-build-isolation --no-deps -w /tmp/flashinfer-wheels ./flashinfer-jit-cache; ' + BS_NL +
+           '      python -m pip install --no-deps --force-reinstall /tmp/flashinfer-wheels/flashinfer_jit_cache-*.whl; ' + BS_NL)
+new_jit = ('      FLASHINFER_CUDA_ARCH_LIST="${FLASHINFER_CUDA_ARCH_LIST}" ' + BS_NL +
+           '        FLASHINFER_JIT_CACHE_PROVIDER_ARCH="${FLASHINFER_CUDA_ARCH_LIST}" ' + BS_NL +
+           '        MAX_JOBS="${MAX_JOBS}" ' + BS_NL +
+           '        python -m pip wheel --no-build-isolation --no-deps -w /tmp/flashinfer-wheels ./flashinfer-jit-cache-provider; ' + BS_NL +
+           '      FLASHINFER_JIT_CACHE_PROVIDER_ARCHS="${FLASHINFER_CUDA_ARCH_LIST}" ' + BS_NL +
+           '        python -m pip wheel --no-build-isolation --no-deps -w /tmp/flashinfer-wheels ./flashinfer-jit-cache; ' + BS_NL +
+           '      test "$(find /tmp/flashinfer-wheels -maxdepth 1 -name \'flashinfer_jit_cache_sm*.whl\' | wc -l)" -eq 1; ' + BS_NL +
+           '      python -m pip install --no-deps --force-reinstall /tmp/flashinfer-wheels/flashinfer_jit_cache-*.whl /tmp/flashinfer-wheels/flashinfer_jit_cache_sm*.whl; ' + BS_NL)
+once(old_jit, new_jit, "jit-cache wheel build")
+
+# 1c. prebuilt wheels: install the provider wheel too
+old_pre = "        /tmp/prebuilt-flashinfer-wheels/flashinfer_jit_cache-*.whl); "
+new_pre = ("        /tmp/prebuilt-flashinfer-wheels/flashinfer_jit_cache-*.whl " + BS_NL +
+           "        /tmp/prebuilt-flashinfer-wheels/flashinfer_jit_cache_sm*.whl); ")
+once(old_pre, new_pre, "prebuilt FlashInfer wheel list")
+
+# 2a. b12x stage: verify the alias instead of cloning the archived repository
+m = re.search(r'RUN git clone --filter=blob:none "\$\{B12X_REPO\}" /tmp/b12x-src \\\n.*?&& rm -rf /tmp/b12x-src\n', text, re.S)
+assert m, "B12X_SOURCE=flashinfer: standalone b12x RUN not found -- upstream changed shape"
+assert text.count('/tmp/b12x-src') == m.group(0).count('/tmp/b12x-src'), "b12x-src referenced outside its RUN"
+verify = '''RUN python - <<'PY'
+# B12X_SOURCE=flashinfer: B12X comes from FlashInfer; no standalone wheel.
+import importlib.metadata as md
+import importlib.util
+from pathlib import Path
+
+import flashinfer
+import b12x
+
+root = Path(flashinfer.__file__).parent / "experimental" / "b12x"
+assert Path(b12x.__file__).parent == root, (b12x.__file__, root)
+# Located, not imported: the RoCEnante proxy package needs the RDMA stack.
+assert importlib.util.find_spec("b12x.comm.roce") is not None, "b12x.comm.roce missing"
+try:
+    md.distribution("b12x")
+except md.PackageNotFoundError:
+    pass
+else:
+    raise SystemExit("a standalone b12x distribution is installed over FlashInfer's alias")
+assert (root / "moe" / "_shared" / "kernels" / "w4a16" / "prefill_a4.py").is_file()
+print("b12x from flashinfer-python", md.version("flashinfer-python"), root)
+PY
+'''
+text = text.replace(m.group(0), verify, 1)
+
+# 2b. pcie include check: FlashInfer's copy
+old_pcie = 'Path(entry) / "b12x" / "comm" / "pcie"'
+n = text.count(old_pcie)
+assert n == 2, f"B12X_SOURCE=flashinfer: pcie include-check path found {n} times"
+text = text.replace(old_pcie, 'Path(entry) / "flashinfer" / "experimental" / "b12x" / "comm" / "pcie"')
+
+# 3. verify script: b12x version through flashinfer-python
+once('print(kernel_package, md.version(kernel_package))\n',
+     'try:\n'
+     '    print(kernel_package, md.version(kernel_package))\n'
+     'except md.PackageNotFoundError:\n'
+     '    print(kernel_package, "from flashinfer-python", md.version("flashinfer-python"))\n',
+     "verify-script kernel version line")
+
+path.write_text(text)
+print("B12X_SOURCE=flashinfer: FlashInfer runtime pins (" + pins + "), jit-cache provider+shim, "
+      "b12x alias check instead of the standalone b12x build, pcie check + verify script on FlashInfer's copy",
+      file=sys.stderr)
+PYEOF
+  plog "B12X_SOURCE=flashinfer: b12x from FlashInfer ${FLASHINFER_COMMIT:0:12}; runtime pins ${FLASHINFER_RUNTIME_PACKAGES}; jit-cache provider+shim"
+else
+  plog "B12X_SOURCE=standalone: b12x ${B12X_COMMIT:0:12} built from ${B12X_REPO}"
+fi
 
 # ------------------------------------------------------------ PATCH_IO_URING
 # The b12x loader (LOAD_FORMAT=b12x) reads weights on Spark through an
@@ -1480,7 +1644,7 @@ PATCHED_DOCKERFILE_SHA="$(sha256sum "${dockerfile}" | cut -d' ' -f1)"
 if [[ "${DRY_RUN}" == 1 ]]; then
   echo
   note "DRY RUN complete: all rewrites validated against ${dockerfile}; no image built."
-  note "profile=${PROFILE_NAME} vllm=${VLLM_COMMIT:0:9} b12x=${B12X_COMMIT:0:9}"
+  note "profile=${PROFILE_NAME} vllm=${VLLM_COMMIT:0:9} b12x=${B12X_SOURCE}:${B12X_COMMIT:0:9}"
   note "image:         ${IMAGE}"
   note "system-base:   ${SYSTEM_BASE_IMAGE}"
   note "build-base:    ${BUILD_BASE_IMAGE_TAG}"

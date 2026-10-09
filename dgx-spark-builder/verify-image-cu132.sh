@@ -14,7 +14,8 @@
 # VLLM_USE_FASTOKENS=1 in that model's rank env.
 #
 # With a profile, VLLM_PIN / B12X_PIN are compared against what the image
-# reports, and TORCH_VERSION / VLLM_REQUIRED_LAUNCHERS set the expectations
+# reports (B12X_SOURCE=flashinfer: the b12x and flashinfer labels against
+# FLASHINFER_COMMIT, and b12x must resolve into FlashInfer), and TORCH_VERSION / VLLM_REQUIRED_LAUNCHERS set the expectations
 # for the generic contract. Checks, in order: source identity, the RoCEnante
 # composition (vLLM PR #597 + b12x PR #295), KDA, DeepGEMM, LMCache, SparkCache, fastokens,
 # the CuTe DSL set + NVFP4-CSF pairing, io_uring + the
@@ -33,6 +34,10 @@ ok()   { echo "  PASS  $*"; pass=$((pass+1)); }
 bad()  { echo "  FAIL  $*"; fail=$((fail+1)); }
 prof() { [[ -n "$ENV_FILE" ]] && grep -E "^$1=" "$ENV_FILE" | tail -1 | cut -d= -f2- || true; }
 want_vllm="$(prof VLLM_PIN)"; want_b12x="$(prof B12X_PIN)"
+b12x_source="$(prof B12X_SOURCE)"; b12x_source="${b12x_source:-standalone}"
+want_fi="$(prof FLASHINFER_COMMIT)"
+# B12X inside FlashInfer: the wrapper labels the b12x commit with FlashInfer's.
+[[ "$b12x_source" != flashinfer ]] || want_b12x="$want_fi"
 # Contract expectations: from the profile when given, else the cu132 line.
 torch_full="$(prof TORCH_VERSION)"; torch_full="${torch_full:-2.13.0+cu132}"
 want_torch="${torch_full%%+*}"; _cu="${torch_full##*+cu}"; want_cuda="${_cu:0:2}.${_cu:2}"
@@ -52,7 +57,27 @@ if [[ -n "$want_vllm" ]]; then
   [[ "$img_vllm" == "$want_vllm" ]] && ok "vllm commit matches VLLM_PIN ${want_vllm:0:9}" || bad "vllm commit label '${img_vllm:-none}' != VLLM_PIN ${want_vllm:0:9}"
 fi
 if [[ -n "$want_b12x" ]]; then
-  [[ "$img_b12x" == "$want_b12x" ]] && ok "b12x commit matches B12X_PIN ${want_b12x:0:9}" || bad "b12x commit label '${img_b12x:-none}' != B12X_PIN ${want_b12x:0:9}"
+  [[ "$img_b12x" == "$want_b12x" ]] && ok "b12x commit matches ${b12x_source} pin ${want_b12x:0:9}" || bad "b12x commit label '${img_b12x:-none}' != ${b12x_source} pin ${want_b12x:0:9}"
+fi
+if [[ -n "$want_fi" ]]; then
+  img_fi="$(label local-inference.flashinfer.commit)"
+  [[ "$img_fi" == "$want_fi" ]] && ok "flashinfer commit matches FLASHINFER_COMMIT ${want_fi:0:9}" || bad "flashinfer commit label '${img_fi:-none}' != FLASHINFER_COMMIT ${want_fi:0:9}"
+fi
+if [[ "$b12x_source" == flashinfer ]]; then
+  if py <<'PY'; then ok "b12x resolves into flashinfer/experimental/b12x; no standalone b12x distribution"; else bad "b12x is not FlashInfer's copy (standalone wheel installed over the alias?)"; fi
+import importlib.metadata as md
+from pathlib import Path
+import flashinfer, b12x
+root = Path(flashinfer.__file__).parent / "experimental" / "b12x"
+assert Path(b12x.__file__).parent == root, (b12x.__file__, root)
+try:
+    md.distribution("b12x")
+except md.PackageNotFoundError:
+    pass
+else:
+    raise SystemExit("standalone b12x distribution present")
+print("  b12x from flashinfer-python", md.version("flashinfer-python"))
+PY
 fi
 py <<'PY' 2>/dev/null || echo "  NOTE  could not import vllm for version (GPU-less import limitation)"
 import vllm; print("  vllm version:", vllm.__version__)
@@ -287,9 +312,18 @@ except md.PackageNotFoundError:
     pass
 print("  installed:", ", ".join(f"{k.replace('nvidia-cutlass-dsl', 'dsl')}={v}" for k, v in have.items()))
 assert all(v == want for v in have.values()), f"profile CUTLASS_DSL_VERSION={want}"
-for r in md.requires("b12x") or []:
+try:
+    reqs, env = md.requires("b12x") or [], {}
+except md.PackageNotFoundError:
+    # B12X inside FlashInfer: its DSL pins are flashinfer-python's [b12x] extra.
+    reqs, env = md.requires("flashinfer-python") or [], {"extra": "b12x"}
+for r in reqs:
     req = Requirement(r)
-    if req.name.startswith("nvidia-cutlass-dsl") and (req.marker is None or req.marker.evaluate()):
+    if not req.name.startswith("nvidia-cutlass-dsl"):
+        continue
+    if env and (req.marker is None or not req.marker.evaluate(env)):
+        continue
+    if req.marker is None or req.marker.evaluate(env or None):
         assert req.name in have and req.specifier.contains(have[req.name], prereleases=True), f"b12x requires {r}"
 q = os.environ.get("WANT_QUACK")
 if q:
@@ -304,15 +338,24 @@ def src(mod):
     return pathlib.Path(spec.origin).read_text() if spec and spec.origin else ""
 q = src("vllm.model_executor.layers.quantization")
 l = src("vllm.model_executor.model_loader")
-v = '"nvfp4_csf"' in q and '"nvfp4_csf": Nvfp4CsfModelLoader' in l
-root = pathlib.Path(importlib.util.find_spec("b12x").origin).parent
+vroot = pathlib.Path(importlib.util.find_spec("vllm").origin).parent
+mo = vroot / "model_executor" / "layers" / "quantization" / "modelopt.py"
+mo = mo.read_text(errors="ignore") if mo.is_file() else ""
+# dedicated loader (integration line) or ModelOpt recipes (canonical: CSF via
+# --quantization modelopt_mixed, weight_scale_encoding: csf)
+v = ('"nvfp4_csf"' in q and '"nvfp4_csf": Nvfp4CsfModelLoader' in l) or \
+    ('"nvfp4_csf"' not in l and "weight_scale_encoding" in mo)
+fi = importlib.util.find_spec("flashinfer")
+root = pathlib.Path(fi.origin).parent / "experimental" / "b12x" if fi and fi.origin else None
+if root is None or not root.is_dir():
+    root = pathlib.Path(importlib.util.find_spec("b12x").origin).parent
 b12x_src = "".join(f.read_text(errors="ignore") for f in (root / "moe").rglob("*.py"))
 b = all(f"class {n}" in b12x_src for n in ("Nvfp4CsfWeights", "CsfScalePlanes"))
 print("CSF", "vllm=" + str(v), "b12x=" + str(b))
 PY
 )"
 case "$csf" in
-  "vllm=True b12x=True")   ok "NVFP4-CSF: vLLM quantization + loader 'nvfp4_csf' and b12x CSF weights present (checkpoint ...-CSF-QAD loadable)" ;;
+  "vllm=True b12x=True")   ok "NVFP4-CSF: vLLM reader (nvfp4_csf loader or ModelOpt csf recipes) and b12x CSF weights present (checkpoint ...-CSF-QAD loadable)" ;;
   "vllm=False b12x=False") echo "  NOTE  NVFP4-CSF not in this image (dev/karmic-kraken line); CSF checkpoints need the integration profile" ;;
   "vllm="*)                bad "NVFP4-CSF half-present ($csf): vLLM and b12x CSF support must come as a pair" ;;
   *)                       bad "NVFP4-CSF probe failed to run (vllm or b12x import error)" ;;
